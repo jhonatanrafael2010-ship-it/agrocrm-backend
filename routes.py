@@ -31,3 +31,38 @@ def db_test():
         return jsonify(status='ok', ping=result, users=user_count), 200
     except Exception as e:
         return jsonify(status='error', error=str(e)), 500
+
+
+@bp.route('/users', methods=['POST'])
+def create_user():
+    """Create a new user. Expects JSON: {username, email, password}"""
+    data = request.get_json() or {}
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
+    if not username or not email or not password:
+        return jsonify(message='username, email and password are required'), 400
+
+    if User.query.filter((User.username == username) | (User.email == email)).first():
+        return jsonify(message='user with that username or email already exists'), 409
+
+    user = User(username=username, email=email)
+    user.set_password(password)
+    db.session.add(user)
+    db.session.commit()
+    return jsonify(message='user created', id=user.id), 201
+
+
+@bp.route('/login', methods=['POST'])
+def login():
+    data = request.get_json() or {}
+    username = data.get('username')
+    password = data.get('password')
+    if not username or not password:
+        return jsonify(message='username and password are required'), 400
+
+    user = User.query.filter((User.username == username) | (User.email == username)).first()
+    if not user or not user.check_password(password):
+        return jsonify(message='invalid credentials'), 401
+
+    return jsonify(message='ok', id=user.id, username=user.username), 200
