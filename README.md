@@ -49,3 +49,23 @@ Feel free to submit issues or pull requests if you would like to contribute to t
 ## License
 
 This project is licensed under the MIT License. See the LICENSE file for details.
+
+## Running in Production (Gunicorn)
+
+For production deployments (for example on Render), the project uses Gunicorn as the WSGI server. The `render.yaml` start command runs:
+
+```
+gunicorn --bind 0.0.0.0:$PORT app:app
+```
+
+Make sure `gunicorn` is installed in your environment (it's included in `requirements.txt`).
+
+## Notes for local development on Windows
+
+When developing locally on Windows, continue to use the built-in Flask server for convenience:
+
+```
+python app.py
+```
+
+If you want to run Gunicorn locally on Windows, you can use the Windows Subsystem for Linux (WSL) or Docker, since Gunicorn is designed for Unix-like environments.
