@@ -1,5 +1,8 @@
+import os
+import datetime
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
+import jwt
 from models import db, User
 
 bp = Blueprint('api', __name__, url_prefix='/api')
@@ -13,7 +16,7 @@ def hello():
 @bp.route('/users', methods=['GET'])
 def get_users():
     users = User.query.all()
-    return jsonify([{'id': u.id, 'username': u.username, 'email': u.email} for u in users])
+    return jsonify([{'id': u.id, 'email': u.email} for u in users])
 
 
 @bp.route('/db-test', methods=['GET'])
@@ -65,4 +68,39 @@ def login():
     if not user or not user.check_password(password):
         return jsonify(message='invalid credentials'), 401
 
-    return jsonify(message='ok', id=user.id, username=user.username), 200
+    # create JWT
+    secret = os.environ.get('JWT_SECRET', 'dev-secret')
+    payload = {
+        'sub': user.id,
+        'username': user.username,
+        'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+    }
+    token = jwt.encode(payload, secret, algorithm='HS256')
+    return jsonify(message='ok', token=token), 200
+
+
+def _get_current_user_from_token(req):
+    auth = req.headers.get('Authorization', '')
+    if not auth.startswith('Bearer '):
+        return None, 'missing token'
+    token = auth.split(' ', 1)[1]
+    secret = os.environ.get('JWT_SECRET', 'dev-secret')
+    try:
+        payload = jwt.decode(token, secret, algorithms=['HS256'])
+    except jwt.ExpiredSignatureError:
+        return None, 'token expired'
+    except jwt.InvalidTokenError:
+        return None, 'invalid token'
+
+    user = User.query.get(payload.get('sub'))
+    if not user:
+        return None, 'user not found'
+    return user, None
+
+
+@bp.route('/me', methods=['GET'])
+def me():
+    user, err = _get_current_user_from_token(request)
+    if err:
+        return jsonify(message=err), 401
+    return jsonify(id=user.id, username=user.username, email=user.email), 200
