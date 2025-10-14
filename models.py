@@ -207,7 +207,6 @@ class Visit(db.Model):
             'created_at': None if not self.created_at else self.created_at.isoformat(),
         }
 
-
 class Opportunity(db.Model):
     """Sales Opportunity model.
 
@@ -238,3 +237,24 @@ class Opportunity(db.Model):
             'stage': self.stage,
             'created_at': None if not self.created_at else self.created_at.isoformat(),
         }
+
+
+# ============================
+# Culturas e Variedades Fixas
+# ============================
+
+class Culture(db.Model):
+    __tablename__ = 'cultures'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)
+
+
+class Variety(db.Model):
+    __tablename__ = 'varieties'
+    id = db.Column(db.Integer, primary_key=True)
+    culture_id = db.Column(db.Integer, db.ForeignKey('cultures.id'), nullable=False)
+    name = db.Column(db.String(80), nullable=False)
+    culture = db.relationship('Culture', backref='varieties')
+
+
+
