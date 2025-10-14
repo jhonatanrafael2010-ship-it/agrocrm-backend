@@ -5,6 +5,65 @@ from sqlalchemy import text
 import jwt
 from models import db, User
 
+# ============================
+# Fenologia + Variedades FIXAS
+# ============================
+
+PHENOLOGY_TABLES = {
+    "milho": [
+        {"code": "Plantio", "name": "Plantio", "days": 0},
+        {"code": "VE", "name": "Emergência", "days": 5},
+        {"code": "V1", "name": "1 folha verdadeira", "days": 8},
+        {"code": "V4", "name": "4 folhas verdadeiras", "days": 20},
+        {"code": "VT", "name": "Pendoamento", "days": 54},
+        {"code": "R1", "name": "Espiga com boneca", "days": 55},
+        {"code": "R3", "name": "Grão leitoso", "days": 68},
+        {"code": "R6", "name": "Maturação fisiológica", "days": 100},
+        {"code": "Colh", "name": "Colheita", "days": 130},
+    ],
+    "soja": [
+        {"code": "Plantio", "name": "Plantio", "days": 0},
+        {"code": "VE", "name": "Emergência", "days": 5},
+        {"code": "V1", "name": "1º trifólio", "days": 12},
+        {"code": "V4", "name": "4º nó", "days": 25},
+        {"code": "R1", "name": "Início floração", "days": 35},
+        {"code": "R3", "name": "Vagens pequenas", "days": 49},
+        {"code": "R5", "name": "Granação", "days": 65},
+        {"code": "R7", "name": "Início maturação", "days": 92},
+        {"code": "Colh", "name": "Colheita", "days": 115},
+    ],
+    "algodão": [
+        {"code": "Plantio", "name": "Plantio", "days": 0},
+        {"code": "V1", "name": "1 folha verdadeira", "days": 14},
+        {"code": "V4", "name": "4 folhas verdadeiras", "days": 27},
+        {"code": "B1", "name": "1º botão floral", "days": 38},
+        {"code": "F1", "name": "1ª flor aberta", "days": 65},
+        {"code": "C1", "name": "1º capulho aberto", "days": 117},
+        {"code": "Colh", "name": "Colheita", "days": 165},
+    ],
+}
+
+PREDEFINED_VARIETIES = [
+    {"id": 1, "culture": "Soja", "name": "AS 3800 12X"},
+    {"id": 2, "culture": "Soja", "name": "AS 3840 12X"},
+    {"id": 3, "culture": "Soja", "name": "AS 3790 12X"},
+    {"id": 4, "culture": "Soja", "name": "AS 3815 12X"},
+    {"id": 5, "culture": "Soja", "name": "AS 3707 12X"},
+    {"id": 6, "culture": "Soja", "name": "AS 3700 XTD"},
+    {"id": 7, "culture": "Soja", "name": "AS 3640 12X"},
+    {"id": 8, "culture": "Soja", "name": "AS 3715 12X"},
+    {"id": 9,  "culture": "Milho", "name": "AS 1820 PRO4"},
+    {"id": 10, "culture": "Milho", "name": "AS 1868 PRO4"},
+    {"id": 11, "culture": "Milho", "name": "AS 1877 PRO4"},
+    {"id": 12, "culture": "Algodão", "name": "TMG 41"},
+]
+
+@bp.route('/varieties', methods=['GET'])
+def list_varieties():
+    """Lista de variedades pré-definidas para os selects do frontend."""
+    return jsonify(PREDEFINED_VARIETIES), 200
+
+
 bp = Blueprint('api', __name__, url_prefix='/api')
 
 
@@ -297,6 +356,10 @@ def create_planting():
     if not plot:
         return jsonify(message='plot not found'), 404
 
+    # cultura e variedade podem vir do select do frontend
+    culture = data.get('culture')  # esperado: "Milho", "Soja", "Algodão" (case-insensitive ok)
+    variety = data.get('variety')
+
     planting_date = None
     if data.get('planting_date'):
         try:
@@ -306,13 +369,45 @@ def create_planting():
 
     p = Planting(
         plot_id=plot_id,
-        culture=data.get('culture'),
-        variety=data.get('variety'),
+        culture=culture,
+        variety=variety,
         planting_date=planting_date,
     )
     db.session.add(p)
+    db.session.flush()  # para ter p.id
+
+    # === Gerar Visitas automáticas pela fenologia ===
+    # Só se tivermos planting_date e culture mapeada
+    if planting_date and culture:
+        key = culture.strip().lower()
+        stages = PHENOLOGY_TABLES.get(key)
+        if stages:
+            # precisamos de client_id e property_id a partir do plot
+            prop = Property.query.get(plot.property_id) if plot.property_id else None
+            client = Client.query.get(prop.client_id) if (prop and prop.client_id) else None
+
+            for st in stages:
+                try:
+                    visit_date = planting_date + datetime.timedelta(days=int(st['days']))
+                except Exception:
+                    continue  # ignora entrada inválida
+
+                v = Visit(
+                    client_id=(client.id if client else None),
+                    property_id=(prop.id if prop else None),
+                    plot_id=plot.id,
+                    planting_id=p.id,
+                    consultant_id=None,          # opcional — pode preencher depois
+                    date=visit_date,
+                    checklist=None,
+                    diagnosis=None,
+                    recommendation=f"{st['name']} ({st['code']}) — {culture}",
+                )
+                db.session.add(v)
+
     db.session.commit()
     return jsonify(message='planting created', planting=p.to_dict()), 201
+
 
 
 @bp.route('/plantings/<int:pid>', methods=['PUT'])
