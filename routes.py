@@ -3,7 +3,10 @@ import datetime
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
 import jwt
-from models import db, User
+from models import db, Client, Property, Plot, Visit, Planting
+
+
+bp = Blueprint('api', __name__)
 
 # ============================
 # Fenologia + Variedades FIXAS
