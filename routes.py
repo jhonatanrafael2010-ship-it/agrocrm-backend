@@ -535,6 +535,37 @@ def create_visit():
     db.session.commit()
     return jsonify(message='visit created', visit=v.to_dict()), 201
 
+# ======== VISITS BULK INSERT ========
+@bp.route('/visits/bulk', methods=['POST'])
+def create_visits_bulk():
+    """
+    Espera JSON: { "items": [ {client_id, property_id, plot_id, date, recommendation}, ... ] }
+    date em ISO: 'YYYY-MM-DD'
+    """
+    data = request.get_json(silent=True) or {}
+    items = data.get('items', [])
+    if not isinstance(items, list) or not items:
+        return jsonify({"message": "items vazio ou inválido"}), 400
+
+    created = []
+    for it in items:
+        try:
+            v = Visit(
+                client_id=int(it['client_id']),
+                property_id=int(it['property_id']),
+                plot_id=int(it['plot_id']),
+                date=it['date'],  # ISO
+                recommendation=it.get('recommendation') or ''
+            )
+            db.session.add(v)
+            created.append(v)
+        except Exception:
+            db.session.rollback()
+            return jsonify({"message":"Erro ao processar um dos itens"}), 400
+
+    db.session.commit()
+    return jsonify([c.to_dict() for c in created]), 201
+
 
 @bp.route('/visits/<int:vid>', methods=['PUT'])
 def update_visit(vid: int):
