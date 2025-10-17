@@ -81,23 +81,6 @@ def list_visits():
     return jsonify([v.to_dict() for v in visits]), 200
 
 
-@bp.route('/visits', methods=['POST'])
-def create_visit():
-    """Cria uma nova visita individual."""
-    data = request.get_json() or {}
-    visit = Visit(
-        client_id=data.get('client_id'),
-        property_id=data.get('property_id'),
-        plot_id=data.get('plot_id'),
-        consultant_id=data.get('consultant_id'),
-        date=data.get('date'),
-        recommendation=data.get('recommendation'),
-    )
-    db.session.add(visit)
-    db.session.commit()
-    return jsonify(visit.to_dict()), 201
-
-
 @bp.route('/visits/bulk', methods=['POST'])
 def bulk_create_visits():
     """Cria várias visitas de uma vez (cronograma fenológico)."""
