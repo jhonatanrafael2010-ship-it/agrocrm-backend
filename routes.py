@@ -81,6 +81,21 @@ def list_cultures():
     ]
     return jsonify(CULTURES), 200
 
+    # ============================================================
+# 👨‍🌾 CONSULTANTS — lista fixa para o frontend
+# ============================================================
+@bp.route('/consultants', methods=['GET'])
+def list_consultants():
+    CONSULTANTS = [
+        {"id": 1, "name": "Jhonatan"},
+        {"id": 2, "name": "Felipe"},
+        {"id": 3, "name": "Everton"},
+        {"id": 4, "name": "Pedro"},
+        {"id": 5, "name": "Alexandre"}
+    ]
+    return jsonify(CONSULTANTS), 200
+
+
 @bp.route('/hello', methods=['GET'])
 def hello():
     return jsonify(message="Hello from Flask!")
