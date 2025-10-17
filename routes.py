@@ -3,77 +3,17 @@ import datetime
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
 import jwt
-from models import db, Client, Property, Plot, Visit, Planting
-
-
-# ============================
-# Fenologia + Variedades FIXAS
-# ============================
-
-PHENOLOGY_TABLES = {
-    "milho": [
-        {"code": "Plantio", "name": "Plantio", "days": 0},
-        {"code": "VE", "name": "Emergência", "days": 5},
-        {"code": "V1", "name": "1 folha verdadeira", "days": 8},
-        {"code": "V4", "name": "4 folhas verdadeiras", "days": 20},
-        {"code": "VT", "name": "Pendoamento", "days": 54},
-        {"code": "R1", "name": "Espiga com boneca", "days": 55},
-        {"code": "R3", "name": "Grão leitoso", "days": 68},
-        {"code": "R6", "name": "Maturação fisiológica", "days": 100},
-        {"code": "Colh", "name": "Colheita", "days": 130},
-    ],
-    "soja": [
-        {"code": "Plantio", "name": "Plantio", "days": 0},
-        {"code": "VE", "name": "Emergência", "days": 5},
-        {"code": "V1", "name": "1º trifólio", "days": 12},
-        {"code": "V4", "name": "4º nó", "days": 25},
-        {"code": "R1", "name": "Início floração", "days": 35},
-        {"code": "R3", "name": "Vagens pequenas", "days": 49},
-        {"code": "R5", "name": "Granação", "days": 65},
-        {"code": "R7", "name": "Início maturação", "days": 92},
-        {"code": "Colh", "name": "Colheita", "days": 115},
-    ],
-    "algodão": [
-        {"code": "Plantio", "name": "Plantio", "days": 0},
-        {"code": "V1", "name": "1 folha verdadeira", "days": 14},
-        {"code": "V4", "name": "4 folhas verdadeiras", "days": 27},
-        {"code": "B1", "name": "1º botão floral", "days": 38},
-        {"code": "F1", "name": "1ª flor aberta", "days": 65},
-        {"code": "C1", "name": "1º capulho aberto", "days": 117},
-        {"code": "Colh", "name": "Colheita", "days": 165},
-    ],
-}
-
-PREDEFINED_VARIETIES = [
-    {"id": 1, "culture": "Soja", "name": "AS 3800 12X"},
-    {"id": 2, "culture": "Soja", "name": "AS 3840 12X"},
-    {"id": 3, "culture": "Soja", "name": "AS 3790 12X"},
-    {"id": 4, "culture": "Soja", "name": "AS 3815 12X"},
-    {"id": 5, "culture": "Soja", "name": "AS 3707 12X"},
-    {"id": 6, "culture": "Soja", "name": "AS 3700 XTD"},
-    {"id": 7, "culture": "Soja", "name": "AS 3640 12X"},
-    {"id": 8, "culture": "Soja", "name": "AS 3715 12X"},
-    {"id": 9,  "culture": "Milho", "name": "AS 1820 PRO4"},
-    {"id": 10, "culture": "Milho", "name": "AS 1868 PRO4"},
-    {"id": 11, "culture": "Milho", "name": "AS 1877 PRO4"},
-    {"id": 12, "culture": "Algodão", "name": "TMG 41"},
-]
-
+from models import db, User, Client, Property, Plot, Visit, Planting, Opportunity
 
 bp = Blueprint('api', __name__, url_prefix='/api')
 
-
-@bp.route('/varieties', methods=['GET'])
-def list_varieties():
-    """Lista de variedades pré-definidas para os selects do frontend."""
-    return jsonify(PREDEFINED_VARIETIES), 200
-
 # ============================================================
-# 🌱 ROTA DE CULTURAS BÁSICAS (para o select do calendário)
+# 🌾 CULTURAS, VARIEDADES, CONSULTOR
 # ============================================================
+
 @bp.route('/cultures', methods=['GET'])
 def list_cultures():
-    """Lista de culturas principais para o frontend (Milho, Soja, Algodão)."""
+    """Lista de culturas principais para o frontend."""
     CULTURES = [
         {"id": 1, "name": "Milho"},
         {"id": 2, "name": "Soja"},
@@ -81,11 +21,30 @@ def list_cultures():
     ]
     return jsonify(CULTURES), 200
 
-    # ============================================================
-# 👨‍🌾 CONSULTANTS — lista fixa para o frontend
-# ============================================================
+
+@bp.route('/varieties', methods=['GET'])
+def list_varieties():
+    """Lista de variedades fixas."""
+    VARIETIES = [
+        {"id": 1, "culture": "Soja", "name": "AS 3800 12X"},
+        {"id": 2, "culture": "Soja", "name": "AS 3840 12X"},
+        {"id": 3, "culture": "Soja", "name": "AS 3790 12X"},
+        {"id": 4, "culture": "Soja", "name": "AS 3815 12X"},
+        {"id": 5, "culture": "Soja", "name": "AS 3707 12X"},
+        {"id": 6, "culture": "Soja", "name": "AS 3700 XTD"},
+        {"id": 7, "culture": "Soja", "name": "AS 3640 12X"},
+        {"id": 8, "culture": "Soja", "name": "AS 3715 12X"},
+        {"id": 9, "culture": "Milho", "name": "AS 1820 PRO4"},
+        {"id": 10, "culture": "Milho", "name": "AS 1868 PRO4"},
+        {"id": 11, "culture": "Milho", "name": "AS 1877 PRO4"},
+        {"id": 12, "culture": "Algodão", "name": "TMG 41"}
+    ]
+    return jsonify(VARIETIES), 200
+
+
 @bp.route('/consultants', methods=['GET'])
 def list_consultants():
+    """Consultores pré-definidos para seleção em visitas."""
     CONSULTANTS = [
         {"id": 1, "name": "Jhonatan"},
         {"id": 2, "name": "Felipe"},
@@ -94,6 +53,94 @@ def list_consultants():
         {"id": 5, "name": "Alexandre"}
     ]
     return jsonify(CONSULTANTS), 200
+
+
+# ============================================================
+# 🌱 VISITS ENDPOINTS
+# ============================================================
+
+@bp.route('/visits', methods=['GET'])
+def list_visits():
+    """Lista visitas com filtros opcionais."""
+    client_id = request.args.get('client_id', type=int)
+    consultant_id = request.args.get('consultant_id', type=int)
+    property_id = request.args.get('property_id', type=int)
+    plot_id = request.args.get('plot_id', type=int)
+
+    q = Visit.query
+    if client_id:
+        q = q.filter_by(client_id=client_id)
+    if consultant_id:
+        q = q.filter_by(consultant_id=consultant_id)
+    if property_id:
+        q = q.filter_by(property_id=property_id)
+    if plot_id:
+        q = q.filter_by(plot_id=plot_id)
+
+    visits = q.order_by(Visit.date.asc()).all()
+    return jsonify([v.to_dict() for v in visits]), 200
+
+
+@bp.route('/visits', methods=['POST'])
+def create_visit():
+    """Cria uma nova visita individual."""
+    data = request.get_json() or {}
+    visit = Visit(
+        client_id=data.get('client_id'),
+        property_id=data.get('property_id'),
+        plot_id=data.get('plot_id'),
+        consultant_id=data.get('consultant_id'),
+        date=data.get('date'),
+        recommendation=data.get('recommendation'),
+    )
+    db.session.add(visit)
+    db.session.commit()
+    return jsonify(visit.to_dict()), 201
+
+
+@bp.route('/visits/bulk', methods=['POST'])
+def bulk_create_visits():
+    """Cria várias visitas de uma vez (cronograma fenológico)."""
+    data = request.get_json() or {}
+    items = data.get('items', [])
+    created = []
+
+    for item in items:
+        visit = Visit(
+            client_id=item.get('client_id'),
+            property_id=item.get('property_id'),
+            plot_id=item.get('plot_id'),
+            consultant_id=item.get('consultant_id'),
+            date=item.get('date'),
+            recommendation=item.get('recommendation'),
+        )
+        db.session.add(visit)
+        created.append(visit)
+
+    db.session.commit()
+    return jsonify([v.to_dict() for v in created]), 201
+
+
+@bp.route('/visits/<int:visit_id>', methods=['DELETE'])
+def delete_visit(visit_id):
+    """Exclui uma visita pelo ID."""
+    visit = Visit.query.get(visit_id)
+    if not visit:
+        return jsonify({'error': 'Visita não encontrada'}), 404
+    db.session.delete(visit)
+    db.session.commit()
+    return jsonify({'message': 'Visita excluída com sucesso'}), 200
+
+
+# ============================================================
+# 🔧 TESTES E UTILITÁRIOS
+# ============================================================
+
+@bp.route('/ping')
+def ping():
+    """Teste simples para checar se o backend está ativo."""
+    return jsonify({"status": "ok"}), 200
+
 
 
 @bp.route('/hello', methods=['GET'])
