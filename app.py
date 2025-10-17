@@ -3,8 +3,11 @@ from urllib.parse import quote_plus
 from flask import Flask
 from flask_cors import CORS
 from models import db, Culture, Variety
+from routes import bp as api_bp  # ✅ importa as rotas
 
-
+# =====================================================
+# 🌱 Função de Seed: cria Culturas e Variedades fixas
+# =====================================================
 def seed_cultures_and_varieties():
     """Popula Culturas e Variedades fixas se ainda não existirem"""
     data = {
@@ -33,11 +36,16 @@ def seed_cultures_and_varieties():
     print("✅ Culturas e variedades fixas populadas!")
 
 
+# =====================================================
+# 🚀 Criação da Aplicação Flask
+# =====================================================
 def create_app(test_config=None):
     app = Flask(__name__)
     CORS(app)
 
-    # Configuração de banco de dados
+    # ------------------------------------------
+    # Configuração do banco (Postgres ou SQLite)
+    # ------------------------------------------
     internal_url = os.environ.get('INTERNAL_DATABASE_URL') or os.environ.get('DATABASE_URL')
     if internal_url:
         app.config['SQLALCHEMY_DATABASE_URI'] = internal_url
@@ -58,11 +66,21 @@ def create_app(test_config=None):
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     db.init_app(app)
 
-    # Registrar blueprints
-    from routes import bp as api_bp
-    app.register_blueprint(api_bp, url_prefix="/api")
+    # ------------------------------------------
+    # Registro das rotas principais /api
+    # ------------------------------------------
+    app.register_blueprint(api_bp)
 
-    # Criar tabelas e popular culturas/variedades fixas
+    # ------------------------------------------
+    # Endpoint raiz para teste rápido
+    # ------------------------------------------
+    @app.route("/")
+    def index():
+        return "✅ API do AgroCRM rodando com sucesso!"
+
+    # ------------------------------------------
+    # Inicialização do banco e seed
+    # ------------------------------------------
     with app.app_context():
         db.create_all()
         seed_cultures_and_varieties()
@@ -70,7 +88,9 @@ def create_app(test_config=None):
     return app
 
 
-# Para gunicorn e execuções locais
+# =====================================================
+# 👟 Execução local ou Render
+# =====================================================
 app = create_app()
 
 if __name__ == '__main__':

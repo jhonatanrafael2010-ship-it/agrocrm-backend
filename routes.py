@@ -6,8 +6,6 @@ import jwt
 from models import db, Client, Property, Plot, Visit, Planting
 
 
-bp = Blueprint('api', __name__)
-
 # ============================
 # Fenologia + Variedades FIXAS
 # ============================
@@ -61,14 +59,27 @@ PREDEFINED_VARIETIES = [
     {"id": 12, "culture": "Algodão", "name": "TMG 41"},
 ]
 
+
+bp = Blueprint('api', __name__, url_prefix='/api')
+
+
 @bp.route('/varieties', methods=['GET'])
 def list_varieties():
     """Lista de variedades pré-definidas para os selects do frontend."""
     return jsonify(PREDEFINED_VARIETIES), 200
 
-
-bp = Blueprint('api', __name__, url_prefix='/api')
-
+# ============================================================
+# 🌱 ROTA DE CULTURAS BÁSICAS (para o select do calendário)
+# ============================================================
+@bp.route('/cultures', methods=['GET'])
+def list_cultures():
+    """Lista de culturas principais para o frontend (Milho, Soja, Algodão)."""
+    CULTURES = [
+        {"id": 1, "name": "Milho"},
+        {"id": 2, "name": "Soja"},
+        {"id": 3, "name": "Algodão"},
+    ]
+    return jsonify(CULTURES), 200
 
 @bp.route('/hello', methods=['GET'])
 def hello():
