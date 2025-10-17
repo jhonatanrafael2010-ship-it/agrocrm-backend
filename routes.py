@@ -661,16 +661,6 @@ def update_visit(vid: int):
     return jsonify(message='visit updated', visit=v.to_dict()), 200
 
 
-@bp.route('/visits/<int:vid>', methods=['DELETE'])
-def delete_visit(vid: int):
-    v = Visit.query.get(vid)
-    if not v:
-        return jsonify(message='visit not found'), 404
-    db.session.delete(v)
-    db.session.commit()
-    return jsonify(message='visit deleted'), 200
-
-
 # ---- Opportunities CRUD --------------------------------------------
 from models import Opportunity
 
