@@ -42,17 +42,23 @@ def list_varieties():
     return jsonify(VARIETIES), 200
 
 
+# ============================================================
+# 👨‍🌾 CONSULTANTS — lista fixa (IDs estáveis 1..5)
+# ============================================================
+CONSULTANTS = [
+    {"id": 1, "name": "Jhonatan"},
+    {"id": 2, "name": "Felipe"},
+    {"id": 3, "name": "Everton"},
+    {"id": 4, "name": "Pedro"},
+    {"id": 5, "name": "Alexandre"},
+]
+
+CONSULTANT_IDS = {c["id"] for c in CONSULTANTS}
+
 @bp.route('/consultants', methods=['GET'])
 def list_consultants():
-    """Consultores pré-definidos para seleção em visitas."""
-    CONSULTANTS = [
-        {"id": 1, "name": "Jhonatan"},
-        {"id": 2, "name": "Felipe"},
-        {"id": 3, "name": "Everton"},
-        {"id": 4, "name": "Pedro"},
-        {"id": 5, "name": "Alexandre"}
-    ]
     return jsonify(CONSULTANTS), 200
+
 
 
 # ============================================================
@@ -60,48 +66,170 @@ def list_consultants():
 # ============================================================
 
 @bp.route('/visits', methods=['GET'])
-def list_visits():
-    """Lista visitas com filtros opcionais."""
+def get_visits():
+    """
+    Filtros opcionais: client_id, property_id, plot_id, consultant_id, status
+    """
     client_id = request.args.get('client_id', type=int)
-    consultant_id = request.args.get('consultant_id', type=int)
     property_id = request.args.get('property_id', type=int)
     plot_id = request.args.get('plot_id', type=int)
+    consultant_id = request.args.get('consultant_id', type=int)
+    status = request.args.get('status', type=str)
 
     q = Visit.query
-    if client_id:
-        q = q.filter_by(client_id=client_id)
-    if consultant_id:
-        q = q.filter_by(consultant_id=consultant_id)
-    if property_id:
-        q = q.filter_by(property_id=property_id)
-    if plot_id:
-        q = q.filter_by(plot_id=plot_id)
+    if client_id: q = q.filter_by(client_id=client_id)
+    if property_id: q = q.filter_by(property_id=property_id)
+    if plot_id: q = q.filter_by(plot_id=plot_id)
+    if consultant_id: q = q.filter_by(consultant_id=consultant_id)
+    if status: q = q.filter_by(status=status)
 
-    visits = q.order_by(Visit.date.asc()).all()
-    return jsonify([v.to_dict() for v in visits]), 200
+    items = q.order_by(Visit.date.asc()).all()
+    return jsonify([it.to_dict() | {"status": it.status} for it in items]), 200
 
 
-@bp.route('/visits/bulk', methods=['POST'])
-def bulk_create_visits():
-    """Cria várias visitas de uma vez (cronograma fenológico)."""
-    data = request.get_json() or {}
+
+@bp.route('/visits', methods=['POST'])
+def create_visit():
+    data = request.get_json(silent=True) or {}
+    client_id = data.get('client_id')
+    property_id = data.get('property_id')
+    plot_id = data.get('plot_id')
+    consultant_id = data.get('consultant_id')
+    status = (data.get('status') or 'planned').strip().lower()
+
+    if not client_id or not property_id or not plot_id:
+        return jsonify(message='client_id, property_id and plot_id are required'), 400
+
+    # valida existência das FKs principais
+    if not Client.query.get(client_id): return jsonify(message='client not found'), 404
+    if not Property.query.get(property_id): return jsonify(message='property not found'), 404
+    if not Plot.query.get(plot_id): return jsonify(message='plot not found'), 404
+
+    # valida consultor fixo (1..5) se enviado
+    if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
+        return jsonify(message='consultant not found'), 404
+
+    # valida data ISO
+    visit_date = None
+    if data.get('date'):
+        try:
+    from datetime import datetime
+    visit_date = datetime.fromisoformat(data['date']).date()
+        except Exception: return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
+
+    v = Visit(
+        client_id=client_id,
+        property_id=property_id,
+        plot_id=plot_id,
+        consultant_id=consultant_id,
+        date=visit_date,
+        checklist=data.get('checklist'),
+        diagnosis=data.get('diagnosis'),
+        recommendation=data.get('recommendation'),
+        status=status
+    )
+    db.session.add(v)
+    db.session.commit()
+    out = v.to_dict() | {"status": v.status}
+    return jsonify(message='visit created', visit=out), 201
+
+    @bp.route('/visits/bulk', methods=['POST'])
+def create_visits_bulk():
+    """Cria múltiplas visitas de uma vez (usado para gerar cronograma fenológico)."""
+    data = request.get_json(silent=True) or {}
     items = data.get('items', [])
     created = []
 
-    for item in items:
-        visit = Visit(
-            client_id=item.get('client_id'),
-            property_id=item.get('property_id'),
-            plot_id=item.get('plot_id'),
-            consultant_id=item.get('consultant_id'),
-            date=item.get('date'),
-            recommendation=item.get('recommendation'),
+    for it in items:
+        client_id = it.get('client_id')
+        property_id = it.get('property_id')
+        plot_id = it.get('plot_id')
+        consultant_id = it.get('consultant_id')
+        status = (it.get('status') or 'planned').strip().lower()
+
+        if not (client_id and property_id and plot_id and it.get('date')):
+            continue  # ignora entradas incompletas
+
+        # valida FKs
+        if not Client.query.get(client_id): continue
+        if not Property.query.get(property_id): continue
+        if not Plot.query.get(plot_id): continue
+
+        # valida consultor
+        if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
+            continue
+
+        try:
+            from datetime import date as _d
+            visit_date = _d.fromisoformat(it['date'])
+        except Exception:
+            continue
+
+        v = Visit(
+            client_id=client_id,
+            property_id=property_id,
+            plot_id=plot_id,
+            consultant_id=consultant_id,
+            date=visit_date,
+            checklist=None,
+            diagnosis=None,
+            recommendation=it.get('recommendation'),
+            status=status
         )
-        db.session.add(visit)
-        created.append(visit)
+        db.session.add(v)
+        created.append(v)
 
     db.session.commit()
-    return jsonify([v.to_dict() for v in created]), 201
+    return jsonify([v.to_dict() | {"status": v.status} for v in created]), 201
+
+
+@bp.route('/visits/<int:vid>', methods=['PUT'])
+def update_visit(vid: int):
+    v = Visit.query.get(vid)
+    if not v: return jsonify(message='visit not found'), 404
+
+    data = request.get_json(silent=True) or {}
+
+    # campos simples
+    for tf in ('checklist','diagnosis','recommendation'):
+        if tf in data: setattr(v, tf, data[tf])
+
+    # FKs
+    if 'client_id' in data and data['client_id']:
+        if not Client.query.get(data['client_id']): return jsonify(message='client not found'), 404
+        v.client_id = data['client_id']
+    if 'property_id' in data and data['property_id']:
+        if not Property.query.get(data['property_id']): return jsonify(message='property not found'), 404
+        v.property_id = data['property_id']
+    if 'plot_id' in data and data['plot_id']:
+        if not Plot.query.get(data['plot_id']): return jsonify(message='plot not found'), 404
+        v.plot_id = data['plot_id']
+
+    # consultor fixo
+    if 'consultant_id' in data:
+        cid = data['consultant_id']
+        if cid and int(cid) not in CONSULTANT_IDS:
+            return jsonify(message='consultant not found'), 404
+        v.consultant_id = cid
+
+    # data
+    if 'date' in data:
+        if not data['date']:
+            v.date = None
+        else:
+            try:
+                from datetime import date as _d
+                v.date = _d.fromisoformat(data['date'])
+            except Exception:
+                return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
+
+    # status
+    if 'status' in data and data['status']:
+        v.status = data['status'].strip().lower()
+
+    db.session.commit()
+    return jsonify(message='visit updated', visit=v.to_dict() | {"status": v.status}), 200
+
 
 
 @bp.route('/visits/<int:visit_id>', methods=['DELETE'])
@@ -124,6 +252,16 @@ def ping():
     """Teste simples para checar se o backend está ativo."""
     return jsonify({"status": "ok"}), 200
 
+@bp.route('/status')
+def status():
+    """Retorna estado básico do servidor e total de registros."""
+    return jsonify({
+        "ok": True,
+        "clients": Client.query.count(),
+        "properties": Property.query.count(),
+        "plots": Plot.query.count(),
+        "visits": Visit.query.count(),
+    }), 200
 
 
 @bp.route('/hello', methods=['GET'])
@@ -511,155 +649,6 @@ def delete_planting(pid: int):
 # ---- Visits (Visitas) CRUD ------------------------------------------
 from models import Visit
 from datetime import date
-
-
-@bp.route('/visits', methods=['GET'])
-def get_visits():
-    """List visits. Optional filters: client_id, property_id, plot_id, consultant_id"""
-    client_id = request.args.get('client_id', type=int)
-    property_id = request.args.get('property_id', type=int)
-    plot_id = request.args.get('plot_id', type=int)
-    consultant_id = request.args.get('consultant_id', type=int)
-
-    q = Visit.query
-    if client_id:
-        q = q.filter_by(client_id=client_id)
-    if property_id:
-        q = q.filter_by(property_id=property_id)
-    if plot_id:
-        q = q.filter_by(plot_id=plot_id)
-    if consultant_id:
-        q = q.filter_by(consultant_id=consultant_id)
-
-    items = q.order_by(Visit.id.desc()).all()
-    return jsonify([it.to_dict() for it in items]), 200
-
-
-@bp.route('/visits/<int:vid>', methods=['GET'])
-def get_visit(vid: int):
-    v = Visit.query.get(vid)
-    if not v:
-        return jsonify(message='visit not found'), 404
-    return jsonify(v.to_dict()), 200
-
-
-@bp.route('/visits', methods=['POST'])
-def create_visit():
-    data = request.get_json() or {}
-    # required: client_id, property_id, plot_id
-    client_id = data.get('client_id')
-    property_id = data.get('property_id')
-    plot_id = data.get('plot_id')
-    if not client_id or not property_id or not plot_id:
-        return jsonify(message='client_id, property_id and plot_id are required'), 400
-
-    # validate references
-    if not Client.query.get(client_id):
-        return jsonify(message='client not found'), 404
-    if not Property.query.get(property_id):
-        return jsonify(message='property not found'), 404
-    if not Plot.query.get(plot_id):
-        return jsonify(message='plot not found'), 404
-
-    planting_id = data.get('planting_id')
-    if planting_id and not Planting.query.get(planting_id):
-        return jsonify(message='planting not found'), 404
-
-    consultant_id = data.get('consultant_id')
-    if consultant_id and not User.query.get(consultant_id):
-        return jsonify(message='consultant (user) not found'), 404
-
-    visit_date = None
-    if data.get('date'):
-        try:
-            visit_date = date.fromisoformat(data.get('date'))
-        except Exception:
-            return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
-
-    v = Visit(
-        client_id=client_id,
-        property_id=property_id,
-        plot_id=plot_id,
-        planting_id=planting_id,
-        consultant_id=consultant_id,
-        date=visit_date,
-        checklist=data.get('checklist'),
-        diagnosis=data.get('diagnosis'),
-        recommendation=data.get('recommendation'),
-    )
-    db.session.add(v)
-    db.session.commit()
-    return jsonify(message='visit created', visit=v.to_dict()), 201
-
-# ======== VISITS BULK INSERT ========
-@bp.route('/visits/bulk', methods=['POST'])
-def create_visits_bulk():
-    """
-    Espera JSON: { "items": [ {client_id, property_id, plot_id, date, recommendation}, ... ] }
-    date em ISO: 'YYYY-MM-DD'
-    """
-    data = request.get_json(silent=True) or {}
-    items = data.get('items', [])
-    if not isinstance(items, list) or not items:
-        return jsonify({"message": "items vazio ou inválido"}), 400
-
-    created = []
-    for it in items:
-        try:
-            v = Visit(
-                client_id=int(it['client_id']),
-                property_id=int(it['property_id']),
-                plot_id=int(it['plot_id']),
-                date=it['date'],  # ISO
-                recommendation=it.get('recommendation') or ''
-            )
-            db.session.add(v)
-            created.append(v)
-        except Exception:
-            db.session.rollback()
-            return jsonify({"message":"Erro ao processar um dos itens"}), 400
-
-    db.session.commit()
-    return jsonify([c.to_dict() for c in created]), 201
-
-
-@bp.route('/visits/<int:vid>', methods=['PUT'])
-def update_visit(vid: int):
-    v = Visit.query.get(vid)
-    if not v:
-        return jsonify(message='visit not found'), 404
-    data = request.get_json() or {}
-
-    for field in ('client_id', 'property_id', 'plot_id', 'planting_id', 'consultant_id'):
-        if field in data and data.get(field) is not None:
-            # basic existence checks
-            model = {
-                'client_id': Client,
-                'property_id': Property,
-                'plot_id': Plot,
-                'planting_id': Planting,
-                'consultant_id': User,
-            }[field]
-            if not model.query.get(data.get(field)):
-                return jsonify(message=f'{field} reference not found'), 404
-            setattr(v, field, data.get(field))
-
-    if 'date' in data:
-        if data.get('date') in (None, ''):
-            v.date = None
-        else:
-            try:
-                v.date = date.fromisoformat(data.get('date'))
-            except Exception:
-                return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
-
-    for text_field in ('checklist', 'diagnosis', 'recommendation'):
-        if text_field in data:
-            setattr(v, text_field, data.get(text_field))
-
-    db.session.commit()
-    return jsonify(message='visit updated', visit=v.to_dict()), 200
-
 
 # ---- Opportunities CRUD --------------------------------------------
 from models import Opportunity

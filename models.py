@@ -187,6 +187,7 @@ class Visit(db.Model):
     checklist = db.Column(db.Text, nullable=True)
     diagnosis = db.Column(db.Text, nullable=True)
     recommendation = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), nullable=True, server_default='planned')
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
     def to_dict(self):
