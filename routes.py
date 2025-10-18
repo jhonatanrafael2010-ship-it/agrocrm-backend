@@ -64,6 +64,9 @@ def list_consultants():
 
 @bp.route('/visits', methods=['GET'])
 def get_visits():
+    """
+    Filtros opcionais: client_id, property_id, plot_id, consultant_id, status
+    """
     client_id = request.args.get('client_id', type=int)
     property_id = request.args.get('property_id', type=int)
     plot_id = request.args.get('plot_id', type=int)
@@ -77,8 +80,14 @@ def get_visits():
     if consultant_id: q = q.filter_by(consultant_id=consultant_id)
     if status: q = q.filter_by(status=status)
 
-    items = q.order_by(Visit.date.asc()).all()
+    try:
+        items = q.order_by(Visit.date.asc().nullslast()).all()
+    except Exception as e:
+        print(f"⚠️ Erro ao listar visitas: {e}")
+        items = []
+
     return jsonify([it.to_dict() | {"status": it.status} for it in items]), 200
+
 
 
 @bp.route('/visits', methods=['POST'])
