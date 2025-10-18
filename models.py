@@ -191,8 +191,8 @@ class Visit(db.Model):
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
         def to_dict(self):
-        consultant_name = None
-        if self.consultant_id:
+          consultant_name = None
+          if self.consultant_id:
             user = User.query.get(self.consultant_id)
             if user:
                 consultant_name = user.email.split('@')[0] if user.email else f"Consultor {user.id}"
@@ -215,6 +215,7 @@ class Visit(db.Model):
             'status': self.status,
             'created_at': None if not self.created_at else self.created_at.isoformat(),
         }
+
 
 
 class Opportunity(db.Model):
