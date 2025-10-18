@@ -13,7 +13,6 @@ bp = Blueprint('api', __name__, url_prefix='/api')
 
 @bp.route('/cultures', methods=['GET'])
 def list_cultures():
-    """Lista de culturas principais para o frontend."""
     CULTURES = [
         {"id": 1, "name": "Milho"},
         {"id": 2, "name": "Soja"},
@@ -24,7 +23,6 @@ def list_cultures():
 
 @bp.route('/varieties', methods=['GET'])
 def list_varieties():
-    """Lista de variedades fixas."""
     VARIETIES = [
         {"id": 1, "culture": "Soja", "name": "AS 3800 12X"},
         {"id": 2, "culture": "Soja", "name": "AS 3840 12X"},
@@ -60,16 +58,12 @@ def list_consultants():
     return jsonify(CONSULTANTS), 200
 
 
-
 # ============================================================
 # 🌱 VISITS ENDPOINTS
 # ============================================================
 
 @bp.route('/visits', methods=['GET'])
 def get_visits():
-    """
-    Filtros opcionais: client_id, property_id, plot_id, consultant_id, status
-    """
     client_id = request.args.get('client_id', type=int)
     property_id = request.args.get('property_id', type=int)
     plot_id = request.args.get('plot_id', type=int)
@@ -87,7 +81,6 @@ def get_visits():
     return jsonify([it.to_dict() | {"status": it.status} for it in items]), 200
 
 
-
 @bp.route('/visits', methods=['POST'])
 def create_visit():
     data = request.get_json(silent=True) or {}
@@ -100,22 +93,20 @@ def create_visit():
     if not client_id or not property_id or not plot_id:
         return jsonify(message='client_id, property_id and plot_id are required'), 400
 
-    # valida existência das FKs principais
     if not Client.query.get(client_id): return jsonify(message='client not found'), 404
     if not Property.query.get(property_id): return jsonify(message='property not found'), 404
     if not Plot.query.get(plot_id): return jsonify(message='plot not found'), 404
 
-    # valida consultor fixo (1..5) se enviado
     if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
         return jsonify(message='consultant not found'), 404
 
-    # valida data ISO
     visit_date = None
     if data.get('date'):
         try:
-    from datetime import datetime
-    visit_date = datetime.fromisoformat(data['date']).date()
-        except Exception: return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
+            from datetime import datetime
+            visit_date = datetime.fromisoformat(data['date']).date()
+        except Exception:
+            return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
 
     v = Visit(
         client_id=client_id,
@@ -133,9 +124,9 @@ def create_visit():
     out = v.to_dict() | {"status": v.status}
     return jsonify(message='visit created', visit=out), 201
 
-    @bp.route('/visits/bulk', methods=['POST'])
+
+@bp.route('/visits/bulk', methods=['POST'])
 def create_visits_bulk():
-    """Cria múltiplas visitas de uma vez (usado para gerar cronograma fenológico)."""
     data = request.get_json(silent=True) or {}
     items = data.get('items', [])
     created = []
@@ -148,16 +139,12 @@ def create_visits_bulk():
         status = (it.get('status') or 'planned').strip().lower()
 
         if not (client_id and property_id and plot_id and it.get('date')):
-            continue  # ignora entradas incompletas
+            continue
 
-        # valida FKs
         if not Client.query.get(client_id): continue
         if not Property.query.get(property_id): continue
         if not Plot.query.get(plot_id): continue
-
-        # valida consultor
-        if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
-            continue
+        if consultant_id and int(consultant_id) not in CONSULTANT_IDS: continue
 
         try:
             from datetime import date as _d
@@ -186,15 +173,15 @@ def create_visits_bulk():
 @bp.route('/visits/<int:vid>', methods=['PUT'])
 def update_visit(vid: int):
     v = Visit.query.get(vid)
-    if not v: return jsonify(message='visit not found'), 404
+    if not v:
+        return jsonify(message='visit not found'), 404
 
     data = request.get_json(silent=True) or {}
 
-    # campos simples
     for tf in ('checklist','diagnosis','recommendation'):
-        if tf in data: setattr(v, tf, data[tf])
+        if tf in data:
+            setattr(v, tf, data[tf])
 
-    # FKs
     if 'client_id' in data and data['client_id']:
         if not Client.query.get(data['client_id']): return jsonify(message='client not found'), 404
         v.client_id = data['client_id']
@@ -205,14 +192,12 @@ def update_visit(vid: int):
         if not Plot.query.get(data['plot_id']): return jsonify(message='plot not found'), 404
         v.plot_id = data['plot_id']
 
-    # consultor fixo
     if 'consultant_id' in data:
         cid = data['consultant_id']
         if cid and int(cid) not in CONSULTANT_IDS:
             return jsonify(message='consultant not found'), 404
         v.consultant_id = cid
 
-    # data
     if 'date' in data:
         if not data['date']:
             v.date = None
@@ -223,7 +208,6 @@ def update_visit(vid: int):
             except Exception:
                 return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
 
-    # status
     if 'status' in data and data['status']:
         v.status = data['status'].strip().lower()
 
@@ -231,10 +215,8 @@ def update_visit(vid: int):
     return jsonify(message='visit updated', visit=v.to_dict() | {"status": v.status}), 200
 
 
-
 @bp.route('/visits/<int:visit_id>', methods=['DELETE'])
 def delete_visit(visit_id):
-    """Exclui uma visita pelo ID."""
     visit = Visit.query.get(visit_id)
     if not visit:
         return jsonify({'error': 'Visita não encontrada'}), 404
@@ -249,12 +231,11 @@ def delete_visit(visit_id):
 
 @bp.route('/ping')
 def ping():
-    """Teste simples para checar se o backend está ativo."""
     return jsonify({"status": "ok"}), 200
+
 
 @bp.route('/status')
 def status():
-    """Retorna estado básico do servidor e total de registros."""
     return jsonify({
         "ok": True,
         "clients": Client.query.count(),
@@ -262,6 +243,7 @@ def status():
         "plots": Plot.query.count(),
         "visits": Visit.query.count(),
     }), 200
+
 
 
 @bp.route('/hello', methods=['GET'])

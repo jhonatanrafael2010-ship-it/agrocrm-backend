@@ -1,15 +1,16 @@
 import os
 from urllib.parse import quote_plus
-from flask import Flask
+from flask import Flask, jsonify
 from flask_cors import CORS
 from models import db, Culture, Variety
 from routes import bp as api_bp  # ✅ importa as rotas
 
+
 # =====================================================
-# 🌱 Função de Seed: cria Culturas e Variedades fixas
+# 🌱 Seed inicial — Culturas e Variedades fixas
 # =====================================================
 def seed_cultures_and_varieties():
-    """Popula Culturas e Variedades fixas se ainda não existirem"""
+    """Popula Culturas e Variedades fixas se ainda não existirem."""
     data = {
         "Milho": ["AS 1820 PRO4", "AS 1868 PRO4", "AS 1877 PRO4"],
         "Soja": [
@@ -37,16 +38,19 @@ def seed_cultures_and_varieties():
 
 
 # =====================================================
-# 🚀 Criação da Aplicação Flask
+# 🚀 Criação da aplicação Flask
 # =====================================================
 def create_app(test_config=None):
     app = Flask(__name__)
-    CORS(app)
 
-    # ------------------------------------------
-    # Configuração do banco (Postgres ou SQLite)
-    # ------------------------------------------
+    # 🔓 Libera CORS (para o frontend Vue/Vite/React)
+    CORS(app, supports_credentials=True)
+
+    # --------------------------------------------------
+    # ⚙️ Configuração do banco (Render ou local)
+    # --------------------------------------------------
     internal_url = os.environ.get('INTERNAL_DATABASE_URL') or os.environ.get('DATABASE_URL')
+
     if internal_url:
         app.config['SQLALCHEMY_DATABASE_URI'] = internal_url
     else:
@@ -59,39 +63,53 @@ def create_app(test_config=None):
         if db_user and db_pass and db_host and db_name:
             db_pass_enc = quote_plus(db_pass)
             port_part = f":{db_port}" if db_port else ""
-            app.config['SQLALCHEMY_DATABASE_URI'] = f"postgresql://{db_user}:{db_pass_enc}@{db_host}{port_part}/{db_name}"
+            app.config['SQLALCHEMY_DATABASE_URI'] = (
+                f"postgresql://{db_user}:{db_pass_enc}@{db_host}{port_part}/{db_name}"
+            )
         else:
             app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret')
+
+    # --------------------------------------------------
+    # 🔗 Inicializa extensões
+    # --------------------------------------------------
     db.init_app(app)
 
-    # ------------------------------------------
-    # Registro das rotas principais /api
-    # ------------------------------------------
+    # --------------------------------------------------
+    # 🧩 Registra o Blueprint da API
+    # --------------------------------------------------
     app.register_blueprint(api_bp)
 
-    # ------------------------------------------
-    # Endpoint raiz para teste rápido
-    # ------------------------------------------
+    # --------------------------------------------------
+    # 🩺 Endpoint raiz para teste rápido
+    # --------------------------------------------------
     @app.route("/")
     def index():
-        return "✅ API do AgroCRM rodando com sucesso!"
+        return jsonify({
+            "message": "✅ API do AgroCRM rodando com sucesso!",
+            "version": "1.0",
+            "status": "ok"
+        })
 
-    # ------------------------------------------
-    # Inicialização do banco e seed
-    # ------------------------------------------
+    # --------------------------------------------------
+    # 🧱 Inicialização do banco + seeds
+    # --------------------------------------------------
     with app.app_context():
         db.create_all()
-        seed_cultures_and_varieties()
+        try:
+            seed_cultures_and_varieties()
+        except Exception as e:
+            print(f"⚠️ Erro ao executar seed: {e}")
 
     return app
 
 
 # =====================================================
-# 👟 Execução local ou Render
+# 👟 Execução local e Render
 # =====================================================
 app = create_app()
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
