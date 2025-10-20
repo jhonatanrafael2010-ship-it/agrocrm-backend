@@ -91,46 +91,64 @@ def get_visits():
 
 @bp.route('/visits', methods=['POST'])
 def create_visit():
+    """Cria uma nova visita técnica."""
+    from datetime import datetime
+
     data = request.get_json(silent=True) or {}
-    client_id = data.get('client_id')
-    property_id = data.get('property_id')
-    plot_id = data.get('plot_id')
-    consultant_id = data.get('consultant_id')
-    status = (data.get('status') or 'planned').strip().lower()
 
-    if not client_id or not property_id or not plot_id:
-        return jsonify(message='client_id, property_id and plot_id are required'), 400
+    try:
+        client_id = data.get('client_id')
+        property_id = data.get('property_id')
+        plot_id = data.get('plot_id')
+        consultant_id = data.get('consultant_id')
+        status = (data.get('status') or 'planned').strip().lower()
 
-    if not Client.query.get(client_id): return jsonify(message='client not found'), 404
-    if not Property.query.get(property_id): return jsonify(message='property not found'), 404
-    if not Plot.query.get(plot_id): return jsonify(message='plot not found'), 404
+        # 🧩 Valida campos obrigatórios
+        if not client_id or not property_id or not plot_id:
+            return jsonify(error='client_id, property_id e plot_id são obrigatórios'), 400
 
-    if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
-        return jsonify(message='consultant not found'), 404
+        if not Client.query.get(client_id):
+            return jsonify(error='Cliente não encontrado'), 404
+        if not Property.query.get(property_id):
+            return jsonify(error='Propriedade não encontrada'), 404
+        if not Plot.query.get(plot_id):
+            return jsonify(error='Talhão não encontrado'), 404
 
-    visit_date = None
-    if data.get('date'):
-        try:
-            from datetime import datetime
-            visit_date = datetime.fromisoformat(data['date']).date()
-        except Exception:
-            return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
+        # 🧠 Valida data (aceita formato "2025-10-18" ou ISO completo)
+        visit_date = None
+        if data.get('date'):
+            try:
+                date_str = data['date']
+                if "T" in date_str:  # trata ISO 8601
+                    date_str = date_str.split("T")[0]
+                visit_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except Exception:
+                return jsonify(error='Formato de data inválido, use YYYY-MM-DD'), 400
 
-    v = Visit(
-        client_id=client_id,
-        property_id=property_id,
-        plot_id=plot_id,
-        consultant_id=consultant_id,
-        date=visit_date,
-        checklist=data.get('checklist'),
-        diagnosis=data.get('diagnosis'),
-        recommendation=data.get('recommendation'),
-        status=status
-    )
-    db.session.add(v)
-    db.session.commit()
-    out = v.to_dict() | {"status": v.status}
-    return jsonify(message='visit created', visit=out), 201
+        # 🧱 Cria a visita
+        visit = Visit(
+            client_id=client_id,
+            property_id=property_id,
+            plot_id=plot_id,
+            consultant_id=consultant_id,
+            date=visit_date,
+            checklist=data.get('checklist'),
+            diagnosis=data.get('diagnosis'),
+            recommendation=data.get('recommendation'),
+            status=status
+        )
+
+        db.session.add(visit)
+        db.session.commit()
+
+        print(f"✅ Nova visita criada: ID {visit.id}")
+        return jsonify(visit.to_dict()), 201
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"⚠️ Erro ao criar visita: {e}")
+        return jsonify(error=str(e)), 500
+
 
 
 @bp.route('/visits/bulk', methods=['POST'])
@@ -233,7 +251,7 @@ def delete_visit(visit_id):
     return jsonify({'message': 'Visita excluída com sucesso'}), 200
 
 
-    
+
 
 @bp.route('/phenology/schedule', methods=['GET'])
 def get_phenology_schedule():
