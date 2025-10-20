@@ -2,13 +2,15 @@ import os
 from urllib.parse import quote_plus
 from flask import Flask, jsonify
 from flask_cors import CORS
-from models import db, Culture, Variety
+from models import db, Culture, Variety, PhenologyStage
+from flask_migrate import Migrate
 from routes import bp as api_bp  # ✅ importa as rotas
 
 
 # =====================================================
-# 🌱 Seed inicial — Culturas e Variedades fixas
+# 🌱 Seed inicial — Culturas, Variedades e Fenologia
 # =====================================================
+
 def seed_cultures_and_varieties():
     """Popula Culturas e Variedades fixas se ainda não existirem."""
     data = {
@@ -35,6 +37,45 @@ def seed_cultures_and_varieties():
 
     db.session.commit()
     print("✅ Culturas e variedades fixas populadas!")
+
+
+def seed_phenology_stages():
+    """Popula estágios fenológicos fixos para Milho, Soja e Algodão."""
+    stages = [
+        # 🌽 Milho
+        ("Milho", "VE", "Emergência", 0),
+        ("Milho", "V4", "4 folhas expandidas", 21),
+        ("Milho", "VT", "Pendoamento", 60),
+        ("Milho", "R1", "Florescimento", 70),
+        ("Milho", "R6", "Maturação fisiológica", 120),
+        # 🌱 Soja
+        ("Soja", "VE", "Emergência", 0),
+        ("Soja", "V4", "4 nós expandidos", 25),
+        ("Soja", "R1", "Início de florescimento", 50),
+        ("Soja", "R5", "Enchimento de grãos", 90),
+        ("Soja", "R8", "Maturação fisiológica", 120),
+        # ☁️ Algodão
+        ("Algodão", "VE", "Emergência", 0),
+        ("Algodão", "B1", "Botão floral", 45),
+        ("Algodão", "F", "Florescimento", 65),
+        ("Algodão", "CA", "Capulho aberto", 120),
+    ]
+
+    for culture, code, name, days in stages:
+        exists = PhenologyStage.query.filter_by(culture=culture, code=code).first()
+        if not exists:
+            db.session.add(
+                PhenologyStage(
+                    culture=culture,
+                    code=code,
+                    name=name,
+                    days=days  # ✅ CORRETO — não use days_after_planting
+                )
+            )
+
+    db.session.commit()
+    print("✅ Estágios fenológicos fixos populados!")
+
 
 
 # =====================================================
@@ -72,10 +113,20 @@ def create_app(test_config=None):
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret')
 
+    # 🔧 Configurações do pool de conexão — evita quedas no Render
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        "pool_pre_ping": True,
+        "pool_recycle": 280,
+        "pool_size": 5,
+        "max_overflow": 10
+    }
+
     # --------------------------------------------------
     # 🔗 Inicializa extensões
     # --------------------------------------------------
     db.init_app(app)
+    migrate = Migrate(app, db)
+
 
     # --------------------------------------------------
     # 🧩 Registra o Blueprint da API
@@ -100,6 +151,7 @@ def create_app(test_config=None):
         db.create_all()
         try:
             seed_cultures_and_varieties()
+            seed_phenology_stages()
         except Exception as e:
             print(f"⚠️ Erro ao executar seed: {e}")
 

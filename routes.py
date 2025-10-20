@@ -64,29 +64,28 @@ def list_consultants():
 
 @bp.route('/visits', methods=['GET'])
 def get_visits():
-    """
-    Filtros opcionais: client_id, property_id, plot_id, consultant_id, status
-    """
-    client_id = request.args.get('client_id', type=int)
-    property_id = request.args.get('property_id', type=int)
-    plot_id = request.args.get('plot_id', type=int)
-    consultant_id = request.args.get('consultant_id', type=int)
-    status = request.args.get('status', type=str)
-
-    q = Visit.query
-    if client_id: q = q.filter_by(client_id=client_id)
-    if property_id: q = q.filter_by(property_id=property_id)
-    if plot_id: q = q.filter_by(plot_id=plot_id)
-    if consultant_id: q = q.filter_by(consultant_id=consultant_id)
-    if status: q = q.filter_by(status=status)
-
+    """Retorna as visitas com filtros opcionais (client, property, plot, consultant, status)."""
     try:
+        client_id = request.args.get('client_id', type=int)
+        property_id = request.args.get('property_id', type=int)
+        plot_id = request.args.get('plot_id', type=int)
+        consultant_id = request.args.get('consultant_id', type=int)
+        status = request.args.get('status', type=str)
+
+        q = Visit.query
+        if client_id: q = q.filter_by(client_id=client_id)
+        if property_id: q = q.filter_by(property_id=property_id)
+        if plot_id: q = q.filter_by(plot_id=plot_id)
+        if consultant_id: q = q.filter_by(consultant_id=consultant_id)
+        if status: q = q.filter_by(status=status)
+
         items = q.order_by(Visit.date.asc().nullslast()).all()
+        return jsonify([it.to_dict() | {"status": it.status} for it in items]), 200
+
     except Exception as e:
         print(f"⚠️ Erro ao listar visitas: {e}")
-        items = []
+        return jsonify(error=str(e)), 500
 
-    return jsonify([it.to_dict() | {"status": it.status} for it in items]), 200
 
 
 
@@ -233,6 +232,43 @@ def delete_visit(visit_id):
     db.session.commit()
     return jsonify({'message': 'Visita excluída com sucesso'}), 200
 
+
+    
+
+@bp.route('/phenology/schedule', methods=['GET'])
+def get_phenology_schedule():
+    """
+    Retorna o cronograma fenológico para uma cultura e data de plantio.
+    Exemplo de uso:
+    /api/phenology/schedule?culture=Milho&planting_date=2025-10-12
+    """
+    culture = request.args.get('culture')
+    planting_date = request.args.get('planting_date')
+
+    if not culture or not planting_date:
+        return jsonify(message="culture and planting_date required"), 400
+
+    try:
+        from datetime import datetime, timedelta
+        planting_date = datetime.fromisoformat(planting_date).date()
+    except Exception:
+        return jsonify(message="invalid planting_date, expected YYYY-MM-DD"), 400
+
+    stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days_after_planting).all()
+    if not stages:
+        return jsonify([]), 200
+
+    events = []
+    for st in stages:
+        date = planting_date + timedelta(days=st.days_after_planting)
+        events.append({
+            "stage": st.name,
+            "code": st.code,
+            "suggested_date": date.isoformat(),
+            "color": "#60a5fa",  # azul para visitas planejadas
+        })
+
+    return jsonify(events), 200
 
 # ============================================================
 # 🔧 TESTES E UTILITÁRIOS
@@ -412,17 +448,20 @@ from models import Plot
 
 @bp.route('/plots', methods=['GET'])
 def get_plots():
-    """List plots. Optional query params: property_id or client_id to filter."""
-    property_id = request.args.get('property_id', type=int)
-    client_id = request.args.get('client_id', type=int)
-    q = Plot.query
-    if property_id:
-        q = q.filter_by(property_id=property_id)
-    if client_id:
-        # join through Property -> filter by client_id
-        q = q.join(Property).filter(Property.client_id == client_id)
-    plots = q.order_by(Plot.id.desc()).all()
-    return jsonify([pl.to_dict() for pl in plots]), 200
+    try:
+        property_id = request.args.get('property_id', type=int)
+        client_id = request.args.get('client_id', type=int)
+        q = Plot.query
+        if property_id:
+            q = q.filter_by(property_id=property_id)
+        if client_id:
+            q = q.join(Property).filter(Property.client_id == client_id)
+        plots = q.order_by(Plot.id.desc()).all()
+        return jsonify([pl.to_dict() for pl in plots]), 200
+    except Exception as e:
+        print(f"❌ Erro em /plots: {e}")
+        return jsonify(error=str(e)), 500
+
 
 
 @bp.route('/plots/<int:plot_id>', methods=['GET'])

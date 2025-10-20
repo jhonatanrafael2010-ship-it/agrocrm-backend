@@ -208,12 +208,12 @@ class Visit(db.Model):
             'planting_id': self.planting_id,
             'consultant_id': self.consultant_id,
             'consultant_name': consultant_name,
-            'date': None if not self.date else self.date.isoformat(),
+            'date': self.date.isoformat() if self.date else None,
             'checklist': self.checklist,
             'diagnosis': self.diagnosis,
             'recommendation': self.recommendation,
             'status': self.status,
-            'created_at': None if not self.created_at else self.created_at.isoformat(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
 
@@ -267,6 +267,25 @@ class Variety(db.Model):
     culture_id = db.Column(db.Integer, db.ForeignKey('cultures.id'), nullable=False)
     name = db.Column(db.String(80), nullable=False)
     culture = db.relationship('Culture', backref='varieties')
+
+class PhenologyStage(db.Model):
+    """Tabela de estágios fenológicos para gerar visitas automáticas"""
+    __tablename__ = 'phenology_stages'
+
+    id = db.Column(db.Integer, primary_key=True)
+    culture = db.Column(db.String(50), nullable=False)  # Ex: "Milho"
+    code = db.Column(db.String(20), nullable=False)     # Ex: "V4"
+    name = db.Column(db.String(100), nullable=False)    # Ex: "Crescimento vegetativo"
+    days = db.Column(db.Integer, nullable=False)        # Ex: dias após plantio
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'culture': self.culture,
+            'code': self.code,
+            'name': self.name,
+            'days': self.days,
+        }
 
 
 
