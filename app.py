@@ -2,13 +2,13 @@ import os
 from urllib.parse import quote_plus
 from flask import Flask, jsonify
 from flask_cors import CORS
-from models import db, Culture, Variety, PhenologyStage
+from models import db, Culture, Variety, PhenologyStage, User
 from flask_migrate import Migrate
-from routes import bp as api_bp  # ✅ importa as rotas
-
+from routes import bp as api_bp
+from werkzeug.security import generate_password_hash
 
 # =====================================================
-# 🌱 Seed inicial — Culturas, Variedades e Fenologia
+# 🌱 Seeds iniciais — Culturas, Variedades, Fenologia e Usuário padrão
 # =====================================================
 
 def seed_cultures_and_varieties():
@@ -69,7 +69,7 @@ def seed_phenology_stages():
                     culture=culture,
                     code=code,
                     name=name,
-                    days=days  # ✅ CORRETO — não use days_after_planting
+                    days=days
                 )
             )
 
@@ -77,19 +77,30 @@ def seed_phenology_stages():
     print("✅ Estágios fenológicos fixos populados!")
 
 
+def seed_default_user():
+    """Cria um consultor padrão se não existir (id=1)."""
+    user = User.query.get(1)
+    if not user:
+        user = User(
+            id=1,
+            email="consultor@agrocrm.com",
+            password_hash=generate_password_hash("123456")
+        )
+        db.session.add(user)
+        db.session.commit()
+        print("✅ Usuário padrão criado (consultor@agrocrm.com / 123456)")
+    else:
+        print("ℹ️ Usuário padrão já existe.")
+
 
 # =====================================================
 # 🚀 Criação da aplicação Flask
 # =====================================================
 def create_app(test_config=None):
     app = Flask(__name__)
-
-    # 🔓 Libera CORS (para o frontend Vue/Vite/React)
     CORS(app, supports_credentials=True)
 
-    # --------------------------------------------------
-    # ⚙️ Configuração do banco (Render ou local)
-    # --------------------------------------------------
+    # Configuração do banco
     internal_url = os.environ.get('INTERNAL_DATABASE_URL') or os.environ.get('DATABASE_URL')
 
     if internal_url:
@@ -112,8 +123,6 @@ def create_app(test_config=None):
 
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret')
-
-    # 🔧 Configurações do pool de conexão — evita quedas no Render
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
         "pool_pre_ping": True,
         "pool_recycle": 280,
@@ -121,21 +130,11 @@ def create_app(test_config=None):
         "max_overflow": 10
     }
 
-    # --------------------------------------------------
-    # 🔗 Inicializa extensões
-    # --------------------------------------------------
+    # Inicializa extensões
     db.init_app(app)
-    migrate = Migrate(app, db)
-
-
-    # --------------------------------------------------
-    # 🧩 Registra o Blueprint da API
-    # --------------------------------------------------
+    Migrate(app, db)
     app.register_blueprint(api_bp)
 
-    # --------------------------------------------------
-    # 🩺 Endpoint raiz para teste rápido
-    # --------------------------------------------------
     @app.route("/")
     def index():
         return jsonify({
@@ -144,14 +143,13 @@ def create_app(test_config=None):
             "status": "ok"
         })
 
-    # --------------------------------------------------
-    # 🧱 Inicialização do banco + seeds
-    # --------------------------------------------------
+    # Seeds iniciais
     with app.app_context():
         db.create_all()
         try:
             seed_cultures_and_varieties()
             seed_phenology_stages()
+            seed_default_user()
         except Exception as e:
             print(f"⚠️ Erro ao executar seed: {e}")
 
