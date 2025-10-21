@@ -178,17 +178,6 @@ class Planting(db.Model):
 
 
 class Visit(db.Model):
-    """Visit (Visita) model.
-
-    Fields from the UI:
-    - client_id, property_id, plot_id, planting_id (optional)
-    - consultant_id: FK to users (optional)
-    - date: date of visit
-    - checklist: text
-    - diagnosis: text
-    - recommendation: text
-    """
-
     __tablename__ = 'visits'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -205,7 +194,6 @@ class Visit(db.Model):
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
     def to_dict(self):
-        # Corrige falha para consultores sem registro no banco
         consultant_name = None
         try:
             if self.consultant_id:
@@ -217,6 +205,14 @@ class Visit(db.Model):
                     consultant_name = match or f"Consultor {self.consultant_id}"
         except Exception:
             consultant_name = f"Consultor {self.consultant_id or ''}".strip()
+
+        # Formatação para exibir corretamente no calendário
+        client_line = f"👤 {self.client.name}" if self.client else ""
+        variety_line = f"🌱 {self.planting.variety}" if getattr(self, 'planting', None) and self.planting.variety else ""
+        stage_line = f"📍 {self.recommendation}" if self.recommendation else ""
+        consultant_line = f"👨‍🌾 {consultant_name}" if consultant_name else ""
+
+        display_text = "<br>".join(filter(None, [client_line, variety_line, stage_line, consultant_line]))
 
         return {
             'id': self.id,
@@ -237,7 +233,9 @@ class Visit(db.Model):
             'culture': (self.planting.culture if getattr(self, 'planting', None) else None),
             'variety': (self.planting.variety if getattr(self, 'planting', None) else None),
             'created_at': self.created_at.isoformat() if self.created_at else None,
+            'display_text': display_text  # 👈 já vem pronto pro calendário
         }
+
 
 
 

@@ -100,29 +100,24 @@ def create_visit():
     gen_schedule = bool(data.get('generate_schedule'))
     culture = data.get('culture')
     variety = data.get('variety')
-    date_str = data.get('date')  # formato "YYYY-MM-DD"
+    date_str = data.get('date')
 
     if not client_id or not property_id or not plot_id:
         return jsonify(message='client_id, property_id and plot_id are required'), 400
 
-    # validações
     if not Client.query.get(client_id): return jsonify(message='client not found'), 404
     if not Property.query.get(property_id): return jsonify(message='property not found'), 404
     if not Plot.query.get(plot_id): return jsonify(message='plot not found'), 404
     if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
         return jsonify(message='consultant not found'), 404
 
-    # Converte a data sem alterar fuso horário
-    visit_date = None
-    if date_str:
-        try:
-            from datetime import date as _d
-            visit_date = _d.fromisoformat(date_str)
-        except Exception as e:
-            print("Erro ao converter data:", e)
-            return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
+    from datetime import date as _d, timedelta
+    try:
+        visit_date = _d.fromisoformat(date_str)
+    except Exception:
+        return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
 
-    # --------------- sem cronograma -----------------
+    # ✅ sem cronograma
     if not gen_schedule:
         v = Visit(
             client_id=client_id,
@@ -139,9 +134,9 @@ def create_visit():
         db.session.commit()
         return jsonify(message='visit created', visit=v.to_dict()), 201
 
-    # --------------- com cronograma -----------------
-    if not (culture and variety and visit_date):
-        return jsonify(message='culture, variety and date are required when generate_schedule=true'), 400
+    # ✅ com cronograma
+    if not (culture and variety):
+        return jsonify(message='culture and variety required'), 400
 
     p = Planting(plot_id=plot_id, culture=culture, variety=variety, planting_date=visit_date)
     db.session.add(p)
@@ -164,10 +159,7 @@ def create_visit():
     for st in stages:
         if st.days == 0:
             continue
-        try:
-            fut_date = visit_date + datetime.timedelta(days=int(st.days))
-        except Exception:
-            continue
+        fut_date = visit_date + timedelta(days=int(st.days))
         vv = Visit(
             client_id=client_id,
             property_id=property_id,
@@ -182,6 +174,7 @@ def create_visit():
 
     db.session.commit()
     return jsonify(message='visit created with schedule', visit=v0.to_dict()), 201
+
 
 
 
@@ -284,20 +277,20 @@ def delete_visit(visit_id):
     if not visit:
         return jsonify({'error': 'Visita não encontrada'}), 404
 
-    # Se for a visita de Plantio, exclui o Planting e todas as relacionadas
-    if visit.planting_id and (visit.recommendation or '').strip().lower().startswith('plantio'):
+    # ✅ Se for plantio, remove o Planting e visitas associadas
+    if visit.planting_id and (visit.recommendation or '').lower().startswith('plantio'):
         planting = Planting.query.get(visit.planting_id)
         if planting:
+            # Força o carregamento de todas as visitas vinculadas
+            _ = planting.visits.all()
             db.session.delete(planting)
             db.session.commit()
-            return jsonify({'message': 'Plantio e todas as visitas do cronograma foram excluídos'}), 200
+            return jsonify({'message': 'Plantio e visitas associadas foram excluídos'}), 200
 
-    # Caso contrário, remove só a visita isolada
+    # Caso contrário, só remove a visita isolada
     db.session.delete(visit)
     db.session.commit()
     return jsonify({'message': 'Visita excluída com sucesso'}), 200
-
-
 
 
 
