@@ -4,6 +4,18 @@ from werkzeug.security import generate_password_hash, check_password_hash
 db = SQLAlchemy()
 
 
+# ============================================================
+# 👨‍🌾 Lista fixa de consultores (sincronizada com routes.py)
+# ============================================================
+CONSULTANTS = [
+    {"id": 1, "name": "Jhonatan"},
+    {"id": 2, "name": "Felipe"},
+    {"id": 3, "name": "Everton"},
+    {"id": 4, "name": "Pedro"},
+    {"id": 5, "name": "Alexandre"},
+]
+
+
 class User(db.Model):
     __tablename__ = 'users'
 
@@ -198,30 +210,30 @@ class Visit(db.Model):
             if user and user.email:
                 consultant_name = user.email.split('@')[0]
             else:
-                from routes import CONSULTANTS
                 match = next((c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id), None)
                 consultant_name = match or f"Consultor {self.consultant_id}"
 
-        return {
-            'id': self.id,
-            'client_id': self.client_id,
-            'client_name': self.client.name if self.client else None,
-            'property_id': self.property_id,
-            'property_name': self.property.name if self.property else None,
-            'plot_id': self.plot_id,
-            'plot_name': self.plot.name if self.plot else None,
-            'planting_id': self.planting_id,
-            'consultant_id': self.consultant_id,
-            'consultant_name': consultant_name,
-            'date': None if not self.date else self.date.isoformat(),
-            'checklist': self.checklist,
-            'diagnosis': self.diagnosis,
-            'recommendation': self.recommendation,
-            'status': self.status,
-            'culture': (self.planting.culture if getattr(self, 'planting', None) else None),
-            'variety': (self.planting.variety if getattr(self, 'planting', None) else None),
-            'created_at': None if not self.created_at else self.created_at.isoformat(),
-        }
+    return {
+        'id': self.id,
+        'client_id': self.client_id,
+        'client_name': self.client.name if self.client else None,
+        'property_id': self.property_id,
+        'property_name': self.property.name if self.property else None,
+        'plot_id': self.plot_id,
+        'plot_name': self.plot.name if self.plot else None,
+        'planting_id': self.planting_id,
+        'consultant_id': self.consultant_id,
+        'consultant_name': consultant_name,
+        'date': None if not self.date else self.date.isoformat(),
+        'checklist': self.checklist,
+        'diagnosis': self.diagnosis,
+        'recommendation': self.recommendation,
+        'status': self.status,
+        'culture': (self.planting.culture if getattr(self, 'planting', None) else None),
+        'variety': (self.planting.variety if getattr(self, 'planting', None) else None),
+        'created_at': None if not self.created_at else self.created_at.isoformat(),
+    }
+
 
 
 
