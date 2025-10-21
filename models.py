@@ -160,7 +160,8 @@ class Planting(db.Model):
             'created_at': None if not self.created_at else self.created_at.isoformat(),
         }
     # relationship to visits
-    visits = db.relationship('Visit', backref='planting', lazy='dynamic', cascade='all, delete-orphan')
+    visits = db.relationship('Visit', backref='planting', lazy='select', cascade='all, delete-orphan')
+
 
 
 class Visit(db.Model):
@@ -191,35 +192,37 @@ class Visit(db.Model):
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
     def to_dict(self):
-        consultant_name = None
-        if self.consultant_id:
-            user = User.query.get(self.consultant_id)
-            if user:
-                consultant_name = (
-                    user.email.split('@')[0] if user.email else f"Consultor {user.id}"
-                )
+    consultant_name = None
+    if self.consultant_id:
+        user = User.query.get(self.consultant_id)
+        if user and user.email:
+            consultant_name = user.email.split('@')[0]
+        else:
+            # Se não existe user no banco, pega o nome fixo da lista CONSULTANTS
+            from routes import CONSULTANTS  # 👈 importa só quando necessário, para evitar import circular
+            match = next((c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id), None)
+            consultant_name = match or f"Consultor {self.consultant_id}"
 
-        return {
-            'id': self.id,
-            'client_id': self.client_id,
-            'client_name': self.client.name if self.client else None,
-            'property_id': self.property_id,
-            'property_name': self.property.name if self.property else None,
-            'plot_id': self.plot_id,
-            'plot_name': self.plot.name if self.plot else None,
-            'planting_id': self.planting_id,
-            'consultant_id': self.consultant_id,
-            'consultant_name': consultant_name,
-            'date': None if not self.date else self.date.isoformat(),
-            'checklist': self.checklist,
-            'diagnosis': self.diagnosis,
-            'recommendation': self.recommendation,
-            'status': self.status,
-            'culture': (self.planting.culture if getattr(self, 'planting', None) else None),
-            'variety': (self.planting.variety if getattr(self, 'planting', None) else None),
-            'created_at': None if not self.created_at else self.created_at.isoformat(),
-        }
-
+    return {
+        'id': self.id,
+        'client_id': self.client_id,
+        'client_name': self.client.name if self.client else None,
+        'property_id': self.property_id,
+        'property_name': self.property.name if self.property else None,
+        'plot_id': self.plot_id,
+        'plot_name': self.plot.name if self.plot else None,
+        'planting_id': self.planting_id,
+        'consultant_id': self.consultant_id,
+        'consultant_name': consultant_name,
+        'date': None if not self.date else self.date.isoformat(),
+        'checklist': self.checklist,
+        'diagnosis': self.diagnosis,
+        'recommendation': self.recommendation,
+        'status': self.status,
+        'culture': (self.planting.culture if getattr(self, 'planting', None) else None),
+        'variety': (self.planting.variety if getattr(self, 'planting', None) else None),
+        'created_at': None if not self.created_at else self.created_at.isoformat(),
+    }
 
 
 
