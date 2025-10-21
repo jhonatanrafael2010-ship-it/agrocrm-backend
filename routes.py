@@ -112,16 +112,17 @@ def create_visit():
     if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
         return jsonify(message='consultant not found'), 404
 
-    visit_date = None
-if date_str:
-    try:
-        from datetime import datetime, timedelta, timezone
-        # Converte string para datetime local (corrigindo UTC-3)
-        visit_date = datetime.fromisoformat(date_str)
-        visit_date = (visit_date + timedelta(hours=3)).date()  # 👈 ajusta fuso -3h
-    except Exception as e:
-        print("Erro ao converter data:", e)
-        return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
+        visit_date = None
+    if date_str:
+        try:
+            from datetime import datetime, timedelta, timezone
+            # Converte string para datetime local (corrigindo UTC-3)
+            visit_date = datetime.fromisoformat(date_str)
+            visit_date = (visit_date + timedelta(hours=3)).date()  # 👈 ajusta fuso -3h
+        except Exception as e:
+            print("Erro ao converter data:", e)
+            return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
+
 
 
     # -------------------------
