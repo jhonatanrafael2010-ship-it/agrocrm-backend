@@ -153,13 +153,14 @@ class Planting(db.Model):
     """
 
     __tablename__ = 'plantings'
-
     id = db.Column(db.Integer, primary_key=True)
     plot_id = db.Column(db.Integer, db.ForeignKey('plots.id'), nullable=False, index=True)
     culture = db.Column(db.String(120), nullable=True)
     variety = db.Column(db.String(200), nullable=True)
     planting_date = db.Column(db.Date, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+
+    visits = db.relationship('Visit', backref='planting', lazy='select', cascade='all, delete-orphan')
 
     def to_dict(self):
         return {

@@ -113,12 +113,16 @@ def create_visit():
         return jsonify(message='consultant not found'), 404
 
     visit_date = None
-    if date_str:
-        try:
-            from datetime import date as _d
-            visit_date = _d.fromisoformat(date_str)   # 👈 sem timezone
-        except Exception:
-            return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
+if date_str:
+    try:
+        from datetime import datetime, timedelta, timezone
+        # Converte string para datetime local (corrigindo UTC-3)
+        visit_date = datetime.fromisoformat(date_str)
+        visit_date = (visit_date + timedelta(hours=3)).date()  # 👈 ajusta fuso -3h
+    except Exception as e:
+        print("Erro ao converter data:", e)
+        return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
+
 
     # -------------------------
     # Sem cronograma → cria só a visita
@@ -296,14 +300,15 @@ def delete_visit(visit_id):
     if not visit:
         return jsonify({'error': 'Visita não encontrada'}), 404
 
-    # Se for a visita de Plantio (primeira do cronograma) e tiver planting_id,
+    
     # exclui o Planting inteiro → apaga todas as visitas desse cronograma
-    if visit.planting_id and (visit.recommendation or "").strip().lower() == "plantio":
-        planting = Planting.query.get(visit.planting_id)
-        if planting:
-            db.session.delete(planting)
-            db.session.commit()
-            return jsonify({'message': 'Plantio e todas as visitas do cronograma foram excluídos'}), 200
+    if visit.planting_id and (visit.recommendation or "").strip().lower().startswith("plantio"):
+    planting = Planting.query.get(visit.planting_id)
+    if planting:
+        db.session.delete(planting)
+        db.session.commit()
+        return jsonify({'message': 'Plantio e visitas do cronograma excluídos'}), 200
+
 
     # Caso contrário, exclui só essa visita
     db.session.delete(visit)
