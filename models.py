@@ -205,14 +205,18 @@ class Visit(db.Model):
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
     def to_dict(self):
+        # Corrige falha para consultores sem registro no banco
         consultant_name = None
-        if self.consultant_id:
-            user = User.query.get(self.consultant_id)
-            if user and user.email:
-                consultant_name = user.email.split('@')[0]
-            else:
-                match = next((c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id), None)
-                consultant_name = match or f"Consultor {self.consultant_id}"
+        try:
+            if self.consultant_id:
+                user = User.query.get(self.consultant_id)
+                if user and user.email:
+                    consultant_name = user.email.split('@')[0]
+                else:
+                    match = next((c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id), None)
+                    consultant_name = match or f"Consultor {self.consultant_id}"
+        except Exception:
+            consultant_name = f"Consultor {self.consultant_id or ''}".strip()
 
         return {
             'id': self.id,
@@ -225,14 +229,14 @@ class Visit(db.Model):
             'planting_id': self.planting_id,
             'consultant_id': self.consultant_id,
             'consultant_name': consultant_name,
-            'date': None if not self.date else self.date.isoformat(),
+            'date': self.date.isoformat() if self.date else None,
             'checklist': self.checklist,
             'diagnosis': self.diagnosis,
-            'recommendation': self.recommendation,
+            'recommendation': (self.recommendation or '').strip(),
             'status': self.status,
             'culture': (self.planting.culture if getattr(self, 'planting', None) else None),
             'variety': (self.planting.variety if getattr(self, 'planting', None) else None),
-            'created_at': None if not self.created_at else self.created_at.isoformat(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
 

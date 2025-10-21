@@ -92,42 +92,37 @@ def get_visits():
 @bp.route('/visits', methods=['POST'])
 def create_visit():
     data = request.get_json(silent=True) or {}
-    client_id     = data.get('client_id')
-    property_id   = data.get('property_id')
-    plot_id       = data.get('plot_id')
+    client_id = data.get('client_id')
+    property_id = data.get('property_id')
+    plot_id = data.get('plot_id')
     consultant_id = data.get('consultant_id')
-    status        = (data.get('status') or 'planned').strip().lower()
-    gen_schedule  = bool(data.get('generate_schedule'))  # 👈 checkbox do frontend
-    culture       = data.get('culture')
-    variety       = data.get('variety')
-    date_str      = data.get('date')  # "YYYY-MM-DD"
+    status = (data.get('status') or 'planned').strip().lower()
+    gen_schedule = bool(data.get('generate_schedule'))
+    culture = data.get('culture')
+    variety = data.get('variety')
+    date_str = data.get('date')  # formato "YYYY-MM-DD"
 
     if not client_id or not property_id or not plot_id:
         return jsonify(message='client_id, property_id and plot_id are required'), 400
 
+    # validações
     if not Client.query.get(client_id): return jsonify(message='client not found'), 404
     if not Property.query.get(property_id): return jsonify(message='property not found'), 404
     if not Plot.query.get(plot_id): return jsonify(message='plot not found'), 404
-
     if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
         return jsonify(message='consultant not found'), 404
 
-        visit_date = None
+    # Converte a data sem alterar fuso horário
+    visit_date = None
     if date_str:
         try:
-            from datetime import datetime, timedelta, timezone
-            # Converte string para datetime local (corrigindo UTC-3)
-            visit_date = datetime.fromisoformat(date_str)
-            visit_date = (visit_date + timedelta(hours=3)).date()  # 👈 ajusta fuso -3h
+            from datetime import date as _d
+            visit_date = _d.fromisoformat(date_str)
         except Exception as e:
             print("Erro ao converter data:", e)
             return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
 
-
-
-    # -------------------------
-    # Sem cronograma → cria só a visita
-    # -------------------------
+    # --------------- sem cronograma -----------------
     if not gen_schedule:
         v = Visit(
             client_id=client_id,
@@ -137,70 +132,57 @@ def create_visit():
             date=visit_date,
             checklist=data.get('checklist'),
             diagnosis=data.get('diagnosis'),
-            recommendation=data.get('recommendation'),  # pode vir "Plantio" manual, mas sem link a Planting
+            recommendation=(data.get('recommendation') or '').strip(),
             status=status
         )
         db.session.add(v)
         db.session.commit()
         return jsonify(message='visit created', visit=v.to_dict()), 201
 
-    # -------------------------
-    # Com cronograma → precisa culture, variety e date
-    # -------------------------
+    # --------------- com cronograma -----------------
     if not (culture and variety and visit_date):
         return jsonify(message='culture, variety and date are required when generate_schedule=true'), 400
 
-    # 1) Criar Planting
-    p = Planting(
-        plot_id=plot_id,
-        culture=culture,
-        variety=variety,
-        planting_date=visit_date
-    )
+    p = Planting(plot_id=plot_id, culture=culture, variety=variety, planting_date=visit_date)
     db.session.add(p)
-    db.session.flush()  # p.id disponível
+    db.session.flush()
 
-    # 2) Criar a visita de Plantio (a visita atual), VINCULANDO ao Planting
     v0 = Visit(
         client_id=client_id,
         property_id=property_id,
         plot_id=plot_id,
-        planting_id=p.id,          # 👈 vínculo
+        planting_id=p.id,
         consultant_id=consultant_id,
         date=visit_date,
-        checklist=data.get('checklist'),
-        diagnosis=data.get('diagnosis'),
-        recommendation="Plantio",  # 👈 título limpo, sem repetir variedade
+        recommendation='Plantio',
         status=status
     )
     db.session.add(v0)
 
-    # 3) Criar visitas fenológicas futuras a partir do banco (PhenologyStage)
+    from models import PhenologyStage
     stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days.asc()).all()
     for st in stages:
         if st.days == 0:
-            continue  # já criamos o "Plantio"
+            continue
         try:
             fut_date = visit_date + datetime.timedelta(days=int(st.days))
         except Exception:
             continue
-
         vv = Visit(
             client_id=client_id,
             property_id=property_id,
             plot_id=plot_id,
-            planting_id=p.id,              # 👈 todas as futuras apontam para o mesmo Planting
+            planting_id=p.id,
             consultant_id=consultant_id,
             date=fut_date,
-            checklist=None,
-            diagnosis=None,
-            recommendation=st.name,       # 👈 só o nome do estádio ("V4", "R1" etc)
+            recommendation=st.name,
             status='planned'
         )
         db.session.add(vv)
 
     db.session.commit()
     return jsonify(message='visit created with schedule', visit=v0.to_dict()), 201
+
 
 
 
@@ -295,25 +277,26 @@ def update_visit(vid: int):
     return jsonify(message='visit updated', visit=v.to_dict() | {"status": v.status}), 200
 
 
+
 @bp.route('/visits/<int:visit_id>', methods=['DELETE'])
 def delete_visit(visit_id):
     visit = Visit.query.get(visit_id)
     if not visit:
         return jsonify({'error': 'Visita não encontrada'}), 404
 
-    # Se for a visita de Plantio (primeira do cronograma) e tiver planting_id,
-    # exclui o Planting inteiro → apaga todas as visitas desse cronograma
-    if visit.planting_id and (visit.recommendation or "").strip().lower().startswith("plantio"):
+    # Se for a visita de Plantio, exclui o Planting e todas as relacionadas
+    if visit.planting_id and (visit.recommendation or '').strip().lower().startswith('plantio'):
         planting = Planting.query.get(visit.planting_id)
         if planting:
             db.session.delete(planting)
             db.session.commit()
             return jsonify({'message': 'Plantio e todas as visitas do cronograma foram excluídos'}), 200
 
-    # Caso contrário, exclui só essa visita individualmente
+    # Caso contrário, remove só a visita isolada
     db.session.delete(visit)
     db.session.commit()
     return jsonify({'message': 'Visita excluída com sucesso'}), 200
+
 
 
 
