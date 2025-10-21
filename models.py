@@ -190,31 +190,34 @@ class Visit(db.Model):
     status = db.Column(db.String(20), nullable=True, server_default='planned')
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
-    def to_dict(self):
-        consultant_name = None
-        if self.consultant_id:
-            user = User.query.get(self.consultant_id)
-            if user:
-                consultant_name = user.email.split('@')[0] if user.email else f"Consultor {user.id}"
+def to_dict(self):
+    consultant_name = None
+    if self.consultant_id:
+        user = User.query.get(self.consultant_id)
+        if user:
+            consultant_name = user.email.split('@')[0] if user.email else f"Consultor {user.id}"
 
-        return {
-            'id': self.id,
-            'client_id': self.client_id,
-            'client_name': self.client.name if self.client else None,
-            'property_id': self.property_id,
-            'property_name': self.property.name if self.property else None,
-            'plot_id': self.plot_id,
-            'plot_name': self.plot.name if self.plot else None,
-            'planting_id': self.planting_id,
-            'consultant_id': self.consultant_id,
-            'consultant_name': consultant_name,
-            'date': self.date.isoformat() if self.date else None,
-            'checklist': self.checklist,
-            'diagnosis': self.diagnosis,
-            'recommendation': self.recommendation,
-            'status': self.status,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-        }
+    return {
+        'id': self.id,
+        'client_id': self.client_id,
+        'client_name': self.client.name if self.client else None,
+        'property_id': self.property_id,
+        'property_name': self.property.name if self.property else None,
+        'plot_id': self.plot_id,
+        'plot_name': self.plot.name if self.plot else None,
+        'planting_id': self.planting_id,
+        'consultant_id': self.consultant_id,
+        'consultant_name': consultant_name,
+        'date': None if not self.date else self.date.isoformat(),
+        'checklist': self.checklist,
+        'diagnosis': self.diagnosis,
+        'recommendation': self.recommendation,
+        'status': self.status,
+        'culture': (self.planting.culture if getattr(self, 'planting', None) else None),   # 👈 novo
+        'variety': (self.planting.variety if getattr(self, 'planting', None) else None),   # 👈 novo
+        'created_at': None if not self.created_at else self.created_at.isoformat(),
+    }
+
 
 
 
