@@ -300,20 +300,20 @@ def delete_visit(visit_id):
     if not visit:
         return jsonify({'error': 'Visita não encontrada'}), 404
 
-    
+    # Se for a visita de Plantio (primeira do cronograma) e tiver planting_id,
     # exclui o Planting inteiro → apaga todas as visitas desse cronograma
     if visit.planting_id and (visit.recommendation or "").strip().lower().startswith("plantio"):
-    planting = Planting.query.get(visit.planting_id)
-    if planting:
-        db.session.delete(planting)
-        db.session.commit()
-        return jsonify({'message': 'Plantio e visitas do cronograma excluídos'}), 200
+        planting = Planting.query.get(visit.planting_id)
+        if planting:
+            db.session.delete(planting)
+            db.session.commit()
+            return jsonify({'message': 'Plantio e todas as visitas do cronograma foram excluídos'}), 200
 
-
-    # Caso contrário, exclui só essa visita
+    # Caso contrário, exclui só essa visita individualmente
     db.session.delete(visit)
     db.session.commit()
     return jsonify({'message': 'Visita excluída com sucesso'}), 200
+
 
 
 
