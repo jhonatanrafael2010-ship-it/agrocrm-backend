@@ -276,7 +276,6 @@ def delete_visit(visit_id):
     """
     Remove uma visita. Se for uma visita de plantio, remove também o plantio e todas as visitas associadas.
     """
-
     try:
         visit = Visit.query.get(visit_id)
         if not visit:
@@ -299,7 +298,7 @@ def delete_visit(visit_id):
             if planting:
                 print(f"🌱 Excluindo plantio {planting.id} e visitas associadas...")
 
-                related = planting.visits.all()
+                related = list(planting.visits)  # ✅ FIX: era .all(), agora é lista direta
                 print(f"🔍 {len(related)} visitas associadas encontradas:")
 
                 for v in related:
@@ -324,8 +323,6 @@ def delete_visit(visit_id):
         print(f"❌ Erro interno ao excluir visita {visit_id}: {e}")
         db.session.rollback()
         return jsonify({'error': f'Erro interno ao excluir visita: {str(e)}'}), 500
-
-
 
 
 
