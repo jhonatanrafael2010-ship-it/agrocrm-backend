@@ -172,8 +172,6 @@ class Planting(db.Model):
             'planting_date': None if not self.planting_date else self.planting_date.isoformat(),
             'created_at': None if not self.created_at else self.created_at.isoformat(),
         }
-    # relationship to visits
-    visits = db.relationship('Visit', backref='planting', lazy='select', cascade='all, delete-orphan')
 
 
 
@@ -185,7 +183,7 @@ class Visit(db.Model):
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
     plot_id = db.Column(db.Integer, db.ForeignKey('plots.id'), nullable=False, index=True)
     planting_id = db.Column(db.Integer, db.ForeignKey('plantings.id'), nullable=True, index=True)
-    consultant_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
+    consultant_id = db.Column(db.Integer, nullable=True, index=True)
     date = db.Column(db.Date, nullable=True)
     checklist = db.Column(db.Text, nullable=True)
     diagnosis = db.Column(db.Text, nullable=True)
@@ -195,16 +193,10 @@ class Visit(db.Model):
 
     def to_dict(self):
         consultant_name = None
-        try:
-            if self.consultant_id:
-                user = User.query.get(self.consultant_id)
-                if user and user.email:
-                    consultant_name = user.email.split('@')[0]
-                else:
-                    match = next((c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id), None)
-                    consultant_name = match or f"Consultor {self.consultant_id}"
-        except Exception:
-            consultant_name = f"Consultor {self.consultant_id or ''}".strip()
+        if self.consultant_id:
+            match = next((c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id), None)
+            consultant_name = match or f"Consultor {self.consultant_id}"
+
 
         # Formatação para exibir corretamente no calendário
         client_line = f"👤 {self.client.name}" if self.client else ""

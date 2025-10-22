@@ -277,20 +277,22 @@ def delete_visit(visit_id):
     if not visit:
         return jsonify({'error': 'Visita não encontrada'}), 404
 
-    # ✅ Se for plantio, remove o Planting e visitas associadas
-    if visit.planting_id and (visit.recommendation or '').lower().startswith('plantio'):
+    # ✅ Detecta plantio de forma mais ampla (contém 'plantio' em qualquer parte, ignorando maiúsculas)
+    is_plantio = visit.recommendation and 'plantio' in visit.recommendation.lower()
+
+    if visit.planting_id and is_plantio:
         planting = Planting.query.get(visit.planting_id)
         if planting:
-            # Força o carregamento de todas as visitas vinculadas
-            _ = planting.visits.all()
+            _ = planting.visits.all()  # força carregamento
             db.session.delete(planting)
             db.session.commit()
             return jsonify({'message': 'Plantio e visitas associadas foram excluídos'}), 200
 
-    # Caso contrário, só remove a visita isolada
+    # Caso contrário, remove apenas a visita isolada
     db.session.delete(visit)
     db.session.commit()
     return jsonify({'message': 'Visita excluída com sucesso'}), 200
+
 
 
 
