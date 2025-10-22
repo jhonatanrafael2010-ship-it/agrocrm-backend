@@ -273,27 +273,41 @@ def update_visit(vid: int):
 
 @bp.route('/visits/<int:visit_id>', methods=['DELETE'])
 def delete_visit(visit_id):
-    visit = Visit.query.get(visit_id)
-    if not visit:
-        return jsonify({'error': 'Visita não encontrada'}), 404
+    try:
+        visit = Visit.query.get(visit_id)
+        if not visit:
+            return jsonify({'error': 'Visita não encontrada'}), 404
 
-    # ✅ Detecta plantio de forma mais ampla (contém 'plantio' em qualquer parte, ignorando maiúsculas)
-    is_plantio = visit.recommendation and 'plantio' in visit.recommendation.lower()
+        # ✅ Detecta se é uma visita de plantio (recomendação contém 'plantio', case-insensitive)
+        is_plantio = bool(visit.recommendation and 'plantio' in visit.recommendation.lower())
 
-    if visit.planting_id and is_plantio:
-        planting = Planting.query.get(visit.planting_id)
-        if planting:
-            _ = planting.visits.all()  # força carregamento
-            db.session.delete(planting)
-            db.session.commit()
-            return jsonify({'message': 'Plantio e visitas associadas foram excluídos'}), 200
+        # ✅ Se for plantio, remove o Planting e TODAS as visitas associadas
+        if visit.planting_id and is_plantio:
+            planting = Planting.query.get(visit.planting_id)
+            if planting:
+                # Força o carregamento de todas as visitas associadas antes da exclusão
+                _ = planting.visits.all()
 
-    # Caso contrário, remove apenas a visita isolada
-    db.session.delete(visit)
-    db.session.commit()
-    return jsonify({'message': 'Visita excluída com sucesso'}), 200
+                # Remove cada visita explicitamente
+                for v in planting.visits:
+                    db.session.delete(v)
 
+                # Por fim, remove o plantio
+                db.session.delete(planting)
+                db.session.commit()
 
+                return jsonify({'message': 'Plantio e visitas associadas foram excluídos'}), 200
+
+        # ✅ Caso contrário, remove apenas a visita isolada
+        db.session.delete(visit)
+        db.session.commit()
+
+        return jsonify({'message': 'Visita excluída com sucesso'}), 200
+
+    except Exception as e:
+        print(f"❌ Erro ao excluir visita {visit_id}: {e}")
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
 
 
 
