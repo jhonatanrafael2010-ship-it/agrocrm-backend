@@ -274,7 +274,8 @@ def update_visit(vid: int):
 @bp.route('/visits/<int:visit_id>', methods=['DELETE'])
 def delete_visit(visit_id):
     """
-    Remove uma visita. Se for uma visita de plantio, remove também o plantio e todas as visitas associadas.
+    Exclui uma visita. Se for a visita de plantio, remove também o plantio e
+    TODAS as visitas geradas automaticamente (mesmo que planting_id esteja nulo).
     """
     try:
         visit = Visit.query.get(visit_id)
@@ -284,27 +285,30 @@ def delete_visit(visit_id):
 
         print(f"🗑 Solicitada exclusão da visita {visit_id}: {visit.recommendation}")
 
-        # Verifica se é a primeira (plantio)
         is_plantio = False
         if visit.recommendation:
-            try:
-                is_plantio = 'plantio' in visit.recommendation.lower()
-            except Exception as e:
-                print(f"⚠️ Erro ao verificar se é plantio: {e}")
+            is_plantio = 'plantio' in visit.recommendation.lower()
 
-        # Se for plantio e tiver plantio_id, remove tudo associado
+        # =========================================================
+        # 🌱 Caso seja visita de plantio, excluir todas relacionadas
+        # =========================================================
         if is_plantio and visit.planting_id:
             planting = Planting.query.get(visit.planting_id)
             if planting:
-                print(f"🌱 Excluindo plantio {planting.id} e visitas associadas...")
+                print(f"🌾 Excluindo plantio {planting.id} e visitas associadas...")
 
-                related = list(planting.visits)  # ✅ FIX: era .all(), agora é lista direta
+                # Busca TODAS as visitas ligadas a este plantio
+                related = Visit.query.filter(
+                    (Visit.planting_id == planting.id) | 
+                    (Visit.client_id == visit.client_id)
+                ).all()
+
                 print(f"🔍 {len(related)} visitas associadas encontradas:")
-
                 for v in related:
                     print(f"   → Removendo visita {v.id} ({v.recommendation})")
                     db.session.delete(v)
 
+                # Remove também o registro do plantio
                 db.session.delete(planting)
                 db.session.commit()
                 print(f"✅ Plantio {planting.id} e todas as visitas associadas foram removidos.")
@@ -312,7 +316,9 @@ def delete_visit(visit_id):
             else:
                 print(f"⚠️ Nenhum plantio encontrado para planting_id={visit.planting_id}")
 
-        # Caso contrário, exclui apenas a visita isolada
+        # =========================================================
+        # 🧾 Caso contrário, excluir apenas a visita isolada
+        # =========================================================
         print(f"🧾 Excluindo visita isolada {visit_id}")
         db.session.delete(visit)
         db.session.commit()
@@ -323,6 +329,7 @@ def delete_visit(visit_id):
         print(f"❌ Erro interno ao excluir visita {visit_id}: {e}")
         db.session.rollback()
         return jsonify({'error': f'Erro interno ao excluir visita: {str(e)}'}), 500
+
 
 
 
