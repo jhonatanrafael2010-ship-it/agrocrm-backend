@@ -155,23 +155,26 @@ def create_visit():
     db.session.add(v0)
 
     from models import PhenologyStage
-    stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days.asc()).all()
-    for st in stages:
-        if st.days == 0 or "plantio" in st.name.lower():
-            continue
+    # gera visitas automáticas conforme estágios fenológicos
+    if generate_schedule and culture:
+        stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days.asc()).all()
+        stages = [s for s in stages if "maturação fisiológica" not in s.name.lower()]
+        for st in stages:
+            if st.days == 0 or "plantio" in st.name.lower():
+                continue
+            fut_date = visit_date + timedelta(days=int(st.days))
+            vv = Visit(
+                client_id=client_id,
+                property_id=property_id,
+                plot_id=plot_id,
+                planting_id=p.id,
+                consultant_id=consultant_id,
+                date=fut_date,
+                recommendation=st.name,
+                status='planned'
+            )
+            db.session.add(vv)
 
-        fut_date = visit_date + timedelta(days=int(st.days))
-        vv = Visit(
-            client_id=client_id,
-            property_id=property_id,
-            plot_id=plot_id,
-            planting_id=p.id,
-            consultant_id=consultant_id,
-            date=fut_date,
-            recommendation=st.name,
-            status='planned'
-        )
-        db.session.add(vv)
 
     db.session.commit()
     return jsonify(message='visit created with schedule', visit=v0.to_dict()), 201
