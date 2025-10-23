@@ -297,11 +297,14 @@ def delete_visit(visit_id):
             if planting:
                 print(f"🌾 Excluindo plantio {planting.id} e visitas associadas...")
 
-                # Busca TODAS as visitas ligadas a este plantio
-                related = Visit.query.filter(
-                    (Visit.planting_id == planting.id) | 
-                    (Visit.client_id == visit.client_id)
-                ).all()
+                # Busca TODAS as visitas ligadas a este plantio (apenas pelo planting_id)
+                related = Visit.query.filter(Visit.planting_id == planting.id).all()
+
+                print(f"🔍 {len(related)} visitas associadas encontradas:")
+                for v in related:
+                    print(f"   → Removendo visita {v.id} ({v.recommendation})")
+                    db.session.delete(v)
+
 
                 print(f"🔍 {len(related)} visitas associadas encontradas:")
                 for v in related:
