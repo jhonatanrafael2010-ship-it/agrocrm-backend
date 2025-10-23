@@ -14,7 +14,7 @@ from werkzeug.security import generate_password_hash
 def seed_cultures_and_varieties():
     """Popula Culturas e Variedades fixas se ainda não existirem."""
     data = {
-        "Milho": ["AS 1820 PRO4", "AS 1868 PRO4", "AS 1877 PRO4"],
+        "Milho": ["AS 1820 PRO4", "AS 1868 PRO4", "AS 1877 PRO4","AS 1838 PRO4","AS 1955 PRO4"],
         "Soja": [
             "AS 3800 12X", "AS 3840 12X", "AS 3790 12X",
             "AS 3815 12X", "AS 3707 12X", "AS 3700 XTD",
@@ -47,7 +47,7 @@ def seed_phenology_stages():
         ("Milho", "V4", "4 folhas expandidas", 21),
         ("Milho", "VT", "Pendoamento", 60),
         ("Milho", "R1", "Florescimento", 70),
-        ("Milho", "R6", "Maturação fisiológica", 120),
+        ("Milho", "R6", "Maturação fisiológica", 100),
         # 🌱 Soja
         ("Soja", "VE", "Emergência", 0),
         ("Soja", "V4", "4 nós expandidos", 25),

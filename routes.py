@@ -64,7 +64,7 @@ def list_consultants():
 
 @bp.route('/visits', methods=['GET'])
 def get_visits():
-    """Retorna as visitas com filtros opcionais (client, property, plot, consultant, status)."""
+    """Retorna as visitas com nomes completos de cliente e consultor"""
     try:
         client_id = request.args.get('client_id', type=int)
         property_id = request.args.get('property_id', type=int)
@@ -73,33 +73,41 @@ def get_visits():
         status = request.args.get('status', type=str)
 
         q = Visit.query
-        if client_id: q = q.filter_by(client_id=client_id)
-        if property_id: q = q.filter_by(property_id=property_id)
-        if plot_id: q = q.filter_by(plot_id=plot_id)
-        if consultant_id: q = q.filter_by(consultant_id=consultant_id)
-        if status: q = q.filter_by(status=status)
+        if client_id:
+            q = q.filter_by(client_id=client_id)
+        if property_id:
+            q = q.filter_by(property_id=property_id)
+        if plot_id:
+            q = q.filter_by(plot_id=plot_id)
+        if consultant_id:
+            q = q.filter_by(consultant_id=consultant_id)
+        if status:
+            q = q.filter_by(status=status)
 
         items = q.order_by(Visit.date.asc().nullslast()).all()
         result = []
-        for it in items:
-            client = Client.query.get(it.client_id)
+
+        for v in items:
+            client = Client.query.get(v.client_id)
             consultant_name = None
             for c in CONSULTANTS:
-                if c["id"] == it.consultant_id:
+                if c["id"] == v.consultant_id:
                     consultant_name = c["name"]
                     break
-            result.append({
-                **it.to_dict(),
-                "status": it.status,
-                "client_name": client.name if client else f"Cliente {it.client_id}",
-                "consultant_name": consultant_name or "—"
-            })
-        return jsonify(result), 200
 
+            result.append({
+                **v.to_dict(),
+                "client_name": client.name if client else f"Cliente {v.client_id}",
+                "consultant_name": consultant_name or "—",
+                "status": v.status
+            })
+
+        return jsonify(result), 200
 
     except Exception as e:
         print(f"⚠️ Erro ao listar visitas: {e}")
         return jsonify(error=str(e)), 500
+
 
 
 
