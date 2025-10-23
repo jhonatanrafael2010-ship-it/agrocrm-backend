@@ -155,13 +155,18 @@ def create_visit():
     db.session.add(v0)
 
     from models import PhenologyStage
-    # gera visitas automáticas conforme estágios fenológicos
-    if generate_schedule and culture:
+    # 🌱 Gera visitas automáticas conforme estágios fenológicos
+    if gen_schedule and culture:  # ✅ usa o nome correto da variável
         stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days.asc()).all()
+
+        # 🔎 Remove estágios redundantes (evita 10ª visita “Maturação fisiológica”)
         stages = [s for s in stages if "maturação fisiológica" not in s.name.lower()]
+
         for st in stages:
+            # Pula o estágio "Plantio" (já criado manualmente)
             if st.days == 0 or "plantio" in st.name.lower():
                 continue
+
             fut_date = visit_date + timedelta(days=int(st.days))
             vv = Visit(
                 client_id=client_id,
@@ -175,10 +180,8 @@ def create_visit():
             )
             db.session.add(vv)
 
-
     db.session.commit()
     return jsonify(message='visit created with schedule', visit=v0.to_dict()), 201
-
 
 
 
