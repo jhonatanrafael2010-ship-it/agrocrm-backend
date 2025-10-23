@@ -157,8 +157,9 @@ def create_visit():
     from models import PhenologyStage
     stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days.asc()).all()
     for st in stages:
-        if st.days == 0:
+        if st.days == 0 or "plantio" in st.name.lower():
             continue
+
         fut_date = visit_date + timedelta(days=int(st.days))
         vv = Visit(
             client_id=client_id,
