@@ -231,6 +231,14 @@ class Visit(db.Model):
 
 
 
+class Photo(db.Model):
+    __tablename__ = 'photos'
+    id = db.Column(db.Integer, primary_key=True)
+    visit_id = db.Column(db.Integer, db.ForeignKey('visits.id', ondelete='CASCADE'))
+    url = db.Column(db.String(255))  # link da imagem armazenada
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    visit = db.relationship('Visit', backref=db.backref('photos', cascade='all, delete'))
 
 
 

@@ -125,8 +125,9 @@ def create_visit():
     variety = data.get('variety')
     date_str = data.get('date')
 
-    if not client_id or not property_id or not plot_id:
-        return jsonify(message='client_id, property_id and plot_id are required'), 400
+    if not client_id:
+        return jsonify(message='client_id is required'), 400
+
 
     if not Client.query.get(client_id): return jsonify(message='client not found'), 404
     if not Property.query.get(property_id): return jsonify(message='property not found'), 404
@@ -364,6 +365,39 @@ def delete_visit(visit_id):
         print(f"❌ Erro interno ao excluir visita {visit_id}: {e}")
         db.session.rollback()
         return jsonify({'error': f'Erro interno ao excluir visita: {str(e)}'}), 500
+
+
+import os
+from werkzeug.utils import secure_filename
+
+UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+@bp.route('/visits/<int:visit_id>/photos', methods=['POST'])
+def upload_photos(visit_id):
+    from models import Visit, Photo
+
+    visit = Visit.query.get(visit_id)
+    if not visit:
+        return jsonify(message="visit not found"), 404
+
+    if 'photos' not in request.files:
+        return jsonify(message="no photos uploaded"), 400
+
+    files = request.files.getlist('photos')
+    urls = []
+    for f in files:
+        filename = secure_filename(f.filename)
+        save_path = os.path.join(UPLOAD_FOLDER, filename)
+        f.save(save_path)
+        # no Render, ideal seria upload para Cloudinary, S3 ou Imgur
+        photo = Photo(visit_id=visit_id, url=f"/uploads/{filename}")
+        db.session.add(photo)
+        urls.append(photo.url)
+
+    db.session.commit()
+    return jsonify(message="photos uploaded", urls=urls), 201
+
 
 
 
