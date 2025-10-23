@@ -80,7 +80,22 @@ def get_visits():
         if status: q = q.filter_by(status=status)
 
         items = q.order_by(Visit.date.asc().nullslast()).all()
-        return jsonify([it.to_dict() | {"status": it.status} for it in items]), 200
+        result = []
+        for it in items:
+            client = Client.query.get(it.client_id)
+            consultant_name = None
+            for c in CONSULTANTS:
+                if c["id"] == it.consultant_id:
+                    consultant_name = c["name"]
+                    break
+            result.append({
+                **it.to_dict(),
+                "status": it.status,
+                "client_name": client.name if client else f"Cliente {it.client_id}",
+                "consultant_name": consultant_name or "—"
+            })
+        return jsonify(result), 200
+
 
     except Exception as e:
         print(f"⚠️ Erro ao listar visitas: {e}")
@@ -159,8 +174,10 @@ def create_visit():
     if gen_schedule and culture:  # ✅ usa o nome correto da variável
         stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days.asc()).all()
 
-        # 🔎 Remove estágios redundantes (evita 10ª visita “Maturação fisiológica”)
-        stages = [s for s in stages if "maturação fisiológica" not in s.name.lower()]
+        # 🔎 Remove redundâncias apenas para soja (onde havia o problema)
+        if culture.strip().lower() == "soja":
+            stages = [s for s in stages if "maturação fisiológica" not in s.name.lower()]
+
 
         for st in stages:
             # Pula o estágio "Plantio" (já criado manualmente)
