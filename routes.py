@@ -99,10 +99,12 @@ def get_visits():
                 None
             )
 
-            # ✅ Gera URLs completas para as fotos
+            # ✅ Gera URLs completas para as fotos (funciona no Render e local)
             photos = []
             for p in v.photos:
                 file_name = os.path.basename(p.url)
+                # tenta pegar URL pública do Render
+                backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
                 photos.append({
                     "id": p.id,
                     "url": f"{backend_url}/uploads/{file_name}"
@@ -381,34 +383,48 @@ def delete_visit(visit_id):
 
 import os
 from werkzeug.utils import secure_filename
+from flask import request, jsonify
 
 UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['POST'])
 def upload_photos(visit_id):
-    """Recebe e salva fotos de uma visita"""
-    visit = Visit.query.get(visit_id)
-    if not visit:
-        return jsonify(error="Visita não encontrada"), 404
+    """📸 Recebe e salva fotos associadas a uma visita"""
+    try:
+        visit = Visit.query.get(visit_id)
+        if not visit:
+            return jsonify(error="Visita não encontrada"), 404
 
-    files = request.files.getlist("photos")
-    saved_photos = []
+        files = request.files.getlist("photos")
+        if not files:
+            return jsonify(error="Nenhuma foto enviada"), 400
 
-    for file in files:
-        if file:
-            filename = secure_filename(file.filename)
-            path = os.path.join(UPLOAD_FOLDER, filename)
-            file.save(path)
+        saved_photos = []
 
-            # 🔥 Salva no banco
-            p = Photo(visit_id=visit.id, url=f"/uploads/{filename}")
-            db.session.add(p)
-            saved_photos.append({"filename": filename, "url": f"/uploads/{filename}"})
+        for file in files:
+            if file:
+                filename = secure_filename(file.filename)
+                file_path = os.path.join(UPLOAD_FOLDER, filename)
+                file.save(file_path)
 
-    db.session.commit()
-    print(f"✅ {len(saved_photos)} fotos salvas para a visita {visit_id}")
-    return jsonify({"uploaded": saved_photos}), 201
+                # ✅ salva no banco
+                photo = Photo(visit_id=visit.id, url=f"/uploads/{filename}")
+                db.session.add(photo)
+                saved_photos.append({
+                    "id": photo.id,
+                    "url": f"/uploads/{filename}"
+                })
+
+        db.session.commit()
+        print(f"✅ {len(saved_photos)} fotos salvas para a visita {visit_id}")
+        return jsonify({"uploaded": saved_photos}), 201
+
+    except Exception as e:
+        print(f"❌ Erro ao salvar fotos: {e}")
+        db.session.rollback()
+        return jsonify(error=str(e)), 500
+
 
 
 
