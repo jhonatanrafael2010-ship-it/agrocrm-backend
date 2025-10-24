@@ -3,7 +3,7 @@ import datetime
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
 import jwt
-from models import db, User, Client, Property, Plot, Visit, Planting, Opportunity
+from models import db, User, Client, Property, Plot, Visit, Planting, Opportunity, Photo
 
 bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -412,6 +412,7 @@ def upload_photos(visit_id):
             photo = Photo(visit_id=visit_id, url=url)
             db.session.add(photo)
             saved_photos.append(photo)
+
 
         db.session.commit()
         print(f"✅ {len(saved_photos)} fotos salvas para visita {visit_id}")
