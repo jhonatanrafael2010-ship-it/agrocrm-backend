@@ -381,50 +381,47 @@ def delete_visit(visit_id):
         return jsonify({'error': f'Erro interno ao excluir visita: {str(e)}'}), 500
 
 
-import os
 from werkzeug.utils import secure_filename
-from flask import request, jsonify
-
-UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+import os
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['POST'])
 def upload_photos(visit_id):
-    """📸 Recebe e salva fotos associadas a uma visita"""
     try:
-        visit = Visit.query.get(visit_id)
-        if not visit:
-            return jsonify(error="Visita não encontrada"), 404
+        visit = Visit.query.get_or_404(visit_id)
+        files = request.files.getlist('photos')
 
-        files = request.files.getlist("photos")
         if not files:
-            return jsonify(error="Nenhuma foto enviada"), 400
+            return jsonify({"error": "Nenhum arquivo enviado"}), 400
+
+        upload_dir = os.path.join(os.getcwd(), 'uploads')
+        os.makedirs(upload_dir, exist_ok=True)
 
         saved_photos = []
 
         for file in files:
-            if file:
-                filename = secure_filename(file.filename)
-                file_path = os.path.join(UPLOAD_FOLDER, filename)
-                file.save(file_path)
+            filename = secure_filename(file.filename)
+            # garante nome único no Render
+            unique_name = f"{visit_id}_{os.urandom(8).hex()}_{filename}"
+            file_path = os.path.join(upload_dir, unique_name)
+            file.save(file_path)
 
-                # ✅ salva no banco
-                photo = Photo(visit_id=visit.id, url=f"/uploads/{filename}")
-                db.session.add(photo)
-                saved_photos.append({
-                    "id": photo.id,
-                    "url": f"/uploads/{filename}"
-                })
+            # monta URL pública correta (Render ou local)
+            backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "http://localhost:5000"
+            url = f"{backend_url}/uploads/{unique_name}"
+
+            photo = Photo(visit_id=visit_id, url=url)
+            db.session.add(photo)
+            saved_photos.append(photo)
 
         db.session.commit()
-        print(f"✅ {len(saved_photos)} fotos salvas para a visita {visit_id}")
-        return jsonify({"uploaded": saved_photos}), 201
+        print(f"✅ {len(saved_photos)} fotos salvas para visita {visit_id}")
+        return jsonify({"success": True, "count": len(saved_photos)}), 201
 
     except Exception as e:
-        print(f"❌ Erro ao salvar fotos: {e}")
-        db.session.rollback()
-        return jsonify(error=str(e)), 500
-
+        import traceback
+        print("❌ Erro ao salvar fotos:", e)
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 
