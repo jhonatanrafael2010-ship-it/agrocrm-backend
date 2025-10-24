@@ -99,12 +99,12 @@ def get_visits():
                 None
             )
 
-            # ✅ Gera URLs completas para as fotos (funciona no Render e local)
+            # ✅ Monta URLs completas das fotos
+            backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "http://localhost:5000"
             photos = []
             for p in v.photos:
+                # Garante nome limpo
                 file_name = os.path.basename(p.url)
-                # tenta pegar URL pública do Render
-                backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
                 photos.append({
                     "id": p.id,
                     "url": f"{backend_url}/uploads/{file_name}"
@@ -115,8 +115,9 @@ def get_visits():
                 "client_name": client.name if client else f"Cliente {v.client_id}",
                 "consultant_name": consultant_name or "—",
                 "status": v.status,
-                "photos": photos
+                "photos": photos,   # 👈 garante que fotos vão no JSON
             })
+
 
         return jsonify(result), 200
 
