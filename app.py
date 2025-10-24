@@ -98,6 +98,13 @@ def seed_default_user():
 # =====================================================
 def create_app(test_config=None):
     app = Flask(__name__)
+    # ✅ Permite servir imagens da pasta uploads no Render
+    app.static_folder = 'uploads'
+    app.add_url_rule(
+        '/uploads/<path:filename>',
+        endpoint='uploads',
+        view_func=app.send_static_file
+    )
     CORS(app, supports_credentials=True)
 
     # Configuração do banco

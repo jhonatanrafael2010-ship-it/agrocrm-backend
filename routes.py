@@ -64,7 +64,7 @@ def list_consultants():
 
 @bp.route('/visits', methods=['GET'])
 def get_visits():
-    """Retorna as visitas com nomes completos de cliente e consultor"""
+    """Retorna visitas com nomes de cliente, consultor e fotos associadas"""
     try:
         client_id = request.args.get('client_id', type=int)
         property_id = request.args.get('property_id', type=int)
@@ -89,17 +89,18 @@ def get_visits():
 
         for v in items:
             client = Client.query.get(v.client_id)
-            consultant_name = None
-            for c in CONSULTANTS:
-                if c["id"] == v.consultant_id:
-                    consultant_name = c["name"]
-                    break
+            consultant_name = next(
+                (c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id),
+                None
+            )
 
             result.append({
                 **v.to_dict(),
                 "client_name": client.name if client else f"Cliente {v.client_id}",
                 "consultant_name": consultant_name or "—",
-                "status": v.status
+                "status": v.status,
+                # ✅ inclui as fotos associadas
+                "photos": [{"id": p.id, "url": p.url} for p in v.photos]
             })
 
         return jsonify(result), 200
@@ -370,34 +371,57 @@ def delete_visit(visit_id):
 import os
 from werkzeug.utils import secure_filename
 
-UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['POST'])
 def upload_photos(visit_id):
-    from models import Visit, Photo
-
     visit = Visit.query.get(visit_id)
     if not visit:
-        return jsonify(message="visit not found"), 404
+        return jsonify(message="Visit not found"), 404
 
     if 'photos' not in request.files:
-        return jsonify(message="no photos uploaded"), 400
+        return jsonify(message="No photos received"), 400
 
     files = request.files.getlist('photos')
-    urls = []
+    saved_photos = []
+
     for f in files:
         filename = secure_filename(f.filename)
-        save_path = os.path.join(UPLOAD_FOLDER, filename)
-        f.save(save_path)
-        # no Render, ideal seria upload para Cloudinary, S3 ou Imgur
-        photo = Photo(visit_id=visit_id, url=f"/uploads/{filename}")
+        path = os.path.join(UPLOAD_DIR, filename)
+        f.save(path)
+        # cria URL acessível (Render usa pasta /uploads se servida via static)
+        public_url = f"/uploads/{filename}"
+
+        photo = Photo(visit_id=visit_id, url=public_url)
         db.session.add(photo)
-        urls.append(photo.url)
+        saved_photos.append(public_url)
 
     db.session.commit()
-    return jsonify(message="photos uploaded", urls=urls), 201
+    return jsonify(message="Photos uploaded", urls=saved_photos), 201
 
+
+
+@bp.route('/photos/<int:photo_id>', methods=['DELETE'])
+def delete_photo(photo_id):
+    """Exclui uma foto específica do banco e do disco"""
+    try:
+        photo = Photo.query.get(photo_id)
+        if not photo:
+            return jsonify(message="Foto não encontrada"), 404
+
+        # Exclui o arquivo físico
+        if os.path.exists(photo.url.replace('/uploads/', 'uploads/')):
+            os.remove(photo.url.replace('/uploads/', 'uploads/'))
+
+        db.session.delete(photo)
+        db.session.commit()
+
+        return jsonify(message="Foto excluída com sucesso"), 200
+
+    except Exception as e:
+        print(f"⚠️ Erro ao excluir foto: {e}")
+        return jsonify(error=str(e)), 500
 
 
 
