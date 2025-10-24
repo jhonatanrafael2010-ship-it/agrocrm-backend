@@ -62,6 +62,9 @@ def list_consultants():
 # 🌱 VISITS ENDPOINTS
 # ============================================================
 
+import os
+from flask import current_app, request, jsonify
+
 @bp.route('/visits', methods=['GET'])
 def get_visits():
     """Retorna visitas com nomes de cliente, consultor e fotos associadas"""
@@ -87,6 +90,8 @@ def get_visits():
         items = q.order_by(Visit.date.asc().nullslast()).all()
         result = []
 
+        backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
+
         for v in items:
             client = Client.query.get(v.client_id)
             consultant_name = next(
@@ -94,13 +99,21 @@ def get_visits():
                 None
             )
 
+            # ✅ Gera URLs completas para as fotos
+            photos = []
+            for p in v.photos:
+                file_name = os.path.basename(p.url)
+                photos.append({
+                    "id": p.id,
+                    "url": f"{backend_url}/uploads/{file_name}"
+                })
+
             result.append({
                 **v.to_dict(),
                 "client_name": client.name if client else f"Cliente {v.client_id}",
                 "consultant_name": consultant_name or "—",
                 "status": v.status,
-                # ✅ inclui as fotos associadas
-                "photos": [{"id": p.id, "url": p.url} for p in v.photos]
+                "photos": photos
             })
 
         return jsonify(result), 200
@@ -108,8 +121,6 @@ def get_visits():
     except Exception as e:
         print(f"⚠️ Erro ao listar visitas: {e}")
         return jsonify(error=str(e)), 500
-
-
 
 
 
@@ -371,34 +382,34 @@ def delete_visit(visit_id):
 import os
 from werkzeug.utils import secure_filename
 
-UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+UPLOAD_FOLDER = os.path.join(os.getcwd(), "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['POST'])
 def upload_photos(visit_id):
+    """Recebe e salva fotos de uma visita"""
     visit = Visit.query.get(visit_id)
     if not visit:
-        return jsonify(message="Visit not found"), 404
+        return jsonify(error="Visita não encontrada"), 404
 
-    if 'photos' not in request.files:
-        return jsonify(message="No photos received"), 400
-
-    files = request.files.getlist('photos')
+    files = request.files.getlist("photos")
     saved_photos = []
 
-    for f in files:
-        filename = secure_filename(f.filename)
-        path = os.path.join(UPLOAD_DIR, filename)
-        f.save(path)
-        # cria URL acessível (Render usa pasta /uploads se servida via static)
-        public_url = f"/uploads/{filename}"
+    for file in files:
+        if file:
+            filename = secure_filename(file.filename)
+            path = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(path)
 
-        photo = Photo(visit_id=visit_id, url=public_url)
-        db.session.add(photo)
-        saved_photos.append(public_url)
+            # 🔥 Salva no banco
+            p = Photo(visit_id=visit.id, url=f"/uploads/{filename}")
+            db.session.add(p)
+            saved_photos.append({"filename": filename, "url": f"/uploads/{filename}"})
 
     db.session.commit()
-    return jsonify(message="Photos uploaded", urls=saved_photos), 201
+    print(f"✅ {len(saved_photos)} fotos salvas para a visita {visit_id}")
+    return jsonify({"uploaded": saved_photos}), 201
+
 
 
 
