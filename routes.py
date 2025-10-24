@@ -310,6 +310,7 @@ def update_visit(vid: int):
             except Exception:
                 return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
 
+    # ✅ Atualiza status da visita (feito via botão “Concluir”)
     if 'status' in data and data['status']:
         v.status = data['status'].strip().lower()
 
