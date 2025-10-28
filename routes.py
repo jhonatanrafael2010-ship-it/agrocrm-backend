@@ -144,11 +144,25 @@ def create_visit():
         return jsonify(message='client_id is required'), 400
 
 
-    if not Client.query.get(client_id): return jsonify(message='client not found'), 404
-    if not Property.query.get(property_id): return jsonify(message='property not found'), 404
-    if not Plot.query.get(plot_id): return jsonify(message='plot not found'), 404
+    # ✅ Apenas valida se IDs foram realmente enviados
+    if not Client.query.get(client_id):
+        return jsonify(message='client not found'), 404
+
+    if property_id:
+        if not Property.query.get(property_id):
+            return jsonify(message='property not found'), 404
+    else:
+        property_id = None  # permite vazio
+
+    if plot_id:
+        if not Plot.query.get(plot_id):
+            return jsonify(message='plot not found'), 404
+    else:
+        plot_id = None  # permite vazio
+
     if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
         return jsonify(message='consultant not found'), 404
+
 
     from datetime import date as _d, timedelta
     try:

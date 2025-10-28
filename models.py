@@ -182,8 +182,8 @@ class Visit(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     client_id = db.Column(db.Integer, db.ForeignKey('clients.id'), nullable=False, index=True)
-    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
-    plot_id = db.Column(db.Integer, db.ForeignKey('plots.id'), nullable=False, index=True)
+    property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=True, index=True)
+    plot_id = db.Column(db.Integer, db.ForeignKey('plots.id'), nullable=True, index=True)
     planting_id = db.Column(db.Integer, db.ForeignKey('plantings.id'), nullable=True, index=True)
     consultant_id = db.Column(db.Integer, nullable=True, index=True)
     date = db.Column(db.Date, nullable=True)

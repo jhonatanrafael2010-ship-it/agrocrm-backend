@@ -6,6 +6,7 @@ from models import db, Culture, Variety, PhenologyStage, User
 from flask_migrate import Migrate
 from routes import bp as api_bp
 from werkzeug.security import generate_password_hash
+from flask import send_from_directory
 
 # =====================================================
 # 🌱 Seeds iniciais — Culturas, Variedades, Fenologia e Usuário padrão
@@ -98,9 +99,7 @@ def seed_default_user():
 # =====================================================
 def create_app(test_config=None):
     app = Flask(__name__)
-    # ✅ Permite servir imagens da pasta uploads no Render
-    app.static_folder = 'uploads'
-    app.add_url_rule('/uploads/<path:filename>', endpoint='uploads', view_func=app.send_static_file)
+    # ✅ Servir imagens da pasta "uploads"
     CORS(app, supports_credentials=True)
 
     # Configuração do banco
@@ -138,6 +137,11 @@ def create_app(test_config=None):
     Migrate(app, db)
     app.register_blueprint(api_bp)
 
+    # ✅ Servir arquivos enviados (fotos das visitas)
+    @app.route('/uploads/<path:filename>')
+    def uploaded_file(filename):
+        return send_from_directory(os.path.join(os.getcwd(), 'uploads'), filename)
+
     @app.route("/")
     def index():
         return jsonify({
@@ -157,6 +161,7 @@ def create_app(test_config=None):
             print(f"⚠️ Erro ao executar seed: {e}")
 
     return app
+
 
 
 # =====================================================
