@@ -7,6 +7,8 @@ from models import db, User, Client, Property, Plot, Visit, Planting, Opportunit
 
 bp = Blueprint('api', __name__, url_prefix='/api')
 
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/opt/render/project/src/uploads")
+
 # ============================================================
 # 🌾 CULTURAS, VARIEDADES, CONSULTOR
 # ============================================================
@@ -140,6 +142,8 @@ def create_visit():
     variety = data.get('variety')
     date_str = data.get('date')
 
+    gen_schedule = bool(data.get('generate_schedule'))
+
     if not client_id:
         return jsonify(message='client_id is required'), 400
 
@@ -162,6 +166,18 @@ def create_visit():
 
     if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
         return jsonify(message='consultant not found'), 404
+
+    if gen_schedule:
+        # 🔒 valida obrigatórios
+        if not plot_id:
+            return jsonify(message='plot_id é obrigatório quando gerar cronograma'), 400
+        if not culture or not variety:
+            return jsonify(message='culture e variety são obrigatórios quando gerar cronograma'), 400
+
+        p = Planting(plot_id=plot_id, culture=culture, variety=variety, planting_date=visit_date)
+        db.session.add(p)
+        db.session.flush()
+
 
 
     from datetime import date as _d, timedelta
@@ -191,15 +207,17 @@ def create_visit():
     if not (culture and variety):
         return jsonify(message='culture and variety required'), 400
 
-    p = Planting(plot_id=plot_id, culture=culture, variety=variety, planting_date=visit_date)
-    db.session.add(p)
-    db.session.flush()
+    p = None
+    if plot_id:
+        p = Planting(plot_id=plot_id, culture=culture, variety=variety, planting_date=visit_date)
+        db.session.add(p)
+        db.session.flush()
 
     v0 = Visit(
         client_id=client_id,
         property_id=property_id,
         plot_id=plot_id,
-        planting_id=p.id,
+        planting_id=p.id if p else None,
         consultant_id=consultant_id,
         date=visit_date,
         recommendation='Plantio',
@@ -409,7 +427,7 @@ def upload_photos(visit_id):
         if not files:
             return jsonify({"error": "Nenhum arquivo enviado"}), 400
 
-        upload_dir = os.path.join(os.getcwd(), 'uploads')
+        upload_dir = UPLOAD_DIR
         os.makedirs(upload_dir, exist_ok=True)
 
         saved_photos = []
@@ -422,7 +440,7 @@ def upload_photos(visit_id):
             file.save(file_path)
 
             # monta URL pública correta (Render ou local)
-            backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "http://localhost:5000"
+            backend_url = (os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com").rstrip("/")
             url = f"{backend_url}/uploads/{unique_name}"
 
             photo = Photo(visit_id=visit_id, url=url)
@@ -451,10 +469,17 @@ def delete_photo(photo_id):
         if not photo:
             return jsonify(message="Foto não encontrada"), 404
 
-        # Exclui o arquivo físico
-        if os.path.exists(photo.url.replace('/uploads/', 'uploads/')):
-            os.remove(photo.url.replace('/uploads/', 'uploads/'))
+        # Extrai nome do arquivo com segurança
+        from urllib.parse import urlparse
+        parsed = urlparse(photo.url)
+        filename = os.path.basename(parsed.path)
+        file_path = os.path.join(UPLOAD_DIR, filename)
 
+        # Remove arquivo físico se existir
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+        # Remove do banco
         db.session.delete(photo)
         db.session.commit()
 
@@ -463,6 +488,7 @@ def delete_photo(photo_id):
     except Exception as e:
         print(f"⚠️ Erro ao excluir foto: {e}")
         return jsonify(error=str(e)), 500
+
 
 
 

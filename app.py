@@ -93,6 +93,7 @@ def seed_default_user():
     else:
         print("ℹ️ Usuário padrão já existe.")
 
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/opt/render/project/src/uploads")  # <— padrão: disco do Render
 
 # =====================================================
 # 🚀 Criação da aplicação Flask
@@ -101,6 +102,9 @@ def create_app(test_config=None):
     app = Flask(__name__)
     # ✅ Servir imagens da pasta "uploads"
     CORS(app, supports_credentials=True)
+
+    # garante pasta de uploads
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
 
     # Configuração do banco
     internal_url = os.environ.get('INTERNAL_DATABASE_URL') or os.environ.get('DATABASE_URL')
@@ -140,7 +144,7 @@ def create_app(test_config=None):
     # ✅ Servir arquivos enviados (fotos das visitas)
     @app.route('/uploads/<path:filename>')
     def uploaded_file(filename):
-        return send_from_directory(os.path.join(os.getcwd(), 'uploads'), filename)
+        return send_from_directory(UPLOAD_DIR, filename)  # <— CORREÇÃO: indentação e diretório
 
     @app.route("/")
     def index():
