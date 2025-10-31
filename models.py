@@ -117,7 +117,6 @@ class Plot(db.Model):
     - name: Nome do Talhão
     - area_ha: Área (ha)
     - irrigated: boolean flag (Irrigado?)
-    - latitude / longitude: coordenadas do ponto capturado via GPS
     """
 
     __tablename__ = 'plots'
@@ -127,8 +126,6 @@ class Plot(db.Model):
     name = db.Column(db.String(200), nullable=False)
     area_ha = db.Column(db.Float, nullable=True)
     irrigated = db.Column(db.Boolean, nullable=True, server_default='0')
-    latitude = db.Column(db.Float, nullable=True)
-    longitude = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
     def to_dict(self):
@@ -139,8 +136,6 @@ class Plot(db.Model):
             'name': self.name,
             'area_ha': self.area_ha,
             'irrigated': bool(self.irrigated) if self.irrigated is not None else None,
-            'latitude': self.latitude,
-            'longitude': self.longitude,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
