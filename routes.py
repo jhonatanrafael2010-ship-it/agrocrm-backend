@@ -564,6 +564,27 @@ def export_visit_pdf(visit_id):
         content.append(Paragraph(visit.recommendation.replace("\n", "<br/>"), normal))
         content.append(Spacer(1, 12))
 
+    
+    # ============================================================
+    # 🗺️ Mapa do Talhão (se houver coordenadas)
+    # ============================================================
+    if plot and plot.latitude and plot.longitude:
+        import requests
+        try:
+            # Static map API (OpenStreetMap tile)
+            map_url = f"https://static-maps.yandex.ru/1.x/?ll={plot.longitude},{plot.latitude}&z=15&size=450,250&l=map&pt={plot.longitude},{plot.latitude},pm2gnl"
+            img_data = requests.get(map_url, timeout=10).content
+            map_img_path = os.path.join("uploads", f"map_{visit_id}.png")
+            with open(map_img_path, "wb") as f:
+                f.write(img_data)
+            content.append(Spacer(1, 12))
+            content.append(Paragraph("<b>Localização do Talhão:</b>", styles["Heading3"]))
+            content.append(Image(map_img_path, width=450, height=250))
+            content.append(Spacer(1, 10))
+        except Exception as e:
+            print(f"⚠️ Falha ao gerar mapa: {e}")
+
+
     # ============================================================
     # 🖼️ Fotos da visita
     # ============================================================
@@ -584,6 +605,36 @@ def export_visit_pdf(visit_id):
         for r in grid:
             content.append(Table([r], hAlign="CENTER"))
         content.append(Spacer(1, 20))
+
+    
+    # ============================================================
+    # 🗺️ Mapa e Coordenadas da Visita
+    # ============================================================
+    if visit.latitude and visit.longitude:
+        import requests
+        try:
+            # Gera imagem estática do mapa com marcador verde
+            map_url = f"https://static-maps.yandex.ru/1.x/?ll={visit.longitude},{visit.latitude}&z=15&size=450,250&l=map&pt={visit.longitude},{visit.latitude},pm2gnl"
+            img_data = requests.get(map_url, timeout=10).content
+
+            # salva temporariamente
+            map_img_path = os.path.join("uploads", f"map_visit_{visit_id}.png")
+            with open(map_img_path, "wb") as f:
+                f.write(img_data)
+
+            # adiciona ao PDF
+            content.append(Spacer(1, 12))
+            content.append(Paragraph("<b>Localização da Visita:</b>", styles["Heading3"]))
+            content.append(Image(map_img_path, width=450, height=250))
+            content.append(Spacer(1, 6))
+
+            # ✅ Adiciona coordenadas em texto
+            coord_text = f"<font size=10 color='gray'>Latitude: {visit.latitude:.5f} / Longitude: {visit.longitude:.5f}</font>"
+            content.append(Paragraph(coord_text, styles["Normal"]))
+            content.append(Spacer(1, 12))
+        except Exception as e:
+            print(f"⚠️ Falha ao gerar mapa: {e}")
+
 
     # ============================================================
     # ✍️ Assinatura técnica e QR Code
@@ -632,6 +683,146 @@ def export_visit_pdf(visit_id):
 
     filename = f"visita_{visit_id}_nutricrm.pdf"
     return send_file(buffer, as_attachment=True, download_name=filename, mimetype="application/pdf")
+
+from flask import render_template_string
+
+@bp.route("/view/visit/<int:visit_id>", methods=["GET"])
+def public_visit_view(visit_id):
+    """🌿 Página pública de visualização de visita (NutriCRM Viewer)"""
+    from models import Visit, Client, Property, Plot, Consultant
+    visit = Visit.query.get_or_404(visit_id)
+    client = Client.query.get(visit.client_id)
+    prop = Property.query.get(visit.property_id)
+    plot = Plot.query.get(visit.plot_id)
+    consultant = Consultant.query.get(visit.consultant_id) if hasattr(visit, "consultant_id") else None
+
+    # Pega coordenadas se existirem no banco
+    lat = getattr(plot, "latitude", None)
+    lon = getattr(plot, "longitude", None)
+
+    photos = []
+    for p in visit.photos:
+        photos.append({"url": f"/uploads/{os.path.basename(p.url)}"})
+
+    html_template = """
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Visita #{{ visit.id }} — NutriCRM</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <style>
+            body { background-color:#f9fafb; font-family:'Helvetica'; padding-bottom:60px; }
+            header { background:#26b96a; color:white; padding:20px; display:flex; justify-content:space-between; align-items:center; }
+            header img { height:50px; }
+            .info-card { background:white; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,0.05); padding:20px; margin-top:20px; }
+            .photos img { width:100%; border-radius:8px; cursor:pointer; transition:transform 0.2s; }
+            .photos img:hover { transform:scale(1.02); }
+            #map { height:300px; border-radius:10px; margin-top:15px; }
+            footer { margin-top:40px; text-align:center; color:#888; }
+            .download-btn { background:#26b96a; color:white; padding:10px 18px; border-radius:6px; text-decoration:none; }
+            .lightbox { display:none; position:fixed; z-index:9999; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); justify-content:center; align-items:center; }
+            .lightbox img { max-width:90%; max-height:90%; }
+        </style>
+    </head>
+    <body>
+        <header>
+            <img src="/static/nutricrm_logo.png" alt="NutriCRM Logo" />
+            <h4>Relatório Técnico — Visita #{{ visit.id }}</h4>
+            <a class="download-btn" href="/api/visits/{{ visit.id }}/pdf" target="_blank">📄 Baixar PDF</a>
+        </header>
+
+        <main class="container">
+            <div class="info-card">
+                <h4>Informações Gerais</h4>
+                <table class="table table-borderless mt-3">
+                    <tr><th>Cliente:</th><td>{{ client.name if client else '-' }}</td></tr>
+                    <tr><th>Fazenda:</th><td>{{ prop.name if prop else '-' }}</td></tr>
+                    <tr><th>Talhão:</th><td>{{ plot.name if plot else '-' }}</td></tr>
+                    <tr><th>Consultor:</th><td>{{ consultant.name if consultant else '-' }}</td></tr>
+                    <tr><th>Data:</th><td>{{ visit.date.strftime('%d/%m/%Y') if visit.date else '-' }}</td></tr>
+                    <tr><th>Status:</th><td>{{ visit.status }}</td></tr>
+                </table>
+
+                {% if lat and lon %}
+                <div id="map"></div>
+                {% endif %}
+            </div>
+
+            {% if visit.diagnosis %}
+            <div class="info-card">
+                <h4>Diagnóstico</h4>
+                <p>{{ visit.diagnosis }}</p>
+            </div>
+            {% endif %}
+
+            {% if visit.recommendation %}
+            <div class="info-card">
+                <h4>Recomendações Técnicas</h4>
+                <p>{{ visit.recommendation }}</p>
+            </div>
+            {% endif %}
+
+            {% if photos %}
+            <div class="info-card photos">
+                <h4>Fotos da Visita</h4>
+                <div class="row mt-3">
+                    {% for p in photos %}
+                    <div class="col-md-6 mb-3">
+                        <img src="{{ p.url }}" onclick="openLightbox('{{ p.url }}')" />
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </main>
+
+        <div id="lightbox" class="lightbox" onclick="closeLightbox()">
+            <img id="lightbox-img" src="">
+        </div>
+
+        <footer>
+            <small>NutriCRM © 2025 — Relatório técnico automatizado</small>
+        </footer>
+
+        <script>
+            function openLightbox(src) {
+                document.getElementById('lightbox-img').src = src;
+                document.getElementById('lightbox').style.display = 'flex';
+            }
+            function closeLightbox() {
+                document.getElementById('lightbox').style.display = 'none';
+            }
+
+            {% if lat and lon %}
+            const map = L.map('map').setView([{{ lat }}, {{ lon }}], 15);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+            L.marker([{{ lat }}, {{ lon }}]).addTo(map)
+                .bindPopup("{{ plot.name if plot else 'Talhão' }}")
+                .openPopup();
+            {% endif %}
+        </script>
+    </body>
+    </html>
+    """
+
+    return render_template_string(
+        html_template,
+        visit=visit,
+        client=client,
+        prop=prop,
+        plot=plot,
+        consultant=consultant,
+        photos=photos,
+        lat=lat,
+        lon=lon
+    )
+
 
 
 @bp.route('/photos/<int:photo_id>', methods=['DELETE'])
@@ -939,7 +1130,7 @@ def update_plot(plot_id: int):
     if not pl:
         return jsonify(message='plot not found'), 404
     data = request.get_json() or {}
-    for field in ('name', 'area_ha', 'irrigated', 'property_id'):
+    for field in ('name', 'area_ha', 'irrigated', 'property_id', 'latitude', 'longitude'):
         if field in data:
             if field == 'area_ha':
                 setattr(pl, field, float(data.get(field)) if data.get(field) is not None else None)

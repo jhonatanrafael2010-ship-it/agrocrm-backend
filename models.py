@@ -117,6 +117,7 @@ class Plot(db.Model):
     - name: Nome do Talhão
     - area_ha: Área (ha)
     - irrigated: boolean flag (Irrigado?)
+    - latitude / longitude: coordenadas do ponto capturado via GPS
     """
 
     __tablename__ = 'plots'
@@ -126,22 +127,27 @@ class Plot(db.Model):
     name = db.Column(db.String(200), nullable=False)
     area_ha = db.Column(db.Float, nullable=True)
     irrigated = db.Column(db.Boolean, nullable=True, server_default='0')
+    latitude = db.Column(db.Float, nullable=True)
+    longitude = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
     def to_dict(self):
         return {
             'id': self.id,
             'property_id': self.property_id,
-            'property_name': None if not self.property else self.property.name,
+            'property_name': self.property.name if hasattr(self, 'property') and self.property else None,
             'name': self.name,
             'area_ha': self.area_ha,
             'irrigated': bool(self.irrigated) if self.irrigated is not None else None,
-            'created_at': None if not self.created_at else self.created_at.isoformat(),
+            'latitude': self.latitude,
+            'longitude': self.longitude,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
-    # relationship to plantings
+
+    # Relationships
     plantings = db.relationship('Planting', backref='plot', lazy='dynamic', cascade='all, delete-orphan')
-    # relationship to visits
     visits = db.relationship('Visit', backref='plot', lazy='dynamic', cascade='all, delete-orphan')
+
 
 
 class Planting(db.Model):
@@ -191,6 +197,8 @@ class Visit(db.Model):
     diagnosis = db.Column(db.Text, nullable=True)
     recommendation = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=True, server_default='planned')
+    latitude = db.Column(db.Float, nullable=True)    
+    longitude = db.Column(db.Float, nullable=True)    
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
     def to_dict(self):
@@ -227,6 +235,8 @@ class Visit(db.Model):
             'culture': (self.planting.culture if getattr(self, 'planting', None) else None),
             'variety': (self.planting.variety if getattr(self, 'planting', None) else None),
             'created_at': self.created_at.isoformat() if self.created_at else None,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
             'display_text': display_text  # 👈 já vem pronto pro calendário
         }
 
