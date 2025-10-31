@@ -180,18 +180,22 @@ def create_visit():
 
 
 
+    # ============================================================
+    # 🌱 VISIT CREATION (fix para permitir visitas sem talhão/propriedade)
+    # ============================================================
     from datetime import date as _d, timedelta
+
     try:
         visit_date = _d.fromisoformat(date_str)
     except Exception:
         return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
 
-    # ✅ sem cronograma
+    # 🔹 Se NÃO for para gerar cronograma, pode criar livremente
     if not gen_schedule:
         v = Visit(
             client_id=client_id,
-            property_id=property_id,
-            plot_id=plot_id,
+            property_id=property_id or None,
+            plot_id=plot_id or None,
             consultant_id=consultant_id,
             date=visit_date,
             checklist=data.get('checklist'),
@@ -203,10 +207,13 @@ def create_visit():
         db.session.commit()
         return jsonify(message='visit created', visit=v.to_dict()), 201
 
-    # ✅ com cronograma
-    if not (culture and variety):
-        return jsonify(message='culture and variety required'), 400
+    # ============================================================
+    # 🌾 Se for gerar cronograma, exige cultura e variedade, mas NÃO força talhão
+    # ============================================================
+    if not culture or not variety:
+        return jsonify(message='culture and variety are required when schedule is generated'), 400
 
+    # 🔸 Plantio só é criado se houver talhão (plot_id), senão apenas gera visitas normais
     p = None
     if plot_id:
         p = Planting(plot_id=plot_id, culture=culture, variety=variety, planting_date=visit_date)
@@ -215,8 +222,8 @@ def create_visit():
 
     v0 = Visit(
         client_id=client_id,
-        property_id=property_id,
-        plot_id=plot_id,
+        property_id=property_id or None,
+        plot_id=plot_id or None,
         planting_id=p.id if p else None,
         consultant_id=consultant_id,
         date=visit_date,
@@ -226,26 +233,24 @@ def create_visit():
     db.session.add(v0)
 
     from models import PhenologyStage
-    # 🌱 Gera visitas automáticas conforme estágios fenológicos
-    if gen_schedule and culture:  # ✅ usa o nome correto da variável
+
+    if gen_schedule and culture:
         stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days.asc()).all()
 
-        # 🔎 Remove redundâncias apenas para soja (onde havia o problema)
+        # remove duplicações só para soja
         if culture.strip().lower() == "soja":
             stages = [s for s in stages if "maturação fisiológica" not in s.name.lower()]
 
-
         for st in stages:
-            # Pula o estágio "Plantio" (já criado manualmente)
             if st.days == 0 or "plantio" in st.name.lower():
                 continue
 
             fut_date = visit_date + timedelta(days=int(st.days))
             vv = Visit(
                 client_id=client_id,
-                property_id=property_id,
-                plot_id=plot_id,
-                planting_id=p.id,
+                property_id=property_id or None,
+                plot_id=plot_id or None,
+                planting_id=p.id if p else None,
                 consultant_id=consultant_id,
                 date=fut_date,
                 recommendation=st.name,
