@@ -1,9 +1,22 @@
 import os
 import datetime
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import text
 import jwt
+from io import BytesIO
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, Flowable
+)
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.graphics import renderPDF
+from reportlab.graphics.shapes import Drawing, String, Rect
+from reportlab.graphics.barcode import qr
+from reportlab.pdfgen.canvas import Canvas
 from models import db, User, Client, Property, Plot, Visit, Planting, Opportunity, Photo
+
+
 
 bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -464,6 +477,161 @@ def upload_photos(visit_id):
         return jsonify({"error": str(e)}), 500
 
 
+@bp.route("/visits/<int:visit_id>/pdf", methods=["GET"])
+def export_visit_pdf(visit_id):
+    """📄 Gera PDF NutriCRM Premium com QR Code e assinatura"""
+    from models import Visit, Client, Property, Plot, Consultant
+
+    visit = Visit.query.get_or_404(visit_id)
+    client = Client.query.get(visit.client_id)
+    prop = Property.query.get(visit.property_id)
+    plot = Plot.query.get(visit.plot_id)
+    consultant = Consultant.query.get(visit.consultant_id) if hasattr(visit, "consultant_id") else None
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=40, rightMargin=40, topMargin=60, bottomMargin=40
+    )
+
+    styles = getSampleStyleSheet()
+    normal = styles["Normal"]
+    normal.fontName = "Helvetica"
+    normal.fontSize = 10
+    green = colors.HexColor("#26b96a")
+
+    content = []
+
+    # ============================================================
+    # 🟢 Cabeçalho verde com logo e data
+    # ============================================================
+    logo_path = os.path.join("static", "nutricrm_logo.png")
+    header_date = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    header = Table(
+        [[
+            Image(logo_path, width=110, height=40) if os.path.exists(logo_path) else Paragraph("<b>NutriCRM</b>", normal),
+            Paragraph(f"<b>Emitido em:</b> {header_date}", normal)
+        ]],
+        colWidths=[350, 150],
+    )
+    header.setStyle(TableStyle([
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    content.append(header)
+    content.append(Spacer(1, 6))
+    content.append(Paragraph("<b>Relatório Técnico de Visita</b>", ParagraphStyle("h1", textColor=green, fontSize=18)))
+    content.append(Spacer(1, 10))
+
+    # ============================================================
+    # 🧾 Bloco de informações
+    # ============================================================
+    info_data = [
+        ["Cliente:", client.name if client else "-"],
+        ["Fazenda:", prop.name if prop else "-"],
+        ["Talhão:", plot.name if plot else "-"],
+        ["Consultor:", consultant.name if consultant else "-"],
+        ["Data da Visita:", visit.date.strftime("%d/%m/%Y") if visit.date else "-"],
+        ["Cultura:", getattr(visit, "culture", "-")],
+        ["Variedade:", getattr(visit, "variety", "-")],
+        ["Status:", (visit.status or "").capitalize()],
+    ]
+    info_table = Table(info_data, colWidths=[120, 380])
+    info_table.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 1, green),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BACKGROUND", (0, 0), (-1, 0), green),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+    ]))
+    content.append(info_table)
+    content.append(Spacer(1, 15))
+
+    # ============================================================
+    # 💬 Diagnóstico e Recomendação
+    # ============================================================
+    if visit.diagnosis:
+        content.append(Paragraph("<b>Diagnóstico:</b>", styles["Heading3"]))
+        content.append(Paragraph(visit.diagnosis.replace("\n", "<br/>"), normal))
+        content.append(Spacer(1, 8))
+
+    if visit.recommendation:
+        content.append(Paragraph("<b>Recomendações Técnicas:</b>", styles["Heading3"]))
+        content.append(Paragraph(visit.recommendation.replace("\n", "<br/>"), normal))
+        content.append(Spacer(1, 12))
+
+    # ============================================================
+    # 🖼️ Fotos da visita
+    # ============================================================
+    photos = getattr(visit, "photos", [])
+    if photos:
+        content.append(Paragraph("<b>Fotos da Visita:</b>", styles["Heading3"]))
+        grid = []
+        row = []
+        for i, ph in enumerate(photos, start=1):
+            img_path = os.path.join("uploads", os.path.basename(ph.url))
+            if os.path.exists(img_path):
+                row.append(Image(img_path, width=200, height=150))
+                if i % 2 == 0:
+                    grid.append(row)
+                    row = []
+        if row:
+            grid.append(row)
+        for r in grid:
+            content.append(Table([r], hAlign="CENTER"))
+        content.append(Spacer(1, 20))
+
+    # ============================================================
+    # ✍️ Assinatura técnica e QR Code
+    # ============================================================
+    qr_url = f"https://nutricrm.app/visits/{visit_id}"
+    qr_code = qr.QrCodeWidget(qr_url)
+    bounds = qr_code.getBounds()
+    w, h = bounds[2] - bounds[0], bounds[3] - bounds[1]
+    d = Drawing(60, 60, transform=[60.0 / w, 0, 0, 60.0 / h, 0, 0])
+    d.add(qr_code)
+
+    ass_path = os.path.join("static", "assinatura_consultor.png")
+    ass_img = Image(ass_path, width=140, height=50) if os.path.exists(ass_path) else Paragraph(" ", normal)
+
+    footer = Table([
+        [Paragraph("<b>Assinatura do Consultor:</b>", normal), Paragraph("<b>Ver visita online:</b>", normal)],
+        [ass_img, d],
+    ], colWidths=[400, 100])
+    footer.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    content.append(footer)
+    content.append(Spacer(1, 10))
+
+    # ============================================================
+    # 🌿 Rodapé institucional
+    # ============================================================
+    content.append(Paragraph(
+        "<i>NutriCRM © 2025 — Relatório técnico automatizado</i>",
+        ParagraphStyle("footer", fontSize=8, textColor=colors.grey, alignment=1),
+    ))
+
+    # ============================================================
+    # 💧 Marca d’água NutriCRM
+    # ============================================================
+    def draw_watermark(canvas, doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica-Bold", 40)
+        canvas.setFillColorRGB(0.15, 0.75, 0.4, alpha=0.08)
+        canvas.drawCentredString(300, 400, "NutriCRM")
+        canvas.restoreState()
+
+    doc.build(content, onFirstPage=draw_watermark, onLaterPages=draw_watermark)
+    buffer.seek(0)
+
+    filename = f"visita_{visit_id}_nutricrm.pdf"
+    return send_file(buffer, as_attachment=True, download_name=filename, mimetype="application/pdf")
 
 
 @bp.route('/photos/<int:photo_id>', methods=['DELETE'])
