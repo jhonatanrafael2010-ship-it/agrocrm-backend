@@ -173,81 +173,131 @@ def create_app(test_config=None):
 # =====================================================
 app = create_app()
 
-from models import db, Client, Property, Plot, Consultant, Culture, Variety
-
-# ============================================================
-# 🌱 AUTO POPULAR BANCO SE ESTIVER VAZIO (compatível Flask 3+)
-# ============================================================
+from models import db, Client, Consultant  # já deve estar importado lá em cima
 
 def auto_populate_database():
-    """Popula o banco com dados básicos caso esteja vazio (auto ao iniciar Render)."""
+    """Popula APENAS clientes e consultores se o banco estiver vazio.
+
+    Culturas, variedades e estágios fenológicos já são populados
+    por outro trecho do código (aquele que imprime ✅ Culturas e variedades fixas populadas!).
+    """
     try:
+        # Se já existir qualquer cliente, não faz nada
         if Client.query.first():
-            print("✅ Banco já possui dados. Nenhuma inserção necessária.")
+            print("ℹ️ Banco já possui clientes. Não será feito repovoamento automático.")
             return
 
-        print("🌱 Banco vazio detectado. Populando dados iniciais...")
+        print("🌱 Banco vazio detectado. Preenchendo dados iniciais (clientes e consultores)...")
 
-        # 🔹 Consultores
-        consultores = ["Jhonatan", "Pedro", "Felipe", "Everton", "Alexandre"]
-        for nome in consultores:
-            db.session.add(Consultant(name=nome, email=f"{nome.lower()}@nutricrm.com", phone="(34) 99999-0000"))
+        # 🔹 Consultores fixos
+        if Consultant.query.count() == 0:
+            consultants = [
+                "Jhonatan",
+                "Pedro",
+                "Felipe",
+                "Everton",
+                "Alexandre",
+            ]
+            for nome in consultants:
+                db.session.add(Consultant(name=nome))
 
-        # 🔹 Culturas
-        culturas = ["Milho", "Soja", "Algodão"]
-        for nome in culturas:
-            db.session.add(Culture(name=nome))
-
-        # 🔹 Variedades (corrigido)
-        variedades = [
-            ("Soja", "AS 3800 I2X"), ("Soja", "AS 3840 I2X"), ("Soja", "AS 3790 I2X"),
-            ("Soja", "AS 3815 I2X"), ("Soja", "AS 3707 I2X"), ("Soja", "AS 3700 XTD"),
-            ("Soja", "AS 3640 I2X"), ("Soja", "AS 3715 I2X"),
-            ("Milho", "AS 1820 PRO4"), ("Milho", "AS 1868 PRO4"), ("Milho", "AS 1877 PRO4"),
-            ("Algodão", "TMG 41")
+        # 🔹 Lista de clientes que você me passou
+        clientes_data = [
+            {"name": "Edevi Massoni", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Livenio Sanini", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Eduardo Lorenzi", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Claudio Duffeck", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Elias Soares ", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Everton Melchior", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Ademir Fischer", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Marcos Zanin", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Ivan Zanin", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Simao Da Silva", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Robson Nadin", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Ademir Bonfanti", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Luis Martins", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Ivo Cella", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Pedro Copini", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Giovane  Paloschi", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Gustavo Paloschi", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Alexandre Barzotto", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Evaristo Barzotto", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Enio Rigo", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Marcelo Alonso", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Matheus Alonso", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Cesar Prediger", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Ryan Boyaski", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Marco H. Bares", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Daniel Capelin", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Macleiton Priester", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Roberto Bogorni", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Marcio Basso", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Emilio Carlos Gonzatto", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Flavio Remor", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Edgar Stragliotto", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Amilton Oliveira", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Egon Afonso Schons", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Arlei Favaretto", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Fabiano Zilli", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Daniel Vian", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Paulo kummer", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Lair Prediger", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Cleiton Bigaton", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Michel Starlick", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Sidney Scopel", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Paulo Cesar Iores", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Tarcisio Garbin", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Julia Barzagui", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Gracieti Casagranda", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Neuri Schereiner", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Nirval Strapasson", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Mauro Techio", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Sandro Bonasa", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Pasquali", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Ivanir Meneguzzo", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Darci Ely", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Vanderlei Vitiorassi", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Fiorin", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Cerone Gurgel", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Gelson Tibirissa", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Ednilson Melchior", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Antonio Uncini", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Marcos Terhorst", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Everton Turqueti", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Alexandro Lorenzi", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Taparello", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Claudio Schons", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Raquel Ida", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Luis de Marco", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Rafael Nadin", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Cirilo Remor", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Rizzi", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Andre Picolo", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Tarciano Remor", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Pedro Cossul", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Andre Eikoff", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Marcos Puziski", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Rogerio Remor", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Cristiano Escobar", "document": "--", "segment": "Agronegócio", "consultor": ""},
+            {"name": "Marcos Ioris", "document": "--", "segment": "Agronegócio", "consultor": ""},
         ]
 
-        for cultura_nome, nome in variedades:
-            cultura_obj = Culture.query.filter_by(name=cultura_nome).first()
-            if cultura_obj:
-                db.session.add(Variety(culture=cultura_obj.name, name=nome))
-
-
-        # 🔹 Clientes (lista original)
-        clientes = [
-            "Edevi Massoni", "Livenio Sanini", "Eduardo Lorenzi", "Claudio Duffeck", "Elias Soares",
-            "Everton Melchior", "Ademir Fischer", "Marcos Zanin", "Ivan Zanin", "Simao Da Silva",
-            "Robson Nadin", "Ademir Bonfanti", "Luis Martins", "Ivo Cella", "Pedro Copini",
-            "Giovane Paloschi", "Gustavo Paloschi", "Alexandre Barzotto", "Evaristo Barzotto",
-            "Enio Rigo", "Marcelo Alonso", "Matheus Alonso", "Cesar Prediger", "Ryan Boyaski",
-            "Marco H. Bares", "Daniel Capelin", "Macleiton Priester", "Roberto Bogorni", "Marcio Basso",
-            "Emilio Carlos Gonzatto", "Flavio Remor", "Edgar Stragliotto", "Amilton Oliveira",
-            "Egon Afonso Schons", "Arlei Favaretto", "Fabiano Zilli", "Daniel Vian", "Paulo Kummer",
-            "Lair Prediger", "Cleiton Bigaton", "Michel Starlick", "Sidney Scopel", "Paulo Cesar Iores",
-            "Tarcisio Garbin", "Julia Barzagui", "Gracieti Casagranda", "Neuri Schereiner",
-            "Nirval Strapasson", "Mauro Techio", "Sandro Bonasa", "Pasquali", "Ivanir Meneguzzo",
-            "Darci Ely", "Vanderlei Vitiorassi", "Fiorin", "Cerone Gurgel", "Gelson Tibirissa",
-            "Ednilson Melchior", "Antonio Uncini", "Marcos Terhorst", "Everton Turqueti",
-            "Alexandro Lorenzi", "Taparello", "Claudio Schons", "Raquel Ida", "Luis de Marco",
-            "Rafael Nadin", "Cirilo Remor", "Rizzi", "Andre Picolo", "Tarciano Remor", "Pedro Cossul",
-            "Andre Eikoff", "Marcos Puziski", "Rogerio Remor", "Cristiano Escobar", "Marcos Ioris"
-        ]
-        for nome in clientes:
-            db.session.add(Client(name=nome, document="--", segment="Agronegócio"))
+        for c in clientes_data:
+            client = Client(
+                name=c["name"],
+                document=c.get("document", ""),
+                segment=c.get("segment", ""),
+                vendor=c.get("consultor") or "",
+            )
+            db.session.add(client)
 
         db.session.commit()
-        print("✅ Dados iniciais inseridos com sucesso!")
+        print("✅ Clientes e consultores restaurados com sucesso!")
 
     except Exception as e:
-        print(f"❌ Erro ao popular o banco automaticamente: {e}")
         db.session.rollback()
+        print(f"❌ Erro ao popular o banco automaticamente: {e}")
 
-
-# ============================================================
-# 🚀 EXECUTA AUTO-POPULAÇÃO NO INÍCIO DO APP
-# ============================================================
-with app.app_context():
-    auto_populate_database()
 
 
 
