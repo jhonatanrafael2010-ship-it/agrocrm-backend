@@ -198,7 +198,7 @@ def auto_populate_database():
         for nome in culturas:
             db.session.add(Culture(name=nome))
 
-        # 🔹 Variedades
+        # 🔹 Variedades (corrigido)
         variedades = [
             ("Soja", "AS 3800 I2X"), ("Soja", "AS 3840 I2X"), ("Soja", "AS 3790 I2X"),
             ("Soja", "AS 3815 I2X"), ("Soja", "AS 3707 I2X"), ("Soja", "AS 3700 XTD"),
@@ -206,8 +206,12 @@ def auto_populate_database():
             ("Milho", "AS 1820 PRO4"), ("Milho", "AS 1868 PRO4"), ("Milho", "AS 1877 PRO4"),
             ("Algodão", "TMG 41")
         ]
-        for cultura, nome in variedades:
-            db.session.add(Variety(culture=cultura, name=nome))
+
+        for cultura_nome, nome in variedades:
+            cultura_obj = Culture.query.filter_by(name=cultura_nome).first()
+            if cultura_obj:
+                db.session.add(Variety(culture=cultura_obj.name, name=nome))
+
 
         # 🔹 Clientes (lista original)
         clientes = [
