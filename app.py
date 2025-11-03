@@ -173,6 +173,7 @@ def create_app(test_config=None):
 # =====================================================
 app = create_app()
 
+
 from models import db, Client, Consultant  # já deve estar importado lá em cima
 
 def auto_populate_database():

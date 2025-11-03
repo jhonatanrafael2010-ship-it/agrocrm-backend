@@ -192,6 +192,8 @@ class Visit(db.Model):
     diagnosis = db.Column(db.Text, nullable=True)
     recommendation = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(20), nullable=True, server_default='planned')
+    culture = db.Column(db.String(120), nullable=True)
+    variety = db.Column(db.String(200), nullable=True)
     latitude = db.Column(db.Float, nullable=True)    
     longitude = db.Column(db.Float, nullable=True)    
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
@@ -227,12 +229,12 @@ class Visit(db.Model):
             'diagnosis': self.diagnosis,
             'recommendation': (self.recommendation or '').strip(),
             'status': self.status,
-            'culture': (self.planting.culture if getattr(self, 'planting', None) else None),
-            'variety': (self.planting.variety if getattr(self, 'planting', None) else None),
+            'culture': self.culture or (self.planting.culture if getattr(self, 'planting', None) else None),
+            'variety': self.variety or (self.planting.variety if getattr(self, 'planting', None) else None),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             "latitude": self.latitude,
             "longitude": self.longitude,
-            'display_text': display_text  # 👈 já vem pronto pro calendário
+            'display_text': display_text 
         }
 
 # ============================================================

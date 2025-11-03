@@ -125,15 +125,26 @@ def get_visits():
                     "url": f"{backend_url}/uploads/{file_name}"
                 })
 
+            # 🔍 tenta pegar cultura e variedade do Planting, mas se não tiver, usa diretamente da visita (caso venha preenchido)
+            culture = None
+            variety = None
+            if v.planting:
+                culture = v.planting.culture
+                variety = v.planting.variety
+            else:
+                culture = getattr(v, "culture", None)
+                variety = getattr(v, "variety", None)
+
             result.append({
                 **v.to_dict(),
                 "client_name": client.name if client else f"Cliente {v.client_id}",
                 "consultant_name": consultant_name or "—",
                 "status": v.status,
-                "culture": v.planting.culture if v.planting else None, 
-                "variety": v.planting.variety if v.planting else None,  
-                "photos": photos,   # 👈 garante que fotos vão no JSON
+                "culture": culture or "—",
+                "variety": variety or "—",
+                "photos": photos,
             })
+
 
 
         return jsonify(result), 200
@@ -303,7 +314,7 @@ def export_visit_pdf(visit_id):
     try:
         logo_path = os.path.join(UPLOAD_DIR, "nutricrm_logo.png")
         if not os.path.exists(logo_path):
-            logo_path = os.path.join(os.path.dirname(__file__), "..", "static", "nutricrm_logo.png")
+            logo_path = os.path.join(os.path.dirname(__file__), "..", "uploads", "nutricrm_logo.png")
     except Exception:
         logo_path = None
 
@@ -501,10 +512,7 @@ def update_visit(vid: int):
 
 @bp.route('/visits/<int:visit_id>', methods=['DELETE'])
 def delete_visit(visit_id):
-    """
-    Exclui uma visita. Se for a visita de plantio, remove também o plantio e
-    TODAS as visitas geradas automaticamente (mesmo que planting_id esteja nulo).
-    """
+    """Exclui uma visita. Se for a visita de plantio, remove também o plantio e TODAS as visitas geradas automaticamente."""
     try:
         visit = Visit.query.get(visit_id)
         if not visit:
@@ -513,33 +521,19 @@ def delete_visit(visit_id):
 
         print(f"🗑 Solicitada exclusão da visita {visit_id}: {visit.recommendation}")
 
-        is_plantio = False
-        if visit.recommendation:
-            is_plantio = 'plantio' in visit.recommendation.lower()
+        # Detecta se é uma visita de plantio
+        is_plantio = bool(visit.recommendation and 'plantio' in visit.recommendation.lower())
 
-        # =========================================================
-        # 🌱 Caso seja visita de plantio, excluir todas relacionadas
-        # =========================================================
         if is_plantio and visit.planting_id:
             planting = Planting.query.get(visit.planting_id)
             if planting:
                 print(f"🌾 Excluindo plantio {planting.id} e visitas associadas...")
-
-                # Busca TODAS as visitas ligadas a este plantio (apenas pelo planting_id)
                 related = Visit.query.filter(Visit.planting_id == planting.id).all()
 
-                print(f"🔍 {len(related)} visitas associadas encontradas:")
                 for v in related:
                     print(f"   → Removendo visita {v.id} ({v.recommendation})")
                     db.session.delete(v)
 
-
-                print(f"🔍 {len(related)} visitas associadas encontradas:")
-                for v in related:
-                    print(f"   → Removendo visita {v.id} ({v.recommendation})")
-                    db.session.delete(v)
-
-                # Remove também o registro do plantio
                 db.session.delete(planting)
                 db.session.commit()
                 print(f"✅ Plantio {planting.id} e todas as visitas associadas foram removidos.")
@@ -547,9 +541,7 @@ def delete_visit(visit_id):
             else:
                 print(f"⚠️ Nenhum plantio encontrado para planting_id={visit.planting_id}")
 
-        # =========================================================
-        # 🧾 Caso contrário, excluir apenas a visita isolada
-        # =========================================================
+        # Caso não seja plantio, remove apenas a visita
         print(f"🧾 Excluindo visita isolada {visit_id}")
         db.session.delete(visit)
         db.session.commit()
@@ -560,6 +552,7 @@ def delete_visit(visit_id):
         print(f"❌ Erro interno ao excluir visita {visit_id}: {e}")
         db.session.rollback()
         return jsonify({'error': f'Erro interno ao excluir visita: {str(e)}'}), 500
+
 
 
 from werkzeug.utils import secure_filename
@@ -652,7 +645,7 @@ def public_visit_view(visit_id):
     </head>
     <body>
         <header>
-            <img src="/static/nutricrm_logo.png" alt="NutriCRM Logo" />
+            <img src="/uploads/nutricrm_logo.png" alt="NutriCRM Logo" />
             <h4>Relatório Técnico — Visita #{{ visit.id }}</h4>
             <a class="download-btn" href="/api/visits/{{ visit.id }}/pdf" target="_blank">📄 Baixar PDF</a>
         </header>
