@@ -270,78 +270,128 @@ def create_visit():
 
 
 @bp.route('/visits/<int:visit_id>/pdf', methods=['GET'])
-def get_visit_pdf(visit_id):
+def export_visit_pdf(visit_id):
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import cm
-    from reportlab.lib import colors
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from io import BytesIO
     import os
 
     visit = Visit.query.get_or_404(visit_id)
+    client = Client.query.get(visit.client_id)
+    property_ = Property.query.get(visit.property_id) if visit.property_id else None
+    plot = Plot.query.get(visit.plot_id) if visit.plot_id else None
+    consultant = User.query.get(visit.consultant_id) if visit.consultant_id else None
 
-    # Caminho para salvar o PDF
-    os.makedirs('static/reports', exist_ok=True)
-    pdf_path = f'static/reports/visita_{visit.id}.pdf'
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4,
+                            rightMargin=40, leftMargin=40, topMargin=60, bottomMargin=40)
 
-    # Se já existir, apenas devolve o arquivo
-    if os.path.exists(pdf_path):
-        return send_file(pdf_path, as_attachment=True)
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="Title", fontSize=18, leading=22, alignment=1, spaceAfter=20, textColor=colors.HexColor("#1B5E20")))
+    styles.add(ParagraphStyle(name="Label", fontSize=11, leading=14, textColor=colors.HexColor("#2E7D32"), spaceAfter=6))
+    styles.add(ParagraphStyle(name="NormalSmall", fontSize=10, leading=13))
 
-    # 🔹 Gera o PDF se não existir ainda
-    try:
-        doc = SimpleDocTemplate(pdf_path, pagesize=A4)
-        styles = getSampleStyleSheet()
-        elements = []
+    story = []
 
-        logo_path = os.path.join('static', 'nutricrm_logo.png')
-        if os.path.exists(logo_path):
-            elements.append(Image(logo_path, width=5*cm, height=5*cm))
-        elements.append(Spacer(1, 0.5*cm))
+    # ============================================================
+    # 🌿 Cabeçalho com logo NutriCRM
+    # ============================================================
+    logo_path = os.path.join(os.path.dirname(__file__), "..", "static", "nutricrm_logo.png")
+    if os.path.exists(logo_path):
+        story.append(Image(logo_path, width=120, height=45))
+    else:
+        story.append(Paragraph("<b>NutriCRM</b>", styles["Title"]))
+    story.append(Spacer(1, 12))
 
-        elements.append(Paragraph("<b>Relatório de Visita Técnica</b>", styles['Title']))
-        elements.append(Spacer(1, 0.3*cm))
+    story.append(Paragraph("<b>Relatório de Visita Técnica</b>", styles["Title"]))
 
-        client_name = visit.client.name if visit.client else "—"
-        prop_name = visit.property.name if visit.property else "—"
-        plot_name = visit.plot.name if visit.plot else "—"
-        consultant_name = visit.consultant.name if visit.consultant else "—"
+    # ============================================================
+    # 🧾 Dados principais
+    # ============================================================
+    data_table = [
+        ["Cliente:", client.name if client else "-"],
+        ["Propriedade:", property_.name if property_ else "-"],
+        ["Talhão:", plot.name if plot else "-"],
+        ["Cultura:", visit.culture or "-"],
+        ["Variedade:", visit.variety or "-"],
+        ["Consultor:", consultant.name if consultant else "-"],
+        ["Data da Visita:", visit.date.strftime("%d/%m/%Y") if visit.date else "-"],
+        ["Status:", visit.status.capitalize() if visit.status else "-"],
+    ]
 
-        data_table = [
-            ["Cliente", client_name],
-            ["Propriedade", prop_name],
-            ["Talhão", plot_name],
-            ["Data da Visita", str(visit.date)],
-            ["Cultura", str(getattr(visit, 'culture', '—'))],
-            ["Variedade", str(getattr(visit, 'variety', '—'))],
-            ["Consultor", consultant_name],
-            ["Status", visit.status or "—"],
-            ["Latitude", str(visit.latitude or "—")],
-            ["Longitude", str(visit.longitude or "—")],
-        ]
-        table = Table(data_table, hAlign='LEFT')
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#a7d38d")),
-            ('BOX', (0,0), (-1,-1), 1, colors.black),
-            ('INNERGRID', (0,0), (-1,-1), 0.5, colors.grey),
-            ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
-            ('FONTSIZE', (0,0), (-1,-1), 10)
-        ]))
-        elements.append(table)
-        elements.append(Spacer(1, 0.5*cm))
+    table = Table(data_table, colWidths=[120, 350])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E8F5E9")),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#1B5E20")),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("BOX", (0, 0), (-1, -1), 0.25, colors.gray),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
+    ]))
 
-        elements.append(Paragraph("<b>Recomendações:</b>", styles['Heading3']))
-        elements.append(Paragraph(visit.recommendation or "—", styles['BodyText']))
-        elements.append(Spacer(1, 0.3*cm))
-        elements.append(Paragraph("<b>Diagnóstico:</b>", styles['Heading3']))
-        elements.append(Paragraph(visit.diagnosis or "—", styles['BodyText']))
+    story.append(table)
+    story.append(Spacer(1, 18))
 
-        doc.build(elements)
-        return send_file(pdf_path, as_attachment=True)
+    # ============================================================
+    # 🧠 Diagnóstico e Recomendações
+    # ============================================================
+    story.append(Paragraph("<b>Diagnóstico:</b>", styles["Label"]))
+    story.append(Paragraph(visit.diagnosis or "-", styles["NormalSmall"]))
+    story.append(Spacer(1, 12))
 
-    except Exception as e:
-        print(f"❌ Erro ao gerar PDF: {e}")
-        return jsonify(error=str(e)), 500
+    story.append(Paragraph("<b>Recomendações:</b>", styles["Label"]))
+    story.append(Paragraph(visit.recommendation or "-", styles["NormalSmall"]))
+    story.append(Spacer(1, 12))
+
+    # ============================================================
+    # 📍 Localização GPS
+    # ============================================================
+    if visit.latitude and visit.longitude:
+        coords_text = f"{visit.latitude:.5f}, {visit.longitude:.5f}"
+        story.append(Paragraph("<b>Localização GPS:</b>", styles["Label"]))
+        story.append(Paragraph(coords_text, styles["NormalSmall"]))
+        story.append(Spacer(1, 12))
+
+    # ============================================================
+    # 🖼️ Fotos anexadas
+    # ============================================================
+    if hasattr(visit, "photos") and visit.photos:
+        story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
+        for photo in visit.photos:
+            photo_path = os.path.join(os.path.dirname(__file__), "..", "uploads", photo.filename)
+            if os.path.exists(photo_path):
+                try:
+                    story.append(Image(photo_path, width=200, height=150))
+                    story.append(Spacer(1, 10))
+                except Exception as e:
+                    story.append(Paragraph(f"[Erro ao carregar imagem: {e}]", styles["NormalSmall"]))
+        story.append(Spacer(1, 16))
+
+    # ============================================================
+    # ✍️ Rodapé
+    # ============================================================
+    story.append(Spacer(1, 24))
+    story.append(Paragraph("<b>NutriCRM - CRM Inteligente para o Agronegócio</b>", styles["Label"]))
+    story.append(Paragraph("Relatório técnico gerado automaticamente via sistema NutriCRM.", styles["NormalSmall"]))
+
+    # ============================================================
+    # 📄 Geração do PDF
+    # ============================================================
+    doc.build(story)
+    buffer.seek(0)
+
+    return send_file(
+        buffer,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"visita_{visit.id}.pdf"
+    )
+
 
 
 
