@@ -175,11 +175,13 @@ app = create_app()
 
 from models import db, Client, Property, Plot, Consultant, Culture, Variety
 
-@app.before_first_request
+# ============================================================
+# 🌱 AUTO POPULAR BANCO SE ESTIVER VAZIO (compatível Flask 3+)
+# ============================================================
+
 def auto_populate_database():
     """Popula o banco com dados básicos caso esteja vazio (auto ao iniciar Render)."""
     try:
-        # Se já houver clientes, não faz nada
         if Client.query.first():
             print("✅ Banco já possui dados. Nenhuma inserção necessária.")
             return
@@ -207,7 +209,7 @@ def auto_populate_database():
         for cultura, nome in variedades:
             db.session.add(Variety(culture=cultura, name=nome))
 
-        # 🔹 Clientes (77 nomes originais)
+        # 🔹 Clientes (lista original)
         clientes = [
             "Edevi Massoni", "Livenio Sanini", "Eduardo Lorenzi", "Claudio Duffeck", "Elias Soares",
             "Everton Melchior", "Ademir Fischer", "Marcos Zanin", "Ivan Zanin", "Simao Da Silva",
@@ -226,7 +228,6 @@ def auto_populate_database():
             "Rafael Nadin", "Cirilo Remor", "Rizzi", "Andre Picolo", "Tarciano Remor", "Pedro Cossul",
             "Andre Eikoff", "Marcos Puziski", "Rogerio Remor", "Cristiano Escobar", "Marcos Ioris"
         ]
-
         for nome in clientes:
             db.session.add(Client(name=nome, document="--", segment="Agronegócio"))
 
@@ -236,6 +237,14 @@ def auto_populate_database():
     except Exception as e:
         print(f"❌ Erro ao popular o banco automaticamente: {e}")
         db.session.rollback()
+
+
+# ============================================================
+# 🚀 EXECUTA AUTO-POPULAÇÃO NO INÍCIO DO APP
+# ============================================================
+with app.app_context():
+    auto_populate_database()
+
 
 
 if __name__ == '__main__':
