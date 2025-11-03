@@ -173,5 +173,70 @@ def create_app(test_config=None):
 # =====================================================
 app = create_app()
 
+from models import db, Client, Property, Plot, Consultant, Culture, Variety
+
+@app.before_first_request
+def auto_populate_database():
+    """Popula o banco com dados básicos caso esteja vazio (auto ao iniciar Render)."""
+    try:
+        # Se já houver clientes, não faz nada
+        if Client.query.first():
+            print("✅ Banco já possui dados. Nenhuma inserção necessária.")
+            return
+
+        print("🌱 Banco vazio detectado. Populando dados iniciais...")
+
+        # 🔹 Consultores
+        consultores = ["Jhonatan", "Pedro", "Felipe", "Everton", "Alexandre"]
+        for nome in consultores:
+            db.session.add(Consultant(name=nome, email=f"{nome.lower()}@nutricrm.com", phone="(34) 99999-0000"))
+
+        # 🔹 Culturas
+        culturas = ["Milho", "Soja", "Algodão"]
+        for nome in culturas:
+            db.session.add(Culture(name=nome))
+
+        # 🔹 Variedades
+        variedades = [
+            ("Soja", "AS 3800 I2X"), ("Soja", "AS 3840 I2X"), ("Soja", "AS 3790 I2X"),
+            ("Soja", "AS 3815 I2X"), ("Soja", "AS 3707 I2X"), ("Soja", "AS 3700 XTD"),
+            ("Soja", "AS 3640 I2X"), ("Soja", "AS 3715 I2X"),
+            ("Milho", "AS 1820 PRO4"), ("Milho", "AS 1868 PRO4"), ("Milho", "AS 1877 PRO4"),
+            ("Algodão", "TMG 41")
+        ]
+        for cultura, nome in variedades:
+            db.session.add(Variety(culture=cultura, name=nome))
+
+        # 🔹 Clientes (77 nomes originais)
+        clientes = [
+            "Edevi Massoni", "Livenio Sanini", "Eduardo Lorenzi", "Claudio Duffeck", "Elias Soares",
+            "Everton Melchior", "Ademir Fischer", "Marcos Zanin", "Ivan Zanin", "Simao Da Silva",
+            "Robson Nadin", "Ademir Bonfanti", "Luis Martins", "Ivo Cella", "Pedro Copini",
+            "Giovane Paloschi", "Gustavo Paloschi", "Alexandre Barzotto", "Evaristo Barzotto",
+            "Enio Rigo", "Marcelo Alonso", "Matheus Alonso", "Cesar Prediger", "Ryan Boyaski",
+            "Marco H. Bares", "Daniel Capelin", "Macleiton Priester", "Roberto Bogorni", "Marcio Basso",
+            "Emilio Carlos Gonzatto", "Flavio Remor", "Edgar Stragliotto", "Amilton Oliveira",
+            "Egon Afonso Schons", "Arlei Favaretto", "Fabiano Zilli", "Daniel Vian", "Paulo Kummer",
+            "Lair Prediger", "Cleiton Bigaton", "Michel Starlick", "Sidney Scopel", "Paulo Cesar Iores",
+            "Tarcisio Garbin", "Julia Barzagui", "Gracieti Casagranda", "Neuri Schereiner",
+            "Nirval Strapasson", "Mauro Techio", "Sandro Bonasa", "Pasquali", "Ivanir Meneguzzo",
+            "Darci Ely", "Vanderlei Vitiorassi", "Fiorin", "Cerone Gurgel", "Gelson Tibirissa",
+            "Ednilson Melchior", "Antonio Uncini", "Marcos Terhorst", "Everton Turqueti",
+            "Alexandro Lorenzi", "Taparello", "Claudio Schons", "Raquel Ida", "Luis de Marco",
+            "Rafael Nadin", "Cirilo Remor", "Rizzi", "Andre Picolo", "Tarciano Remor", "Pedro Cossul",
+            "Andre Eikoff", "Marcos Puziski", "Rogerio Remor", "Cristiano Escobar", "Marcos Ioris"
+        ]
+
+        for nome in clientes:
+            db.session.add(Client(name=nome, document="--", segment="Agronegócio"))
+
+        db.session.commit()
+        print("✅ Dados iniciais inseridos com sucesso!")
+
+    except Exception as e:
+        print(f"❌ Erro ao popular o banco automaticamente: {e}")
+        db.session.rollback()
+
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
