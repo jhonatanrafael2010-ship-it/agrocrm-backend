@@ -144,62 +144,83 @@ def get_visits():
 
 @bp.route('/visits', methods=['POST'])
 def create_visit():
-    from datetime import date as _d, datetime, timedelta
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import cm
-    from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
-    from reportlab.lib.styles import getSampleStyleSheet
-    import os
-
+    from datetime import date as _d, timedelta
     data = request.get_json(silent=True) or {}
+
     client_id = data.get('client_id')
-    property_id = data.get('property_id') or None
-    plot_id = data.get('plot_id') or None
+    property_id = data.get('property_id')
+    plot_id = data.get('plot_id')
     consultant_id = data.get('consultant_id')
     status = (data.get('status') or 'planned').strip().lower()
     gen_schedule = bool(data.get('generate_schedule'))
     culture = data.get('culture')
     variety = data.get('variety')
     date_str = data.get('date')
+    recommendation = (data.get('recommendation') or '').strip()
     latitude = data.get('latitude')
     longitude = data.get('longitude')
 
-    # Validação mínima
+    # ========================
+    # ✅ VALIDAÇÕES BÁSICAS
+    # ========================
     if not client_id:
-        return jsonify(message='client_id is required'), 400
-    if not Client.query.get(client_id):
-        return jsonify(message='client not found'), 404
-    if property_id and not Property.query.get(property_id):
-        return jsonify(message='property not found'), 404
-    if plot_id and not Plot.query.get(plot_id):
-        return jsonify(message='plot not found'), 404
+        return jsonify(message="client_id é obrigatório"), 400
 
+    # valida cliente
+    if not Client.query.get(client_id):
+        return jsonify(message="cliente não encontrado"), 404
+
+    # propriedade (opcional)
+    if property_id and not Property.query.get(property_id):
+        return jsonify(message="propriedade não encontrada"), 404
+
+    # talhão (opcional)
+    if plot_id and not Plot.query.get(plot_id):
+        return jsonify(message="talhão não encontrado"), 404
+
+    # consultor (opcional)
+    if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
+        return jsonify(message="consultor não encontrado"), 404
+
+    # data da visita
     try:
         visit_date = _d.fromisoformat(date_str)
     except Exception:
-        visit_date = _d.today()
+        return jsonify(message="data inválida, esperado formato YYYY-MM-DD"), 400
 
-    # 🌱 Cria a visita base
-    v = Visit(
-        client_id=client_id,
-        property_id=property_id,
-        plot_id=plot_id,
-        consultant_id=consultant_id,
-        date=visit_date,
-        checklist=data.get('checklist'),
-        diagnosis=data.get('diagnosis'),
-        recommendation=(data.get('recommendation') or '').strip(),
-        status=status,
-        latitude=latitude,
-        longitude=longitude
-    )
-    db.session.add(v)
-    db.session.commit()
+    # ============================
+    # 🌾 GERAR CRONOGRAMA OPCIONAL
+    # ============================
+    from models import PhenologyStage
 
-    # 🌾 Gera cronograma fenológico se configurado
-    if gen_schedule and culture:
-        from models import PhenologyStage
+    p = None
+    if gen_schedule:
+        # permite gerar cronograma mesmo sem talhão
+        if not culture or not variety:
+            return jsonify(message="culture e variety são obrigatórios quando gerar cronograma"), 400
+
+        # cria plantio somente se houver talhão
+        if plot_id:
+            p = Planting(plot_id=plot_id, culture=culture, variety=variety, planting_date=visit_date)
+            db.session.add(p)
+            db.session.flush()
+
+        # visita inicial (plantio)
+        v0 = Visit(
+            client_id=client_id,
+            property_id=property_id or None,
+            plot_id=plot_id or None,
+            planting_id=p.id if p else None,
+            consultant_id=consultant_id,
+            date=visit_date,
+            recommendation="Plantio",
+            status=status,
+            latitude=latitude,
+            longitude=longitude
+        )
+        db.session.add(v0)
+
+        # gera visitas fenológicas (cronograma)
         stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days.asc()).all()
         if culture.strip().lower() == "soja":
             stages = [s for s in stages if "maturação fisiológica" not in s.name.lower()]
@@ -207,68 +228,45 @@ def create_visit():
         for st in stages:
             if st.days == 0 or "plantio" in st.name.lower():
                 continue
+
             fut_date = visit_date + timedelta(days=int(st.days))
             vv = Visit(
                 client_id=client_id,
-                property_id=property_id,
-                plot_id=plot_id,
+                property_id=property_id or None,
+                plot_id=plot_id or None,
+                planting_id=p.id if p else None,
                 consultant_id=consultant_id,
                 date=fut_date,
                 recommendation=st.name,
-                status='planned'
+                status='planned',
+                latitude=latitude,
+                longitude=longitude
             )
             db.session.add(vv)
+
         db.session.commit()
+        return jsonify(message="visita criada com cronograma", visit=v0.to_dict()), 201
 
-    # 🧾 GERA PDF AUTOMÁTICO (NutriCRM Premium)
-    try:
-        os.makedirs('static/reports', exist_ok=True)
-        pdf_path = f'static/reports/visita_{v.id}.pdf'
-        doc = SimpleDocTemplate(pdf_path, pagesize=A4)
-        styles = getSampleStyleSheet()
-        elements = []
+    # ============================
+    # 🌱 VISITA NORMAL (SEM CRONOGRAMA)
+    # ============================
+    v = Visit(
+        client_id=client_id,
+        property_id=property_id or None,
+        plot_id=plot_id or None,
+        consultant_id=consultant_id,
+        date=visit_date,
+        checklist=data.get('checklist'),
+        diagnosis=data.get('diagnosis'),
+        recommendation=recommendation,
+        status=status,
+        latitude=latitude,
+        longitude=longitude
+    )
+    db.session.add(v)
+    db.session.commit()
+    return jsonify(message="visita criada", visit=v.to_dict()), 201
 
-        logo_path = os.path.join('static', 'nutricrm_logo.png')
-        if os.path.exists(logo_path):
-            elements.append(Image(logo_path, width=5*cm, height=5*cm))
-        elements.append(Spacer(1, 0.5*cm))
-
-        elements.append(Paragraph("<b>Relatório de Visita Técnica</b>", styles['Title']))
-        elements.append(Spacer(1, 0.3*cm))
-
-        data_table = [
-            ["Cliente", str(v.client_id)],
-            ["Propriedade", str(property_id or "—")],
-            ["Talhão", str(plot_id or "—")],
-            ["Data da Visita", str(visit_date)],
-            ["Cultura", str(culture or "—")],
-            ["Variedade", str(variety or "—")],
-            ["Consultor", str(consultant_id or "—")],
-            ["Status", str(status)],
-            ["Latitude", str(latitude or "—")],
-            ["Longitude", str(longitude or "—")],
-        ]
-        table = Table(data_table, hAlign='LEFT')
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#a7d38d")),
-            ('BOX', (0,0), (-1,-1), 1, colors.black),
-            ('INNERGRID', (0,0), (-1,-1), 0.5, colors.grey),
-            ('FONTNAME', (0,0), (-1,-1), 'Helvetica'),
-            ('FONTSIZE', (0,0), (-1,-1), 10)
-        ]))
-        elements.append(table)
-        elements.append(Spacer(1, 0.5*cm))
-        elements.append(Paragraph("<b>Recomendações:</b>", styles['Heading3']))
-        elements.append(Paragraph(v.recommendation or "—", styles['BodyText']))
-        elements.append(Spacer(1, 0.3*cm))
-        elements.append(Paragraph("<b>Diagnóstico:</b>", styles['Heading3']))
-        elements.append(Paragraph(v.diagnosis or "—", styles['BodyText']))
-        doc.build(elements)
-
-    except Exception as e:
-        print(f"⚠️ Erro ao gerar PDF: {e}")
-
-    return jsonify(message='✅ Visita criada com sucesso!', visit=v.to_dict()), 201
 
 
 
