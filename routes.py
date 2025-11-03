@@ -269,7 +269,6 @@ def create_visit():
 
 
 
-
 @bp.route('/visits/<int:visit_id>/pdf', methods=['GET'])
 def get_visit_pdf(visit_id):
     from reportlab.lib.pagesizes import A4
