@@ -130,6 +130,8 @@ def get_visits():
                 "client_name": client.name if client else f"Cliente {v.client_id}",
                 "consultant_name": consultant_name or "—",
                 "status": v.status,
+                "culture": v.planting.culture if v.planting else None, 
+                "variety": v.planting.variety if v.planting else None,  
                 "photos": photos,   # 👈 garante que fotos vão no JSON
             })
 
@@ -296,30 +298,39 @@ def export_visit_pdf(visit_id):
     story = []
 
     # ============================================================
-    # 🌿 Cabeçalho com logo NutriCRM
+    # 🌿 Cabeçalho com logo NutriCRM (corrigido)
     # ============================================================
-    logo_path = os.path.join(os.path.dirname(__file__), "..", "static", "nutricrm_logo.png")
-    if os.path.exists(logo_path):
+    try:
+        logo_path = os.path.join(UPLOAD_DIR, "nutricrm_logo.png")
+        if not os.path.exists(logo_path):
+            logo_path = os.path.join(os.path.dirname(__file__), "..", "static", "nutricrm_logo.png")
+    except Exception:
+        logo_path = None
+
+    if logo_path and os.path.exists(logo_path):
         story.append(Image(logo_path, width=120, height=45))
     else:
         story.append(Paragraph("<b>NutriCRM</b>", styles["Title"]))
-    story.append(Spacer(1, 12))
 
-    story.append(Paragraph("<b>Relatório de Visita Técnica</b>", styles["Title"]))
+    
+    def safe(v):
+        return v if v else "-"
+
 
     # ============================================================
     # 🧾 Dados principais
     # ============================================================
     data_table = [
-        ["Cliente:", client.name if client else "-"],
-        ["Propriedade:", property_.name if property_ else "-"],
-        ["Talhão:", plot.name if plot else "-"],
-        ["Cultura:", visit.culture or "-"],
-        ["Variedade:", visit.variety or "-"],
-        ["Consultor:", consultant.name if consultant else "-"],
-        ["Data da Visita:", visit.date.strftime("%d/%m/%Y") if visit.date else "-"],
-        ["Status:", visit.status.capitalize() if visit.status else "-"],
+        ["Cliente:", safe(client.name if client else None)],
+        ["Propriedade:", safe(property_.name if property_ else None)],
+        ["Talhão:", safe(plot.name if plot else None)],
+        ["Cultura:", safe(visit.culture)],
+        ["Variedade:", safe(visit.variety)],
+        ["Consultor:", safe(consultant.name if consultant else None)],
+        ["Data da Visita:", safe(visit.date.strftime("%d/%m/%Y") if visit.date else None)],
+        ["Status:", safe(visit.status.capitalize() if visit.status else None)],
     ]
+
 
     table = Table(data_table, colWidths=[120, 350])
     table.setStyle(TableStyle([
@@ -482,6 +493,7 @@ def update_visit(vid: int):
     if 'status' in data and data['status']:
         v.status = data['status'].strip().lower()
 
+    print("🧠 Atualizando visita", vid, "com dados:", data)
     db.session.commit()
     return jsonify(message='visit updated', visit=v.to_dict() | {"status": v.status}), 200
 
