@@ -299,6 +299,11 @@ def auto_populate_database():
         print(f"❌ Erro ao popular o banco automaticamente: {e}")
 
 
+# ============================================================
+# 🚀 Popula dados iniciais (clientes e consultores)
+# ============================================================
+with app.app_context():
+    auto_populate_database()
 
 
 if __name__ == '__main__':
