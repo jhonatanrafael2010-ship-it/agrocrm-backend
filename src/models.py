@@ -194,8 +194,8 @@ class Visit(db.Model):
     status = db.Column(db.String(20), nullable=True, server_default='planned')
     culture = db.Column(db.String(120), nullable=True)
     variety = db.Column(db.String(200), nullable=True)
-    latitude = db.Column(db.Float, nullable=True)    
-    longitude = db.Column(db.Float, nullable=True)    
+    latitude = db.Column(db.Float, nullable=True)
+    longitude = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
     def to_dict(self):
@@ -204,10 +204,15 @@ class Visit(db.Model):
             match = next((c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id), None)
             consultant_name = match or f"Consultor {self.consultant_id}"
 
-
-        # Formatação para exibir corretamente no calendário
+        # 🌾 Linhas formatadas para o calendário
         client_line = f"👤 {self.client.name}" if self.client else ""
-        variety_line = f"🌱 {self.planting.variety}" if getattr(self, 'planting', None) and self.planting.variety else ""
+        
+        variety_line = ""
+        if self.variety:
+            variety_line = f"🌱 {self.variety}"
+        elif getattr(self, 'planting', None) and self.planting.variety:
+            variety_line = f"🌱 {self.planting.variety}"
+
         stage_line = f"📍 {self.recommendation}" if self.recommendation else ""
         consultant_line = f"👨‍🌾 {consultant_name}" if consultant_name else ""
 
@@ -236,6 +241,7 @@ class Visit(db.Model):
             "longitude": self.longitude,
             'display_text': display_text 
         }
+
 
 # ============================================================
 # 👨‍🌾 Consultores
