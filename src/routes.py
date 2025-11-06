@@ -607,6 +607,7 @@ def list_photos(visit_id):
     return jsonify(photos), 200
 
 
+# Exclusão de foto específica
 @bp.route('/photos/<int:photo_id>', methods=['DELETE'])
 def delete_photo(photo_id):
     """Exclui uma foto específica"""
@@ -620,6 +621,7 @@ def delete_photo(photo_id):
         return jsonify({"error": f"Erro ao excluir foto: {e}"}), 500
 
 
+# Atualiza legenda (já existe)
 @bp.route('/photos/<int:photo_id>', methods=['PUT'])
 def update_photo_caption(photo_id):
     """Atualiza a legenda (caption) de uma foto já salva"""
@@ -777,8 +779,8 @@ def public_visit_view(visit_id):
 
 
 
-@bp.route('/photos/<int:photo_id>', methods=['DELETE'])
-def delete_photo(photo_id):
+@bp.route('/visits/<int:visit_id>/photos', methods=['DELETE'])
+def delete_visit_photos(visit_id):
     """Exclui uma foto específica do banco e do disco"""
     try:
         photo = Photo.query.get(photo_id)
