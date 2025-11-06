@@ -307,7 +307,6 @@ def export_visit_pdf(visit_id):
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
     from reportlab.graphics.shapes import Drawing, Rect
-    import os
 
     visit = Visit.query.get_or_404(visit_id)
     client = Client.query.get(visit.client_id)
@@ -324,30 +323,32 @@ def export_visit_pdf(visit_id):
     doc = SimpleDocTemplate(buffer, pagesize=A4,
                             rightMargin=40, leftMargin=40, topMargin=60, bottomMargin=40)
 
-    # 🎨 Estilos de texto
+    # 🎨 Estilos
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="TitleCustom", fontSize=18, leading=22, alignment=1, spaceAfter=20, textColor=colors.HexColor("#1B5E20")))
     styles.add(ParagraphStyle(name="Label", fontSize=11, leading=14, textColor=colors.HexColor("#2E7D32"), spaceAfter=6))
     styles.add(ParagraphStyle(name="NormalSmall", fontSize=10, leading=13))
     styles.add(ParagraphStyle(name="PhotoCaption", fontSize=9, textColor=colors.gray, alignment=1, spaceAfter=8))
 
     story = []
 
-    # ✅ Logo da NutriCRM - preserva proporção original
+    # ✅ Logo da NutriCRM (mantém proporção original)
     try:
-        logo_path = os.path.join(UPLOAD_DIR, "nutricrm_logo.png")
+        static_dir = os.path.join(os.path.dirname(__file__), "static")
+        logo_path = os.path.join(static_dir, "nutricrm_logo.png")
         if os.path.exists(logo_path):
-            logo = Image(logo_path, width=150, height=45)
+            logo = Image(logo_path, width=140, height=40)
             logo.hAlign = 'CENTER'
             story.append(logo)
             story.append(Spacer(1, 12))
+        else:
+            print(f"⚠️ Logo não encontrada: {logo_path}")
     except Exception as e:
         print(f"⚠️ Erro ao carregar logo: {e}")
 
     # Função utilitária
     def safe(v): return v if v else "-"
 
-    # 🧾 Tabela de dados
+    # 🧾 Dados principais
     data_table = [
         ["Cliente:", safe(client.name if client else None)],
         ["Propriedade:", safe(property_.name if property_ else None)],
@@ -358,7 +359,6 @@ def export_visit_pdf(visit_id):
         ["Data da Visita:", safe(visit.date.strftime("%d/%m/%Y") if visit.date else None)],
         ["Status:", safe(visit.status.capitalize() if visit.status else None)],
     ]
-
     table = Table(data_table, colWidths=[120, 350])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E8F5E9")),
@@ -386,41 +386,46 @@ def export_visit_pdf(visit_id):
         story.append(Paragraph(coords_text, styles["NormalSmall"]))
         story.append(Spacer(1, 12))
 
-    # 🖼️ Fotos — 2 por linha, moldura e sombra suave
+    # 🖼️ Fotos da visita — 2 por linha, com moldura e legenda
     if hasattr(visit, "photos") and visit.photos:
         story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
         photos = [p for p in visit.photos if p.url]
         row = []
 
+        uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
         for i, photo in enumerate(photos, 1):
-            photo_path = os.path.join(os.path.dirname(__file__), "..", "uploads", os.path.basename(photo.url))
+            file_name = os.path.basename(photo.url)
+            photo_path = os.path.join(uploads_dir, file_name)
+
             if os.path.exists(photo_path):
                 try:
                     img = Image(photo_path, width=250, height=180)
                     img.hAlign = "CENTER"
 
+                    # Moldura e sombra leve
                     frame = Drawing(250, 180)
                     frame.add(Rect(3, -3, 250, 180, fillColor=colors.Color(0, 0, 0, alpha=0.15), strokeWidth=0))
                     frame.add(Rect(0, 0, 250, 180, strokeColor=colors.grey, strokeWidth=0.5, fillColor=None))
                     frame.add(img, name="photo")
 
+                    # Adiciona legenda se houver
                     cell = [frame]
-                    if hasattr(photo, "caption") and photo.caption:
+                    if photo.caption:
                         cell.append(Paragraph(photo.caption, styles["PhotoCaption"]))
 
                     row.append(cell)
                 except Exception as e:
                     row.append([Paragraph(f"[Erro ao carregar imagem: {e}]", styles["NormalSmall"])])
 
-                if len(row) == 2 or i == len(photos):
-                    t = Table([row], colWidths=[260, 260])
-                    t.setStyle(TableStyle([
-                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                    ]))
-                    story.append(t)
-                    story.append(Spacer(1, 10))
-                    row = []
+            if len(row) == 2 or i == len(photos):
+                t = Table([row], colWidths=[260, 260])
+                t.setStyle(TableStyle([
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 10))
+                row = []
     else:
         story.append(Paragraph("<i>Sem fotos anexadas</i>", styles["NormalSmall"]))
 
@@ -429,7 +434,7 @@ def export_visit_pdf(visit_id):
     story.append(Paragraph("<b>NutriCRM - CRM Inteligente para o Agronegócio</b>", styles["Label"]))
     story.append(Paragraph("Relatório técnico gerado automaticamente via sistema NutriCRM.", styles["NormalSmall"]))
 
-    # 📄 Geração final
+    # 📄 Gera o PDF
     doc.build(story)
     buffer.seek(0)
 
@@ -441,8 +446,6 @@ def export_visit_pdf(visit_id):
         as_attachment=True,
         download_name=filename
     )
-
-
 
 
 
@@ -737,13 +740,13 @@ def public_visit_view(visit_id):
     plot = Plot.query.get(visit.plot_id)
     consultant = Consultant.query.get(visit.consultant_id) if hasattr(visit, "consultant_id") else None
 
-    # Pega coordenadas se existirem no banco
     lat = getattr(plot, "latitude", None)
     lon = getattr(plot, "longitude", None)
 
     photos = []
     for p in visit.photos:
-        photos.append({"url": f"/uploads/{os.path.basename(p.url)}"})
+        file_name = os.path.basename(p.url)
+        photos.append({"url": f"/uploads/{file_name}"})
 
     html_template = """
     <!DOCTYPE html>
@@ -756,22 +759,23 @@ def public_visit_view(visit_id):
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
         <style>
-            body { background-color:#f9fafb; font-family:'Helvetica'; padding-bottom:60px; }
-            header { background:#26b96a; color:white; padding:20px; display:flex; justify-content:space-between; align-items:center; }
-            header img { height:50px; }
+            body { background-color:#f9fafb; font-family:'Inter', sans-serif; padding-bottom:60px; }
+            header { background:#1B5E20; color:white; padding:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; }
+            header img { height:46px; object-fit:contain; }
             .info-card { background:white; border-radius:10px; box-shadow:0 2px 10px rgba(0,0,0,0.05); padding:20px; margin-top:20px; }
             .photos img { width:100%; border-radius:8px; cursor:pointer; transition:transform 0.2s; }
             .photos img:hover { transform:scale(1.02); }
             #map { height:300px; border-radius:10px; margin-top:15px; }
             footer { margin-top:40px; text-align:center; color:#888; }
-            .download-btn { background:#26b96a; color:white; padding:10px 18px; border-radius:6px; text-decoration:none; }
+            .download-btn { background:#2E7D32; color:white; padding:10px 18px; border-radius:6px; text-decoration:none; transition:opacity .2s; }
+            .download-btn:hover { opacity:.85; }
             .lightbox { display:none; position:fixed; z-index:9999; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); justify-content:center; align-items:center; }
             .lightbox img { max-width:90%; max-height:90%; }
         </style>
     </head>
     <body>
         <header>
-            <img src="/uploads/nutricrm_logo.png" alt="NutriCRM Logo" />
+            <img src="/static/nutricrm_logo.png" alt="NutriCRM Logo" />
             <h4>Relatório Técnico — Visita #{{ visit.id }}</h4>
             <a class="download-btn" href="/api/visits/{{ visit.id }}/pdf" target="_blank">📄 Baixar PDF</a>
         </header>
@@ -787,7 +791,6 @@ def public_visit_view(visit_id):
                     <tr><th>Data:</th><td>{{ visit.date.strftime('%d/%m/%Y') if visit.date else '-' }}</td></tr>
                     <tr><th>Status:</th><td>{{ visit.status }}</td></tr>
                 </table>
-
                 {% if lat and lon %}
                 <div id="map"></div>
                 {% endif %}
@@ -863,8 +866,6 @@ def public_visit_view(visit_id):
         lat=lat,
         lon=lon
     )
-
-
 
 
 
