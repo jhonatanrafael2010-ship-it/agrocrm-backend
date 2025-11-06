@@ -295,11 +295,18 @@ def create_visit():
 
 @bp.route('/visits/<int:visit_id>/pdf', methods=['GET'])
 def export_visit_pdf(visit_id):
+    """
+    Gera o PDF técnico da visita:
+    - Layout profissional com moldura e sombra nas fotos
+    - 2 fotos por linha, legendas abaixo
+    - Nome automático: Cliente - Variedade - Visita.pdf
+    """
+    from io import BytesIO
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
-    from reportlab.lib import colors
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from io import BytesIO
+    from reportlab.lib import colors
+    from reportlab.graphics.shapes import Drawing, Rect
     import os
 
     visit = Visit.query.get_or_404(visit_id)
@@ -307,6 +314,7 @@ def export_visit_pdf(visit_id):
     property_ = Property.query.get(visit.property_id) if visit.property_id else None
     plot = Plot.query.get(visit.plot_id) if visit.plot_id else None
 
+    # 🧑‍🌾 Nome do consultor
     consultant_name = None
     if visit.consultant_id:
         match = next((c["name"] for c in CONSULTANTS if c["id"] == visit.consultant_id), None)
@@ -316,6 +324,7 @@ def export_visit_pdf(visit_id):
     doc = SimpleDocTemplate(buffer, pagesize=A4,
                             rightMargin=40, leftMargin=40, topMargin=60, bottomMargin=40)
 
+    # 🎨 Estilos de texto
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="TitleCustom", fontSize=18, leading=22, alignment=1, spaceAfter=20, textColor=colors.HexColor("#1B5E20")))
     styles.add(ParagraphStyle(name="Label", fontSize=11, leading=14, textColor=colors.HexColor("#2E7D32"), spaceAfter=6))
@@ -324,7 +333,7 @@ def export_visit_pdf(visit_id):
 
     story = []
 
-    # Logo
+    # 🌿 Logo
     logo_path = os.path.join(os.path.dirname(__file__), "..", "uploads", "nutricrm_logo.png")
     if not os.path.exists(logo_path):
         logo_path = os.path.join(os.path.dirname(__file__), "uploads", "nutricrm_logo.png")
@@ -337,6 +346,7 @@ def export_visit_pdf(visit_id):
 
     def safe(v): return v if v else "-"
 
+    # 🧾 Tabela de dados
     data_table = [
         ["Cliente:", safe(client.name if client else None)],
         ["Propriedade:", safe(property_.name if property_ else None)],
@@ -363,42 +373,65 @@ def export_visit_pdf(visit_id):
     story.append(table)
     story.append(Spacer(1, 18))
 
+    # 🧠 "Visita"
     story.append(Paragraph("<b>Visita:</b>", styles["Label"]))
     story.append(Paragraph(visit.recommendation or "-", styles["NormalSmall"]))
     story.append(Spacer(1, 12))
 
+    # 📍 GPS
     if visit.latitude and visit.longitude:
         coords_text = f"{visit.latitude:.5f}, {visit.longitude:.5f}"
         story.append(Paragraph("<b>Localização GPS:</b>", styles["Label"]))
         story.append(Paragraph(coords_text, styles["NormalSmall"]))
         story.append(Spacer(1, 12))
 
-    # Fotos em grade 2x2 com legendas
+    # 🖼️ Fotos — 2 por linha, moldura e sombra suave
     if hasattr(visit, "photos") and visit.photos:
         story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
         photos = [p for p in visit.photos if p.url]
         row = []
+
         for i, photo in enumerate(photos, 1):
             photo_path = os.path.join(os.path.dirname(__file__), "..", "uploads", os.path.basename(photo.url))
             if os.path.exists(photo_path):
-                img = Image(photo_path, width=250, height=180)
-                cell = [img]
-                if hasattr(photo, "caption") and photo.caption:
-                    cell.append(Paragraph(photo.caption, styles["PhotoCaption"]))
-                row.append(cell)
+                try:
+                    # Moldura e sombra
+                    img = Image(photo_path, width=250, height=180)
+                    img.hAlign = "CENTER"
+
+                    frame = Drawing(250, 180)
+                    # sombra (leve deslocamento)
+                    frame.add(Rect(3, -3, 250, 180, fillColor=colors.Color(0, 0, 0, alpha=0.15), strokeWidth=0))
+                    # moldura
+                    frame.add(Rect(0, 0, 250, 180, strokeColor=colors.grey, strokeWidth=0.5, fillColor=None))
+                    frame.add(img, name="photo")
+
+                    cell = [frame]
+                    if hasattr(photo, "caption") and photo.caption:
+                        cell.append(Paragraph(photo.caption, styles["PhotoCaption"]))
+
+                    row.append(cell)
+                except Exception as e:
+                    row.append([Paragraph(f"[Erro ao carregar imagem: {e}]", styles["NormalSmall"])])
+
                 if len(row) == 2 or i == len(photos):
                     t = Table([row], colWidths=[260, 260])
-                    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+                    t.setStyle(TableStyle([
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ]))
                     story.append(t)
                     story.append(Spacer(1, 10))
                     row = []
     else:
         story.append(Paragraph("<i>Sem fotos anexadas</i>", styles["NormalSmall"]))
 
+    # ✍️ Rodapé
     story.append(Spacer(1, 24))
     story.append(Paragraph("<b>NutriCRM - CRM Inteligente para o Agronegócio</b>", styles["Label"]))
     story.append(Paragraph("Relatório técnico gerado automaticamente via sistema NutriCRM.", styles["NormalSmall"]))
 
+    # 📄 Geração final
     doc.build(story)
     buffer.seek(0)
 
@@ -410,6 +443,8 @@ def export_visit_pdf(visit_id):
         as_attachment=True,
         download_name=filename
     )
+
+
 
 
 
@@ -571,9 +606,13 @@ def delete_visit(visit_id):
 from werkzeug.utils import secure_filename
 import os
 
+# ==============================
+# 📸 FOTOS — upload, legenda, exclusão
+# ==============================
+
 @bp.route('/visits/<int:visit_id>/photos', methods=['POST'])
 def upload_photos(visit_id):
-    """Upload de fotos com legendas (captions)"""
+    """Upload de múltiplas fotos com legendas (captions)."""
     visit = Visit.query.get_or_404(visit_id)
     files = request.files.getlist('photos')
     captions = request.form.getlist('captions')  # lista paralela de legendas
@@ -587,13 +626,15 @@ def upload_photos(visit_id):
         save_path = os.path.join(UPLOAD_DIR, filename)
         file.save(save_path)
 
-        photo = Photo(
-            visit_id=visit_id,
-            url=f"/uploads/{filename}",
-            caption=captions[i] if i < len(captions) else None
-        )
+        caption = captions[i] if i < len(captions) else None
+        photo = Photo(visit_id=visit_id, url=f"/uploads/{filename}", caption=caption)
         db.session.add(photo)
-        saved.append(photo.to_dict())
+        db.session.flush()  # garante que o ID exista
+        saved.append({
+            "id": photo.id,
+            "url": f"/uploads/{filename}",
+            "caption": caption
+        })
 
     db.session.commit()
     return jsonify({"message": f"{len(saved)} foto(s) salvas.", "photos": saved}), 201
@@ -601,39 +642,80 @@ def upload_photos(visit_id):
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['GET'])
 def list_photos(visit_id):
-    """Lista fotos da visita"""
+    """Lista todas as fotos de uma visita."""
     visit = Visit.query.get_or_404(visit_id)
-    photos = [p.to_dict() for p in visit.photos]
+    photos = []
+    for p in visit.photos:
+        photos.append({
+            "id": p.id,
+            "url": p.url,
+            "caption": getattr(p, "caption", None)
+        })
     return jsonify(photos), 200
 
 
-# Exclusão de foto específica
+@bp.route('/photos/<int:photo_id>', methods=['PUT'])
+def update_photo_caption(photo_id):
+    """Atualiza a legenda (caption) de uma foto já salva."""
+    photo = Photo.query.get_or_404(photo_id)
+    data = request.get_json() or {}
+    if "caption" not in data:
+        return jsonify({"error": "Campo 'caption' é obrigatório."}), 400
+
+    photo.caption = data["caption"]
+    db.session.commit()
+    return jsonify({
+        "message": "Legenda atualizada com sucesso",
+        "photo": {"id": photo.id, "url": photo.url, "caption": photo.caption}
+    }), 200
+
+
 @bp.route('/photos/<int:photo_id>', methods=['DELETE'])
-def delete_photo(photo_id):
-    """Exclui uma foto específica"""
+def delete_single_photo(photo_id):
+    """Exclui uma foto específica do banco e do disco."""
     photo = Photo.query.get_or_404(photo_id)
     try:
+        # Extrai nome do arquivo físico
+        from urllib.parse import urlparse
+        parsed = urlparse(photo.url)
+        filename = os.path.basename(parsed.path)
+        file_path = os.path.join(UPLOAD_DIR, filename)
+
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
         db.session.delete(photo)
         db.session.commit()
         return jsonify({"message": "Foto excluída com sucesso"}), 200
     except Exception as e:
         db.session.rollback()
+        print(f"⚠️ Erro ao excluir foto: {e}")
         return jsonify({"error": f"Erro ao excluir foto: {e}"}), 500
 
 
-# Atualiza legenda (já existe)
-@bp.route('/photos/<int:photo_id>', methods=['PUT'])
-def update_photo_caption(photo_id):
-    """Atualiza a legenda (caption) de uma foto já salva"""
-    photo = Photo.query.get_or_404(photo_id)
-    data = request.get_json()
+@bp.route('/visits/<int:visit_id>/photos', methods=['DELETE'])
+def delete_all_photos_of_visit(visit_id):
+    """Exclui todas as fotos associadas a uma visita."""
+    try:
+        visit = Visit.query.get_or_404(visit_id)
+        count = 0
+        for photo in visit.photos:
+            from urllib.parse import urlparse
+            parsed = urlparse(photo.url)
+            filename = os.path.basename(parsed.path)
+            file_path = os.path.join(UPLOAD_DIR, filename)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            db.session.delete(photo)
+            count += 1
 
-    if not data or "caption" not in data:
-        return jsonify({"error": "Campo 'caption' é obrigatório."}), 400
+        db.session.commit()
+        return jsonify({"message": f"{count} foto(s) excluídas com sucesso"}), 200
+    except Exception as e:
+        db.session.rollback()
+        print(f"⚠️ Erro ao excluir fotos da visita: {e}")
+        return jsonify({"error": str(e)}), 500
 
-    photo.caption = data["caption"]
-    db.session.commit()
-    return jsonify({"message": "Legenda atualizada com sucesso", "photo": photo.to_dict()}), 200
 
 
 
@@ -777,35 +859,6 @@ def public_visit_view(visit_id):
         lon=lon
     )
 
-
-
-@bp.route('/visits/<int:visit_id>/photos', methods=['DELETE'])
-def delete_visit_photos(visit_id):
-    """Exclui uma foto específica do banco e do disco"""
-    try:
-        photo = Photo.query.get(photo_id)
-        if not photo:
-            return jsonify(message="Foto não encontrada"), 404
-
-        # Extrai nome do arquivo com segurança
-        from urllib.parse import urlparse
-        parsed = urlparse(photo.url)
-        filename = os.path.basename(parsed.path)
-        file_path = os.path.join(UPLOAD_DIR, filename)
-
-        # Remove arquivo físico se existir
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-        # Remove do banco
-        db.session.delete(photo)
-        db.session.commit()
-
-        return jsonify(message="Foto excluída com sucesso"), 200
-
-    except Exception as e:
-        print(f"⚠️ Erro ao excluir foto: {e}")
-        return jsonify(error=str(e)), 500
 
 
 
