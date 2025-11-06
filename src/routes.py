@@ -302,15 +302,11 @@ def export_visit_pdf(visit_id):
     from io import BytesIO
     import os
 
-    # Imports do modelo e lista fixa
-    from models import CONSULTANTS
-
     visit = Visit.query.get_or_404(visit_id)
     client = Client.query.get(visit.client_id)
     property_ = Property.query.get(visit.property_id) if visit.property_id else None
     plot = Plot.query.get(visit.plot_id) if visit.plot_id else None
 
-    # Corrige consultor (busca no array fixo)
     consultant_name = None
     if visit.consultant_id:
         match = next((c["name"] for c in CONSULTANTS if c["id"] == visit.consultant_id), None)
@@ -324,30 +320,23 @@ def export_visit_pdf(visit_id):
     styles.add(ParagraphStyle(name="TitleCustom", fontSize=18, leading=22, alignment=1, spaceAfter=20, textColor=colors.HexColor("#1B5E20")))
     styles.add(ParagraphStyle(name="Label", fontSize=11, leading=14, textColor=colors.HexColor("#2E7D32"), spaceAfter=6))
     styles.add(ParagraphStyle(name="NormalSmall", fontSize=10, leading=13))
+    styles.add(ParagraphStyle(name="PhotoCaption", fontSize=9, textColor=colors.gray, alignment=1, spaceAfter=8))
 
     story = []
 
-    # ============================================================
-    # 🌿 Cabeçalho com logo NutriCRM (corrigido)
-    # ============================================================
-    try:
-        logo_path = os.path.join(UPLOAD_DIR, "nutricrm_logo.png")
-        if not os.path.exists(logo_path):
-            logo_path = os.path.join(os.path.dirname(__file__), "..", "uploads", "nutricrm_logo.png")
-    except Exception:
-        logo_path = None
+    # Logo
+    logo_path = os.path.join(os.path.dirname(__file__), "..", "uploads", "nutricrm_logo.png")
+    if not os.path.exists(logo_path):
+        logo_path = os.path.join(os.path.dirname(__file__), "uploads", "nutricrm_logo.png")
 
-    if logo_path and os.path.exists(logo_path):
+    if os.path.exists(logo_path):
         story.append(Image(logo_path, width=120, height=45))
     else:
         story.append(Paragraph("<b>NutriCRM</b>", styles["TitleCustom"]))
+    story.append(Spacer(1, 10))
 
-    def safe(v):
-        return v if v else "-"
+    def safe(v): return v if v else "-"
 
-    # ============================================================
-    # 🧾 Dados principais
-    # ============================================================
     data_table = [
         ["Cliente:", safe(client.name if client else None)],
         ["Propriedade:", safe(property_.name if property_ else None)],
@@ -371,69 +360,57 @@ def export_visit_pdf(visit_id):
         ("ALIGN", (0, 0), (0, -1), "RIGHT"),
         ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
     ]))
-
     story.append(table)
     story.append(Spacer(1, 18))
 
-    # ============================================================
-    # 🧠 Diagnóstico e Recomendações
-    # ============================================================
-    story.append(Paragraph("<b>Diagnóstico:</b>", styles["Label"]))
-    story.append(Paragraph(visit.diagnosis or "-", styles["NormalSmall"]))
-    story.append(Spacer(1, 12))
-
-    story.append(Paragraph("<b>Recomendações:</b>", styles["Label"]))
+    story.append(Paragraph("<b>Visita:</b>", styles["Label"]))
     story.append(Paragraph(visit.recommendation or "-", styles["NormalSmall"]))
     story.append(Spacer(1, 12))
 
-    # ============================================================
-    # 📍 Localização GPS
-    # ============================================================
     if visit.latitude and visit.longitude:
         coords_text = f"{visit.latitude:.5f}, {visit.longitude:.5f}"
         story.append(Paragraph("<b>Localização GPS:</b>", styles["Label"]))
         story.append(Paragraph(coords_text, styles["NormalSmall"]))
         story.append(Spacer(1, 12))
 
-    # ============================================================
-    # 🖼️ Fotos anexadas
-    # ============================================================
+    # Fotos em grade 2x2 com legendas
     if hasattr(visit, "photos") and visit.photos:
         story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
-        for photo in visit.photos:
-            photo_path = os.path.join(
-                os.path.dirname(__file__),
-                "..",
-                "uploads",
-                os.path.basename(photo.url)
-            )
+        photos = [p for p in visit.photos if p.url]
+        row = []
+        for i, photo in enumerate(photos, 1):
+            photo_path = os.path.join(os.path.dirname(__file__), "..", "uploads", os.path.basename(photo.url))
             if os.path.exists(photo_path):
-                try:
-                    story.append(Image(photo_path, width=200, height=150))
+                img = Image(photo_path, width=250, height=180)
+                cell = [img]
+                if hasattr(photo, "caption") and photo.caption:
+                    cell.append(Paragraph(photo.caption, styles["PhotoCaption"]))
+                row.append(cell)
+                if len(row) == 2 or i == len(photos):
+                    t = Table([row], colWidths=[260, 260])
+                    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+                    story.append(t)
                     story.append(Spacer(1, 10))
-                except Exception as e:
-                    story.append(Paragraph(f"[Erro ao carregar imagem: {e}]", styles["NormalSmall"]))
-        story.append(Spacer(1, 16))
+                    row = []
+    else:
+        story.append(Paragraph("<i>Sem fotos anexadas</i>", styles["NormalSmall"]))
 
-    # ============================================================
-    # ✍️ Rodapé
-    # ============================================================
     story.append(Spacer(1, 24))
     story.append(Paragraph("<b>NutriCRM - CRM Inteligente para o Agronegócio</b>", styles["Label"]))
     story.append(Paragraph("Relatório técnico gerado automaticamente via sistema NutriCRM.", styles["NormalSmall"]))
 
-    # ============================================================
-    # 📄 Geração do PDF
-    # ============================================================
     doc.build(story)
     buffer.seek(0)
+
+    filename = f"{safe(client.name)} - {safe(visit.variety)} - {safe(visit.recommendation)}.pdf"
 
     return send_file(
         buffer,
         mimetype="application/pdf",
         as_attachment=True,
-        download_name=f"visita_{visit.id}.pdf"
+        download_name=filename
     )
+
 
 
 
@@ -596,43 +573,67 @@ import os
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['POST'])
 def upload_photos(visit_id):
+    """Upload de fotos com legendas (captions)"""
+    visit = Visit.query.get_or_404(visit_id)
+    files = request.files.getlist('photos')
+    captions = request.form.getlist('captions')  # lista paralela de legendas
+
+    if not files:
+        return jsonify({"error": "Nenhum arquivo enviado"}), 400
+
+    saved = []
+    for i, file in enumerate(files):
+        filename = secure_filename(file.filename)
+        save_path = os.path.join(UPLOAD_DIR, filename)
+        file.save(save_path)
+
+        photo = Photo(
+            visit_id=visit_id,
+            url=f"/uploads/{filename}",
+            caption=captions[i] if i < len(captions) else None
+        )
+        db.session.add(photo)
+        saved.append(photo.to_dict())
+
+    db.session.commit()
+    return jsonify({"message": f"{len(saved)} foto(s) salvas.", "photos": saved}), 201
+
+
+@bp.route('/visits/<int:visit_id>/photos', methods=['GET'])
+def list_photos(visit_id):
+    """Lista fotos da visita"""
+    visit = Visit.query.get_or_404(visit_id)
+    photos = [p.to_dict() for p in visit.photos]
+    return jsonify(photos), 200
+
+
+@bp.route('/photos/<int:photo_id>', methods=['DELETE'])
+def delete_photo(photo_id):
+    """Exclui uma foto específica"""
+    photo = Photo.query.get_or_404(photo_id)
     try:
-        visit = Visit.query.get_or_404(visit_id)
-        files = request.files.getlist('photos')
-
-        if not files:
-            return jsonify({"error": "Nenhum arquivo enviado"}), 400
-
-        upload_dir = UPLOAD_DIR
-        os.makedirs(upload_dir, exist_ok=True)
-
-        saved_photos = []
-
-        for file in files:
-            filename = secure_filename(file.filename)
-            # garante nome único no Render
-            unique_name = f"{visit_id}_{os.urandom(8).hex()}_{filename}"
-            file_path = os.path.join(upload_dir, unique_name)
-            file.save(file_path)
-
-            # monta URL pública correta (Render ou local)
-            backend_url = (os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com").rstrip("/")
-            url = f"{backend_url}/uploads/{unique_name}"
-
-            photo = Photo(visit_id=visit_id, url=url)
-            db.session.add(photo)
-            saved_photos.append(photo)
-
-
+        db.session.delete(photo)
         db.session.commit()
-        print(f"✅ {len(saved_photos)} fotos salvas para visita {visit_id}")
-        return jsonify({"success": True, "count": len(saved_photos)}), 201
-
+        return jsonify({"message": "Foto excluída com sucesso"}), 200
     except Exception as e:
-        import traceback
-        print("❌ Erro ao salvar fotos:", e)
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        db.session.rollback()
+        return jsonify({"error": f"Erro ao excluir foto: {e}"}), 500
+
+
+@bp.route('/photos/<int:photo_id>', methods=['PUT'])
+def update_photo_caption(photo_id):
+    """Atualiza a legenda (caption) de uma foto já salva"""
+    photo = Photo.query.get_or_404(photo_id)
+    data = request.get_json()
+
+    if not data or "caption" not in data:
+        return jsonify({"error": "Campo 'caption' é obrigatório."}), 400
+
+    photo.caption = data["caption"]
+    db.session.commit()
+    return jsonify({"message": "Legenda atualizada com sucesso", "photo": photo.to_dict()}), 200
+
+
 
 
 from flask import render_template_string

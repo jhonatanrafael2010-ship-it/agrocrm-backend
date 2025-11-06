@@ -2,12 +2,10 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 
-
 db = SQLAlchemy()
 
-
 # ============================================================
-# 👨‍🌾 Lista fixa de consultores (sincronizada com routes.py)
+# 👨‍🌾 Lista fixa de consultores
 # ============================================================
 CONSULTANTS = [
     {"id": 1, "name": "Jhonatan"},
@@ -17,10 +15,11 @@ CONSULTANTS = [
     {"id": 5, "name": "Alexandre"},
 ]
 
-
+# ============================================================
+# 👤 Usuário
+# ============================================================
 class User(db.Model):
     __tablename__ = 'users'
-
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=True)
@@ -29,31 +28,24 @@ class User(db.Model):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password: str) -> bool:
-        if not self.password_hash:
-            return False
-        return check_password_hash(self.password_hash, password)
+        return self.password_hash and check_password_hash(self.password_hash, password)
 
 
+# ============================================================
+# 🧑‍🌾 Clientes
+# ============================================================
 class Client(db.Model):
-    """Client / Customer model matching the form in the UI.
-
-    Fields:
-    - id: primary key
-    - name: display name of the client
-    - document: CPF/CNPJ or other identifier
-    - segment: business segment (e.g. A)
-    - vendor: name of vendor responsible
-    - created_at: timestamp when the record was created
-    """
-
     __tablename__ = 'clients'
-
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False)
     document = db.Column(db.String(100), nullable=True, index=True)
     segment = db.Column(db.String(50), nullable=True)
     vendor = db.Column(db.String(120), nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+
+    properties = db.relationship('Property', backref='client', lazy='dynamic', cascade='all, delete-orphan')
+    visits = db.relationship('Visit', backref='client', lazy='dynamic', cascade='all, delete-orphan')
+    opportunities = db.relationship('Opportunity', backref='client', lazy='dynamic', cascade='all, delete-orphan')
 
     def to_dict(self):
         return {
@@ -62,29 +54,15 @@ class Client(db.Model):
             'document': self.document,
             'segment': self.segment,
             'vendor': self.vendor,
-            'created_at': None if not self.created_at else self.created_at.isoformat(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
-    # relationship to properties (one-to-many)
-    properties = db.relationship('Property', backref='client', lazy='dynamic', cascade='all, delete-orphan')
-    # relationship to visits
-    visits = db.relationship('Visit', backref='client', lazy='dynamic', cascade='all, delete-orphan')
-    # relationship to opportunities
-    opportunities = db.relationship('Opportunity', backref='client', lazy='dynamic', cascade='all, delete-orphan')
 
-
+# ============================================================
+# 🌾 Propriedades / Fazendas
+# ============================================================
 class Property(db.Model):
-    """Property / Farm model.
-
-    Fields from the UI form:
-    - client_id: foreign key to Client
-    - name: farm name (Nome da Fazenda)
-    - city_state: Cidade/UF
-    - area_ha: Área (ha)
-    """
-
     __tablename__ = 'properties'
-
     id = db.Column(db.Integer, primary_key=True)
     client_id = db.Column(db.Integer, db.ForeignKey('clients.id'), nullable=False, index=True)
     name = db.Column(db.String(200), nullable=False)
@@ -92,35 +70,26 @@ class Property(db.Model):
     area_ha = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
+    plots = db.relationship('Plot', backref='property', lazy='dynamic', cascade='all, delete-orphan')
+    visits = db.relationship('Visit', backref='property', lazy='dynamic', cascade='all, delete-orphan')
+
     def to_dict(self):
         return {
             'id': self.id,
             'client_id': self.client_id,
-            'client_name': None if not self.client else self.client.name,
+            'client_name': self.client.name if self.client else None,
             'name': self.name,
             'city_state': self.city_state,
             'area_ha': self.area_ha,
-            'created_at': None if not self.created_at else self.created_at.isoformat(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
-    # relationship to plots (talhões)
-    plots = db.relationship('Plot', backref='property', lazy='dynamic', cascade='all, delete-orphan')
-    # relationship to visits
-    visits = db.relationship('Visit', backref='property', lazy='dynamic', cascade='all, delete-orphan')
 
-
+# ============================================================
+# 🌱 Talhões
+# ============================================================
 class Plot(db.Model):
-    """Plot / Talhão model.
-
-    Fields from the UI form:
-    - property_id: foreign key to Property
-    - name: Nome do Talhão
-    - area_ha: Área (ha)
-    - irrigated: boolean flag (Irrigado?)
-    """
-
     __tablename__ = 'plots'
-
     id = db.Column(db.Integer, primary_key=True)
     property_id = db.Column(db.Integer, db.ForeignKey('properties.id'), nullable=False, index=True)
     name = db.Column(db.String(200), nullable=False)
@@ -128,33 +97,25 @@ class Plot(db.Model):
     irrigated = db.Column(db.Boolean, nullable=True, server_default='0')
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
+    plantings = db.relationship('Planting', backref='plot', lazy='dynamic', cascade='all, delete-orphan')
+    visits = db.relationship('Visit', backref='plot', lazy='dynamic', cascade='all, delete-orphan')
+
     def to_dict(self):
         return {
             'id': self.id,
             'property_id': self.property_id,
-            'property_name': self.property.name if hasattr(self, 'property') and self.property else None,
+            'property_name': self.property.name if self.property else None,
             'name': self.name,
             'area_ha': self.area_ha,
             'irrigated': bool(self.irrigated) if self.irrigated is not None else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
-    # Relationships
-    plantings = db.relationship('Planting', backref='plot', lazy='dynamic', cascade='all, delete-orphan')
-    visits = db.relationship('Visit', backref='plot', lazy='dynamic', cascade='all, delete-orphan')
 
-
-
+# ============================================================
+# 🌾 Plantios
+# ============================================================
 class Planting(db.Model):
-    """Planting (Plantio) model.
-
-    Fields captured from the UI:
-    - plot_id: foreign key to Plot
-    - culture: cultura (e.g., Milho)
-    - variety: string (Variedade)
-    - planting_date: date of planting
-    """
-
     __tablename__ = 'plantings'
     id = db.Column(db.Integer, primary_key=True)
     plot_id = db.Column(db.Integer, db.ForeignKey('plots.id'), nullable=False, index=True)
@@ -169,15 +130,17 @@ class Planting(db.Model):
         return {
             'id': self.id,
             'plot_id': self.plot_id,
-            'plot_name': None if not self.plot else self.plot.name,
+            'plot_name': self.plot.name if self.plot else None,
             'culture': self.culture,
             'variety': self.variety,
-            'planting_date': None if not self.planting_date else self.planting_date.isoformat(),
-            'created_at': None if not self.created_at else self.created_at.isoformat(),
+            'planting_date': self.planting_date.isoformat() if self.planting_date else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
 
-
+# ============================================================
+# 📋 Visitas
+# ============================================================
 class Visit(db.Model):
     __tablename__ = 'visits'
 
@@ -204,15 +167,8 @@ class Visit(db.Model):
             match = next((c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id), None)
             consultant_name = match or f"Consultor {self.consultant_id}"
 
-        # 🌾 Linhas formatadas para o calendário
         client_line = f"👤 {self.client.name}" if self.client else ""
-        
-        variety_line = ""
-        if self.variety:
-            variety_line = f"🌱 {self.variety}"
-        elif getattr(self, 'planting', None) and self.planting.variety:
-            variety_line = f"🌱 {self.planting.variety}"
-
+        variety_line = f"🌱 {self.variety}" if self.variety else ""
         stage_line = f"📍 {self.recommendation}" if self.recommendation else ""
         consultant_line = f"👨‍🌾 {consultant_name}" if consultant_name else ""
 
@@ -234,57 +190,54 @@ class Visit(db.Model):
             'diagnosis': self.diagnosis,
             'recommendation': (self.recommendation or '').strip(),
             'status': self.status,
-            'culture': self.culture or (self.planting.culture if getattr(self, 'planting', None) else None),
-            'variety': self.variety or (self.planting.variety if getattr(self, 'planting', None) else None),
+            'culture': self.culture,
+            'variety': self.variety,
+            'latitude': self.latitude,
+            'longitude': self.longitude,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            "latitude": self.latitude,
-            "longitude": self.longitude,
-            'display_text': display_text 
+            'display_text': display_text,
         }
 
 
 # ============================================================
-# 👨‍🌾 Consultores
+# 🧑‍💼 Consultores
 # ============================================================
 class Consultant(db.Model):
     __tablename__ = "consultants"
-
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
     email = db.Column(db.String(120), nullable=True)
     phone = db.Column(db.String(20), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    def __repr__(self):
-        return f"<Consultant {self.name}>"
 
-
-
+# ============================================================
+# 🖼️ Fotos da visita (com legenda)
+# ============================================================
 class Photo(db.Model):
     __tablename__ = 'photos'
     id = db.Column(db.Integer, primary_key=True)
     visit_id = db.Column(db.Integer, db.ForeignKey('visits.id', ondelete='CASCADE'))
     url = db.Column(db.String(255))  # link da imagem armazenada
+    caption = db.Column(db.String(255), nullable=True)  # ✅ legenda opcional
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     visit = db.relationship('Visit', backref=db.backref('photos', cascade='all, delete'))
 
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'url': self.url,
+            'caption': self.caption,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
 
 
-
+# ============================================================
+# 💼 Oportunidades
+# ============================================================
 class Opportunity(db.Model):
-    """Sales Opportunity model.
-
-    Fields:
-    - client_id: which client the opportunity is for
-    - title: brief title/description
-    - estimated_value: numeric (decimal) estimated revenue/value
-    - stage: current stage (default 'prospecção')
-    - created_at: timestamp
-    """
-
     __tablename__ = 'opportunities'
-
     id = db.Column(db.Integer, primary_key=True)
     client_id = db.Column(db.Integer, db.ForeignKey('clients.id'), nullable=False, index=True)
     title = db.Column(db.String(300), nullable=True)
@@ -296,18 +249,17 @@ class Opportunity(db.Model):
         return {
             'id': self.id,
             'client_id': self.client_id,
-            'client_name': None if not self.client else self.client.name,
+            'client_name': self.client.name if self.client else None,
             'title': self.title,
             'estimated_value': self.estimated_value,
             'stage': self.stage,
-            'created_at': None if not self.created_at else self.created_at.isoformat(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
 
-# ============================
-# Culturas e Variedades Fixas
-# ============================
-
+# ============================================================
+# 🌾 Culturas e Variedades Fixas
+# ============================================================
 class Culture(db.Model):
     __tablename__ = 'cultures'
     id = db.Column(db.Integer, primary_key=True)
@@ -321,15 +273,17 @@ class Variety(db.Model):
     name = db.Column(db.String(80), nullable=False)
     culture = db.relationship('Culture', backref='varieties')
 
-class PhenologyStage(db.Model):
-    """Tabela de estágios fenológicos para gerar visitas automáticas"""
-    __tablename__ = 'phenology_stages'
 
+# ============================================================
+# 🌱 Estágios Fenológicos
+# ============================================================
+class PhenologyStage(db.Model):
+    __tablename__ = 'phenology_stages'
     id = db.Column(db.Integer, primary_key=True)
-    culture = db.Column(db.String(50), nullable=False)  # Ex: "Milho"
-    code = db.Column(db.String(20), nullable=False)     # Ex: "V4"
-    name = db.Column(db.String(100), nullable=False)    # Ex: "Crescimento vegetativo"
-    days = db.Column(db.Integer, nullable=False)        # Ex: dias após plantio
+    culture = db.Column(db.String(50), nullable=False)
+    code = db.Column(db.String(20), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    days = db.Column(db.Integer, nullable=False)
 
     def to_dict(self):
         return {
@@ -339,6 +293,3 @@ class PhenologyStage(db.Model):
             'name': self.name,
             'days': self.days,
         }
-
-
-
