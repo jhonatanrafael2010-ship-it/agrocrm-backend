@@ -14,7 +14,8 @@ from reportlab.graphics import renderPDF
 from reportlab.graphics.shapes import Drawing, String, Rect
 from reportlab.graphics.barcode import qr
 from reportlab.pdfgen.canvas import Canvas
-from models import db, User, Client, Property, Plot, Visit, Planting, Opportunity, Photo
+from models import db, User, Client, Property, Plot, Visit, Planting, Opportunity, Photo, PhenologyStage
+
 
 
 
@@ -333,6 +334,7 @@ def export_visit_pdf(visit_id):
     else:
         story.append(Paragraph("<b>NutriCRM</b>", styles["Title"]))
 
+
     
     def safe(v):
         return v if v else "-"
@@ -395,7 +397,14 @@ def export_visit_pdf(visit_id):
     if hasattr(visit, "photos") and visit.photos:
         story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
         for photo in visit.photos:
-            photo_path = os.path.join(os.path.dirname(__file__), "..", "uploads", photo.filename)
+            import os
+
+            photo_path = os.path.join(
+                os.path.dirname(__file__),
+                "..",
+                "uploads",
+                os.path.basename(photo.url)
+            )
             if os.path.exists(photo_path):
                 try:
                     story.append(Image(photo_path, width=200, height=150))
