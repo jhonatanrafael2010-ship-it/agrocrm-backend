@@ -302,11 +302,19 @@ def export_visit_pdf(visit_id):
     from io import BytesIO
     import os
 
+    # Imports do modelo e lista fixa
+    from models import CONSULTANTS
+
     visit = Visit.query.get_or_404(visit_id)
     client = Client.query.get(visit.client_id)
     property_ = Property.query.get(visit.property_id) if visit.property_id else None
     plot = Plot.query.get(visit.plot_id) if visit.plot_id else None
-    consultant = User.query.get(visit.consultant_id) if visit.consultant_id else None
+
+    # Corrige consultor (busca no array fixo)
+    consultant_name = None
+    if visit.consultant_id:
+        match = next((c["name"] for c in CONSULTANTS if c["id"] == visit.consultant_id), None)
+        consultant_name = match or f"Consultor {visit.consultant_id}"
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
@@ -334,11 +342,8 @@ def export_visit_pdf(visit_id):
     else:
         story.append(Paragraph("<b>NutriCRM</b>", styles["Title"]))
 
-
-    
     def safe(v):
         return v if v else "-"
-
 
     # ============================================================
     # 🧾 Dados principais
@@ -349,11 +354,10 @@ def export_visit_pdf(visit_id):
         ["Talhão:", safe(plot.name if plot else None)],
         ["Cultura:", safe(visit.culture)],
         ["Variedade:", safe(visit.variety)],
-        ["Consultor:", safe(consultant.name if consultant else None)],
+        ["Consultor:", safe(consultant_name)],
         ["Data da Visita:", safe(visit.date.strftime("%d/%m/%Y") if visit.date else None)],
         ["Status:", safe(visit.status.capitalize() if visit.status else None)],
     ]
-
 
     table = Table(data_table, colWidths=[120, 350])
     table.setStyle(TableStyle([
@@ -397,8 +401,6 @@ def export_visit_pdf(visit_id):
     if hasattr(visit, "photos") and visit.photos:
         story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
         for photo in visit.photos:
-            import os
-
             photo_path = os.path.join(
                 os.path.dirname(__file__),
                 "..",
@@ -432,6 +434,7 @@ def export_visit_pdf(visit_id):
         as_attachment=True,
         download_name=f"visita_{visit.id}.pdf"
     )
+
 
 
 
