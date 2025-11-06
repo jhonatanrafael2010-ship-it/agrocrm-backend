@@ -157,6 +157,11 @@ def get_visits():
 
 @bp.route('/visits', methods=['POST'])
 def create_visit():
+    """
+    Cria uma nova visita.
+    Se 'generate_schedule' for True, gera automaticamente o cronograma fenológico
+    com base na cultura e na data de plantio.
+    """
     from datetime import date as _d, timedelta
     data = request.get_json(silent=True) or {}
 
@@ -166,8 +171,8 @@ def create_visit():
     consultant_id = data.get('consultant_id')
     status = (data.get('status') or 'planned').strip().lower()
     gen_schedule = bool(data.get('generate_schedule'))
-    culture = data.get('culture')
-    variety = data.get('variety')
+    culture = (data.get('culture') or '').strip() or None
+    variety = (data.get('variety') or '').strip() or None
     date_str = data.get('date')
     recommendation = (data.get('recommendation') or '').strip()
     latitude = data.get('latitude')
@@ -178,47 +183,37 @@ def create_visit():
     # ========================
     if not client_id:
         return jsonify(message="client_id é obrigatório"), 400
-
-    # valida cliente
     if not Client.query.get(client_id):
         return jsonify(message="cliente não encontrado"), 404
-
-    # propriedade (opcional)
     if property_id and not Property.query.get(property_id):
         return jsonify(message="propriedade não encontrada"), 404
-
-    # talhão (opcional)
     if plot_id and not Plot.query.get(plot_id):
         return jsonify(message="talhão não encontrado"), 404
-
-    # consultor (opcional)
-    if consultant_id and int(consultant_id) not in CONSULTANT_IDS:
+    if consultant_id and int(consultant_id) not in {c["id"] for c in CONSULTANTS}:
         return jsonify(message="consultor não encontrado"), 404
 
-    # data da visita
     try:
         visit_date = _d.fromisoformat(date_str)
     except Exception:
         return jsonify(message="data inválida, esperado formato YYYY-MM-DD"), 400
 
-    # ============================
-    # 🌾 GERAR CRONOGRAMA OPCIONAL
-    # ============================
+    # ======================================================
+    # 🌾 GERAÇÃO AUTOMÁTICA DO CRONOGRAMA FENOLÓGICO
+    # ======================================================
     from models import PhenologyStage
 
     p = None
     if gen_schedule:
-        # permite gerar cronograma mesmo sem talhão
         if not culture or not variety:
             return jsonify(message="culture e variety são obrigatórios quando gerar cronograma"), 400
 
-        # cria plantio somente se houver talhão
+        # Cria o registro de plantio, se houver talhão
         if plot_id:
             p = Planting(plot_id=plot_id, culture=culture, variety=variety, planting_date=visit_date)
             db.session.add(p)
             db.session.flush()
 
-        # visita inicial (plantio)
+        # Visita inicial (plantio)
         v0 = Visit(
             client_id=client_id,
             property_id=property_id or None,
@@ -228,14 +223,16 @@ def create_visit():
             date=visit_date,
             recommendation="Plantio",
             status=status,
+            culture=culture,
+            variety=variety,
             latitude=latitude,
             longitude=longitude
         )
         db.session.add(v0)
 
-        # gera visitas fenológicas (cronograma)
+        # Gera visitas futuras conforme fenologia
         stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days.asc()).all()
-        if culture.strip().lower() == "soja":
+        if culture.lower() == "soja":
             stages = [s for s in stages if "maturação fisiológica" not in s.name.lower()]
 
         for st in stages:
@@ -252,6 +249,8 @@ def create_visit():
                 date=fut_date,
                 recommendation=st.name,
                 status='planned',
+                culture=culture,
+                variety=variety,
                 latitude=latitude,
                 longitude=longitude
             )
@@ -260,9 +259,9 @@ def create_visit():
         db.session.commit()
         return jsonify(message="visita criada com cronograma", visit=v0.to_dict()), 201
 
-    # ============================
+    # ======================================================
     # 🌱 VISITA NORMAL (SEM CRONOGRAMA)
-    # ============================
+    # ======================================================
     v = Visit(
         client_id=client_id,
         property_id=property_id or None,
@@ -273,12 +272,23 @@ def create_visit():
         diagnosis=data.get('diagnosis'),
         recommendation=recommendation,
         status=status,
+        culture=culture,
+        variety=variety,
         latitude=latitude,
         longitude=longitude
     )
+
+    # 🌿 Preenche cultura e variedade a partir do plantio, se não vierem do frontend
+    if not v.culture and v.plot_id:
+        planting = Planting.query.filter_by(plot_id=v.plot_id).order_by(Planting.id.desc()).first()
+        if planting:
+            v.culture = planting.culture
+            v.variety = planting.variety
+
     db.session.add(v)
     db.session.commit()
     return jsonify(message="visita criada", visit=v.to_dict()), 201
+
 
 
 
@@ -512,7 +522,10 @@ def update_visit(vid: int):
 
 @bp.route('/visits/<int:visit_id>', methods=['DELETE'])
 def delete_visit(visit_id):
-    """Exclui uma visita. Se for a visita de plantio, remove também o plantio e TODAS as visitas geradas automaticamente."""
+    """
+    Exclui uma visita. Se for a visita de plantio, remove também o plantio e TODAS
+    as visitas geradas automaticamente (fenológicas) do mesmo talhão.
+    """
     try:
         visit = Visit.query.get(visit_id)
         if not visit:
@@ -524,24 +537,34 @@ def delete_visit(visit_id):
         # Detecta se é uma visita de plantio
         is_plantio = bool(visit.recommendation and 'plantio' in visit.recommendation.lower())
 
-        if is_plantio and visit.planting_id:
-            planting = Planting.query.get(visit.planting_id)
+        if is_plantio:
+            # 1️⃣ Identifica o plantio associado
+            planting = None
+            if visit.planting_id:
+                planting = Planting.query.get(visit.planting_id)
+
+            # 2️⃣ Busca TODAS as visitas fenológicas do mesmo talhão após a data do plantio
+            future_visits = Visit.query.filter(
+                Visit.plot_id == visit.plot_id,
+                Visit.date > visit.date
+            ).all()
+
+            for fv in future_visits:
+                print(f"   → Removendo visita futura {fv.id} ({fv.recommendation})")
+                db.session.delete(fv)
+
+            # 3️⃣ Remove também o próprio plantio, se existir
             if planting:
-                print(f"🌾 Excluindo plantio {planting.id} e visitas associadas...")
-                related = Visit.query.filter(Visit.planting_id == planting.id).all()
-
-                for v in related:
-                    print(f"   → Removendo visita {v.id} ({v.recommendation})")
-                    db.session.delete(v)
-
+                print(f"🌾 Removendo plantio {planting.id} vinculado.")
                 db.session.delete(planting)
-                db.session.commit()
-                print(f"✅ Plantio {planting.id} e todas as visitas associadas foram removidos.")
-                return jsonify({'message': 'Plantio e visitas associadas excluídos'}), 200
-            else:
-                print(f"⚠️ Nenhum plantio encontrado para planting_id={visit.planting_id}")
 
-        # Caso não seja plantio, remove apenas a visita
+            # 4️⃣ Por fim, remove a visita de plantio
+            db.session.delete(visit)
+            db.session.commit()
+            print(f"✅ Plantio e visitas futuras excluídos com sucesso.")
+            return jsonify({'message': 'Plantio e visitas futuras excluídos com sucesso'}), 200
+
+        # Caso comum (visita isolada)
         print(f"🧾 Excluindo visita isolada {visit_id}")
         db.session.delete(visit)
         db.session.commit()
@@ -552,6 +575,7 @@ def delete_visit(visit_id):
         print(f"❌ Erro interno ao excluir visita {visit_id}: {e}")
         db.session.rollback()
         return jsonify({'error': f'Erro interno ao excluir visita: {str(e)}'}), 500
+
 
 
 
