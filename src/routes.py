@@ -333,35 +333,18 @@ def export_visit_pdf(visit_id):
 
     story = []
 
-    # Logo da NutriCRM - preserva proporção
-try:
-    logo_path = os.path.join(app.root_path, "uploads", "nutricrm_logo.png")
-    if os.path.exists(logo_path):
-        logo = Image(logo_path, width=150, height=45)  # proporção original
-        logo.hAlign = 'CENTER'
-        elements.append(logo)
-        elements.append(Spacer(1, 12))
-except Exception as e:
-    print(f"⚠️ Erro ao carregar logo: {e}")
+    # ✅ Logo da NutriCRM - preserva proporção original
+    try:
+        logo_path = os.path.join(UPLOAD_DIR, "nutricrm_logo.png")
+        if os.path.exists(logo_path):
+            logo = Image(logo_path, width=150, height=45)
+            logo.hAlign = 'CENTER'
+            story.append(logo)
+            story.append(Spacer(1, 12))
+    except Exception as e:
+        print(f"⚠️ Erro ao carregar logo: {e}")
 
-# Fotos da visita
-if visit.photos:
-    elements.append(Paragraph("<b>Fotos da Visita:</b>", styles["Heading3"]))
-    for photo in visit.photos:
-        try:
-            img_path = os.path.join(app.root_path, photo.url.strip("/"))
-            if os.path.exists(img_path):
-                elements.append(Image(img_path, width=240, height=180))
-                if photo.caption:
-                    elements.append(Paragraph(photo.caption, styles["Normal"]))
-                elements.append(Spacer(1, 12))
-            else:
-                elements.append(Paragraph(f"[Imagem não encontrada: {photo.url}]", styles["Normal"]))
-        except Exception as e:
-            print(f"⚠️ Erro ao carregar imagem: {e}")
-            elements.append(Paragraph("[Erro ao carregar imagem]", styles["Normal"]))
-
-
+    # Função utilitária
     def safe(v): return v if v else "-"
 
     # 🧾 Tabela de dados
@@ -413,14 +396,11 @@ if visit.photos:
             photo_path = os.path.join(os.path.dirname(__file__), "..", "uploads", os.path.basename(photo.url))
             if os.path.exists(photo_path):
                 try:
-                    # Moldura e sombra
                     img = Image(photo_path, width=250, height=180)
                     img.hAlign = "CENTER"
 
                     frame = Drawing(250, 180)
-                    # sombra (leve deslocamento)
                     frame.add(Rect(3, -3, 250, 180, fillColor=colors.Color(0, 0, 0, alpha=0.15), strokeWidth=0))
-                    # moldura
                     frame.add(Rect(0, 0, 250, 180, strokeColor=colors.grey, strokeWidth=0.5, fillColor=None))
                     frame.add(img, name="photo")
 
@@ -461,7 +441,6 @@ if visit.photos:
         as_attachment=True,
         download_name=filename
     )
-
 
 
 
@@ -625,7 +604,7 @@ from werkzeug.utils import secure_filename
 import os
 
 # ==============================
-# 📸 FOTOS — upload, legenda, exclusão
+# 📸 FOTOS — upload, legenda, exclusão (REVISADO)
 # ==============================
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['POST'])
@@ -644,14 +623,16 @@ def upload_photos(visit_id):
         save_path = os.path.join(UPLOAD_DIR, filename)
         file.save(save_path)
 
+        # Captura legenda correspondente
         caption = captions[i] if i < len(captions) else None
         photo = Photo(visit_id=visit_id, url=f"/uploads/{filename}", caption=caption)
         db.session.add(photo)
         db.session.flush()  # garante que o ID exista
+
         saved.append({
             "id": photo.id,
             "url": f"/uploads/{filename}",
-            "caption": caption
+            "caption": caption or ""
         })
 
     db.session.commit()
@@ -660,20 +641,26 @@ def upload_photos(visit_id):
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['GET'])
 def list_photos(visit_id):
-    """Lista todas as fotos de uma visita."""
+    """Lista todas as fotos de uma visita (com legendas incluídas)."""
     visit = Visit.query.get_or_404(visit_id)
+    backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "http://localhost:5000"
     photos = []
+
     for p in visit.photos:
+        file_name = os.path.basename(p.url)
+        full_url = f"{backend_url}/uploads/{file_name}"
         photos.append({
             "id": p.id,
-            "url": p.url,
-            "caption": getattr(p, "caption", None)
+            "url": full_url,
+            "caption": getattr(p, "caption", "")
         })
+
     return jsonify(photos), 200
 
 
 @bp.route('/photos/<int:photo_id>', methods=['PUT'])
 def update_photo(photo_id):
+    """Atualiza a legenda (caption) de uma foto existente."""
     try:
         data = request.get_json()
         photo = Photo.query.get_or_404(photo_id)
@@ -690,13 +677,11 @@ def update_photo(photo_id):
         return jsonify({'error': str(e)}), 500
 
 
-
 @bp.route('/photos/<int:photo_id>', methods=['DELETE'])
 def delete_single_photo(photo_id):
     """Exclui uma foto específica do banco e do disco."""
     photo = Photo.query.get_or_404(photo_id)
     try:
-        # Extrai nome do arquivo físico
         from urllib.parse import urlparse
         parsed = urlparse(photo.url)
         filename = os.path.basename(parsed.path)
@@ -736,7 +721,6 @@ def delete_all_photos_of_visit(visit_id):
         db.session.rollback()
         print(f"⚠️ Erro ao excluir fotos da visita: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 
 
