@@ -93,7 +93,7 @@ def seed_default_user():
     else:
         print("ℹ️ Usuário padrão já existe.")
 
-UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/opt/render/project/src/uploads")  # <— padrão: disco do Render
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR") or os.path.join(os.path.dirname(__file__), "uploads")
 
 # =====================================================
 # 🚀 Criação da aplicação Flask

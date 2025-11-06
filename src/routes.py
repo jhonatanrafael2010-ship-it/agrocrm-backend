@@ -321,7 +321,7 @@ def export_visit_pdf(visit_id):
                             rightMargin=40, leftMargin=40, topMargin=60, bottomMargin=40)
 
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Title", fontSize=18, leading=22, alignment=1, spaceAfter=20, textColor=colors.HexColor("#1B5E20")))
+    styles.add(ParagraphStyle(name="TitleCustom", fontSize=18, leading=22, alignment=1, spaceAfter=20, textColor=colors.HexColor("#1B5E20")))
     styles.add(ParagraphStyle(name="Label", fontSize=11, leading=14, textColor=colors.HexColor("#2E7D32"), spaceAfter=6))
     styles.add(ParagraphStyle(name="NormalSmall", fontSize=10, leading=13))
 
@@ -340,7 +340,7 @@ def export_visit_pdf(visit_id):
     if logo_path and os.path.exists(logo_path):
         story.append(Image(logo_path, width=120, height=45))
     else:
-        story.append(Paragraph("<b>NutriCRM</b>", styles["Title"]))
+        story.append(Paragraph("<b>NutriCRM</b>", styles["TitleCustom"]))
 
     def safe(v):
         return v if v else "-"
