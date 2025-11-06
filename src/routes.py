@@ -333,16 +333,34 @@ def export_visit_pdf(visit_id):
 
     story = []
 
-    # 🌿 Logo
-    logo_path = os.path.join(os.path.dirname(__file__), "..", "uploads", "nutricrm_logo.png")
-    if not os.path.exists(logo_path):
-        logo_path = os.path.join(os.path.dirname(__file__), "uploads", "nutricrm_logo.png")
-
+    # Logo da NutriCRM - preserva proporção
+try:
+    logo_path = os.path.join(app.root_path, "uploads", "nutricrm_logo.png")
     if os.path.exists(logo_path):
-        story.append(Image(logo_path, width=120, height=45))
-    else:
-        story.append(Paragraph("<b>NutriCRM</b>", styles["TitleCustom"]))
-    story.append(Spacer(1, 10))
+        logo = Image(logo_path, width=150, height=45)  # proporção original
+        logo.hAlign = 'CENTER'
+        elements.append(logo)
+        elements.append(Spacer(1, 12))
+except Exception as e:
+    print(f"⚠️ Erro ao carregar logo: {e}")
+
+# Fotos da visita
+if visit.photos:
+    elements.append(Paragraph("<b>Fotos da Visita:</b>", styles["Heading3"]))
+    for photo in visit.photos:
+        try:
+            img_path = os.path.join(app.root_path, photo.url.strip("/"))
+            if os.path.exists(img_path):
+                elements.append(Image(img_path, width=240, height=180))
+                if photo.caption:
+                    elements.append(Paragraph(photo.caption, styles["Normal"]))
+                elements.append(Spacer(1, 12))
+            else:
+                elements.append(Paragraph(f"[Imagem não encontrada: {photo.url}]", styles["Normal"]))
+        except Exception as e:
+            print(f"⚠️ Erro ao carregar imagem: {e}")
+            elements.append(Paragraph("[Erro ao carregar imagem]", styles["Normal"]))
+
 
     def safe(v): return v if v else "-"
 
@@ -655,19 +673,22 @@ def list_photos(visit_id):
 
 
 @bp.route('/photos/<int:photo_id>', methods=['PUT'])
-def update_photo_caption(photo_id):
-    """Atualiza a legenda (caption) de uma foto já salva."""
-    photo = Photo.query.get_or_404(photo_id)
-    data = request.get_json() or {}
-    if "caption" not in data:
-        return jsonify({"error": "Campo 'caption' é obrigatório."}), 400
+def update_photo(photo_id):
+    try:
+        data = request.get_json()
+        photo = Photo.query.get_or_404(photo_id)
 
-    photo.caption = data["caption"]
-    db.session.commit()
-    return jsonify({
-        "message": "Legenda atualizada com sucesso",
-        "photo": {"id": photo.id, "url": photo.url, "caption": photo.caption}
-    }), 200
+        if 'caption' in data:
+            photo.caption = data['caption']
+
+        db.session.commit()
+        return jsonify({'success': True, 'caption': photo.caption}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Erro ao atualizar legenda da foto {photo_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 
 @bp.route('/photos/<int:photo_id>', methods=['DELETE'])

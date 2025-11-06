@@ -144,7 +144,16 @@ def create_app(test_config=None):
     # ✅ Servir arquivos enviados (fotos das visitas)
     @app.route('/uploads/<path:filename>')
     def uploaded_file(filename):
-        return send_from_directory(UPLOAD_DIR, filename)  # <— CORREÇÃO: indentação e diretório
+        import os
+        from flask import send_from_directory, abort
+
+        file_path = os.path.join(UPLOAD_DIR, filename)
+        if not os.path.exists(file_path):
+            print(f"⚠️ Arquivo não encontrado: {file_path}")
+            abort(404)
+
+        return send_from_directory(UPLOAD_DIR, filename)
+
 
     @app.route("/")
     def index():
