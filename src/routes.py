@@ -328,6 +328,20 @@ def export_visit_pdf(visit_id):
     styles.add(ParagraphStyle(name="Label", fontSize=11, leading=14, textColor=colors.HexColor("#2E7D32"), spaceAfter=6))
     styles.add(ParagraphStyle(name="NormalSmall", fontSize=10, leading=13))
     styles.add(ParagraphStyle(name="PhotoCaption", fontSize=9, textColor=colors.gray, alignment=1, spaceAfter=8))
+    from reportlab.lib.enums import TA_CENTER
+
+    # 📝 Novo estilo centralizado para legendas de fotos
+    styles.add(
+        ParagraphStyle(
+            name="Caption",
+            alignment=TA_CENTER,
+            fontSize=10,
+            textColor=colors.black,
+            spaceBefore=4,
+            spaceAfter=12,
+        )
+    )
+
 
     story = []
 
@@ -337,7 +351,7 @@ def export_visit_pdf(visit_id):
         logo_path = os.path.join(static_dir, "nutricrm_logo.png")
         if os.path.exists(logo_path):
             logo = Image(logo_path)
-            logo._restrictSize(180, 80)  # mantém proporção e tamanho máximo
+            logo._restrictSize(260, 110)  # mantém proporção e tamanho máximo
             logo.hAlign = 'CENTER'
             story.append(logo)
             story.append(Spacer(1, 12))
@@ -405,13 +419,34 @@ def export_visit_pdf(visit_id):
                     continue
 
                 # imagem
-                img = Image(photo_path, width=250, height=180)
+                from reportlab.platypus import Image
+                from reportlab.lib.utils import ImageReader
+
+                # Abre a imagem preservando o tamanho original e ajusta de forma proporcional
+                from PIL import Image as PILImage
+
+                img_obj = PILImage.open(path)
+                aspect = img_obj.height / float(img_obj.width)
+                max_width = 250
+                max_height = 180
+
+                # Redimensiona mantendo proporção
+                if aspect > 1:  # mais alta que larga
+                    display_height = max_height
+                    display_width = max_height / aspect
+                else:
+                    display_width = max_width
+                    display_height = max_width * aspect
+
+                img = Image(path, width=display_width, height=display_height)
+                )
                 img.hAlign = "CENTER"
 
                 # adiciona imagem e legenda (se existir)
                 cell_content = [img]
                 if photo.caption:
-                    cell_content.append(Paragraph(photo.caption, styles["PhotoCaption"]))
+                    cell_content.append(Paragraph(photo.caption, styles["Caption"]))
+
 
                 row.append(cell_content)
 
