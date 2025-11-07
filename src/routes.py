@@ -438,8 +438,7 @@ def export_visit_pdf(visit_id):
                     display_width = max_width
                     display_height = max_width * aspect
 
-                img = Image(path, width=display_width, height=display_height)
-                )
+                img = Image(photo_path, width=display_width, height=display_height)
                 img.hAlign = "CENTER"
 
                 # adiciona imagem e legenda (se existir)
