@@ -394,40 +394,42 @@ def export_visit_pdf(visit_id):
 
         uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
         for i, photo in enumerate(photos, 1):
-            file_name = os.path.basename(photo.url)
-            photo_path = os.path.join(uploads_dir, file_name)
+            try:
+                file_name = os.path.basename(photo.url)
+                photo_path = os.path.join(uploads_dir, file_name)
 
-            if os.path.exists(photo_path):
-                try:
-                    img = Image(photo_path, width=250, height=180)
-                    img.hAlign = "CENTER"
+                if not os.path.exists(photo_path):
+                    print(f"⚠️ Arquivo não encontrado: {photo_path}")
+                    continue
 
-                    # Moldura e sombra leve
-                    frame = Drawing(250, 180)
-                    frame.add(Rect(3, -3, 250, 180, fillColor=colors.Color(0, 0, 0, alpha=0.15), strokeWidth=0))
-                    frame.add(Rect(0, 0, 250, 180, strokeColor=colors.grey, strokeWidth=0.5, fillColor=None))
-                    frame.add(img, name="photo")
+                # imagem
+                img = Image(photo_path, width=250, height=180)
+                img.hAlign = "CENTER"
 
-                    # Adiciona legenda se houver
-                    cell = [frame]
-                    if photo.caption:
-                        cell.append(Paragraph(photo.caption, styles["PhotoCaption"]))
+                # adiciona imagem e legenda (se existir)
+                cell_content = [img]
+                if photo.caption:
+                    cell_content.append(Paragraph(photo.caption, styles["PhotoCaption"]))
 
-                    row.append(cell)
-                except Exception as e:
-                    row.append([Paragraph(f"[Erro ao carregar imagem: {e}]", styles["NormalSmall"])])
+                row.append(cell_content)
 
-            if len(row) == 2 or i == len(photos):
-                t = Table([row], colWidths=[260, 260])
-                t.setStyle(TableStyle([
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ]))
-                story.append(t)
-                story.append(Spacer(1, 10))
-                row = []
+                # duas por linha
+                if len(row) == 2 or i == len(photos):
+                    t = Table([row], colWidths=[260, 260])
+                    t.setStyle(TableStyle([
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ]))
+                    story.append(t)
+                    story.append(Spacer(1, 10))
+                    row = []
+
+            except Exception as e:
+                print(f"⚠️ Erro ao processar foto {i}: {e}")
+                continue
     else:
         story.append(Paragraph("<i>Sem fotos anexadas</i>", styles["NormalSmall"]))
+
 
     # ✍️ Rodapé
     story.append(Spacer(1, 24))
@@ -662,22 +664,30 @@ def list_photos(visit_id):
 
 
 @bp.route('/photos/<int:photo_id>', methods=['PUT'])
-def update_photo(photo_id):
-    """Atualiza a legenda (caption) de uma foto existente."""
+def update_photo_caption(photo_id):
+    """
+    Atualiza a legenda de uma foto específica.
+    """
     try:
-        data = request.get_json()
-        photo = Photo.query.get_or_404(photo_id)
+        data = request.get_json() or {}
+        caption = data.get("caption", "").strip()
 
-        if 'caption' in data:
-            photo.caption = data['caption']
+        photo = Photo.query.get(photo_id)
+        if not photo:
+            return jsonify({"error": "Foto não encontrada"}), 404
 
-        db.session.commit()
-        return jsonify({'success': True, 'caption': photo.caption}), 200
+        photo.caption = caption
+        db.session.commit()  # ✅ garante persistência
+
+        print(f"📝 Legenda atualizada -> Foto {photo_id}: {caption}")
+        return jsonify({"success": True, "caption": caption}), 200
 
     except Exception as e:
         db.session.rollback()
         print(f"❌ Erro ao atualizar legenda da foto {photo_id}: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
+
+
 
 
 @bp.route('/photos/<int:photo_id>', methods=['DELETE'])
