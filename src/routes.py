@@ -336,7 +336,8 @@ def export_visit_pdf(visit_id):
         static_dir = os.path.join(os.path.dirname(__file__), "static")
         logo_path = os.path.join(static_dir, "nutricrm_logo.png")
         if os.path.exists(logo_path):
-            logo = Image(logo_path, width=140, height=40)
+            logo = Image(logo_path)
+            logo._restrictSize(180, 80)  # mantém proporção e tamanho máximo
             logo.hAlign = 'CENTER'
             story.append(logo)
             story.append(Spacer(1, 12))
@@ -392,7 +393,8 @@ def export_visit_pdf(visit_id):
         photos = [p for p in visit.photos if p.url]
         row = []
 
-        uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
+        # Caminho absoluto corrigido — remove duplicação de /src/src/
+        uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
         for i, photo in enumerate(photos, 1):
             try:
                 file_name = os.path.basename(photo.url)
