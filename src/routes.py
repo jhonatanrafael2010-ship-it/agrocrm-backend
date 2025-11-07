@@ -298,15 +298,16 @@ def export_visit_pdf(visit_id):
     """
     Gera o PDF técnico da visita:
     - Layout profissional com moldura e sombra nas fotos
-    - 2 fotos por linha, legendas abaixo
-    - Nome automático: Cliente - Variedade - Visita.pdf
+    - 2 fotos por linha, legendas centralizadas
+    - Logo ampliada no topo
     """
     from io import BytesIO
     from reportlab.lib.pagesizes import A4
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
-    from reportlab.graphics.shapes import Drawing, Rect
+    from reportlab.lib.enums import TA_CENTER
+    from PIL import Image as PILImage
 
     visit = Visit.query.get_or_404(visit_id)
     client = Client.query.get(visit.client_id)
@@ -314,47 +315,52 @@ def export_visit_pdf(visit_id):
     plot = Plot.query.get(visit.plot_id) if visit.plot_id else None
 
     # 🧑‍🌾 Nome do consultor
-    consultant_name = None
-    if visit.consultant_id:
-        match = next((c["name"] for c in CONSULTANTS if c["id"] == visit.consultant_id), None)
-        consultant_name = match or f"Consultor {visit.consultant_id}"
+    consultant_name = next(
+        (c["name"] for c in CONSULTANTS if c["id"] == visit.consultant_id),
+        f"Consultor {visit.consultant_id}" if visit.consultant_id else "-"
+    )
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4,
-                            rightMargin=40, leftMargin=40, topMargin=60, bottomMargin=40)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=60,
+        bottomMargin=40,
+    )
 
     # 🎨 Estilos
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Label", fontSize=11, leading=14, textColor=colors.HexColor("#2E7D32"), spaceAfter=6))
+    styles.add(ParagraphStyle(name="Label", fontSize=11, leading=14,
+                              textColor=colors.HexColor("#2E7D32"), spaceAfter=6))
     styles.add(ParagraphStyle(name="NormalSmall", fontSize=10, leading=13))
-    styles.add(ParagraphStyle(name="PhotoCaption", fontSize=9, textColor=colors.gray, alignment=1, spaceAfter=8))
-    from reportlab.lib.enums import TA_CENTER
-
-    # 📝 Novo estilo centralizado para legendas de fotos
-    styles.add(
-        ParagraphStyle(
-            name="Caption",
-            alignment=TA_CENTER,
-            fontSize=10,
-            textColor=colors.black,
-            spaceBefore=4,
-            spaceAfter=12,
-        )
-    )
-
+    styles.add(ParagraphStyle(name="Caption", alignment=TA_CENTER,
+                              fontSize=9, textColor=colors.gray, spaceBefore=4, spaceAfter=10))
 
     story = []
 
-    # ✅ Logo da NutriCRM (mantém proporção original)
+    # ✅ Logo da NutriCRM — ampliada e com proporção correta
     try:
         static_dir = os.path.join(os.path.dirname(__file__), "static")
         logo_path = os.path.join(static_dir, "nutricrm_logo.png")
         if os.path.exists(logo_path):
-            logo = Image(logo_path)
-            logo._restrictSize(260, 110)  # mantém proporção e tamanho máximo
+            img_obj = PILImage.open(logo_path)
+            aspect = img_obj.height / float(img_obj.width)
+            max_width = 350
+            max_height = 140
+
+            if aspect > 1:
+                display_height = max_height
+                display_width = max_height / aspect
+            else:
+                display_width = max_width
+                display_height = max_width * aspect
+
+            logo = Image(logo_path, width=display_width, height=display_height)
             logo.hAlign = 'CENTER'
             story.append(logo)
-            story.append(Spacer(1, 12))
+            story.append(Spacer(1, 14))
         else:
             print(f"⚠️ Logo não encontrada: {logo_path}")
     except Exception as e:
@@ -387,51 +393,48 @@ def export_visit_pdf(visit_id):
         ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
     ]))
     story.append(table)
-    story.append(Spacer(1, 18))
+    story.append(Spacer(1, 20))
 
-    # 🧠 "Visita"
-    story.append(Paragraph("<b>Visita:</b>", styles["Label"]))
-    story.append(Paragraph(visit.recommendation or "-", styles["NormalSmall"]))
-    story.append(Spacer(1, 12))
+    # 🧠 Diagnóstico / Recomendações
+    if visit.recommendation:
+        story.append(Paragraph("<b>Recomendações Técnicas:</b>", styles["Label"]))
+        story.append(Paragraph(visit.recommendation or "-", styles["NormalSmall"]))
+        story.append(Spacer(1, 10))
+
+    if visit.diagnosis:
+        story.append(Paragraph("<b>Diagnóstico:</b>", styles["Label"]))
+        story.append(Paragraph(visit.diagnosis or "-", styles["NormalSmall"]))
+        story.append(Spacer(1, 10))
 
     # 📍 GPS
     if visit.latitude and visit.longitude:
         coords_text = f"{visit.latitude:.5f}, {visit.longitude:.5f}"
         story.append(Paragraph("<b>Localização GPS:</b>", styles["Label"]))
         story.append(Paragraph(coords_text, styles["NormalSmall"]))
-        story.append(Spacer(1, 12))
+        story.append(Spacer(1, 10))
 
-    # 🖼️ Fotos da visita — 2 por linha, com moldura e legenda
+    # 🖼️ Fotos da visita — 2 por linha, mantendo proporção real
     if hasattr(visit, "photos") and visit.photos:
         story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
         photos = [p for p in visit.photos if p.url]
+        uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
         row = []
 
-        # Caminho absoluto corrigido — remove duplicação de /src/src/
-        uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
         for i, photo in enumerate(photos, 1):
             try:
                 file_name = os.path.basename(photo.url)
                 photo_path = os.path.join(uploads_dir, file_name)
-
                 if not os.path.exists(photo_path):
                     print(f"⚠️ Arquivo não encontrado: {photo_path}")
                     continue
 
-                # imagem
-                from reportlab.platypus import Image
-                from reportlab.lib.utils import ImageReader
-
-                # Abre a imagem preservando o tamanho original e ajusta de forma proporcional
-                from PIL import Image as PILImage
-
-                img_obj = PILImage.open(path)
+                img_obj = PILImage.open(photo_path)
                 aspect = img_obj.height / float(img_obj.width)
-                max_width = 250
-                max_height = 180
+                max_width = 240
+                max_height = 160
 
-                # Redimensiona mantendo proporção
-                if aspect > 1:  # mais alta que larga
+                # Corrige distorções mantendo proporção real
+                if aspect > (max_height / max_width):
                     display_height = max_height
                     display_width = max_height / aspect
                 else:
@@ -441,15 +444,19 @@ def export_visit_pdf(visit_id):
                 img = Image(photo_path, width=display_width, height=display_height)
                 img.hAlign = "CENTER"
 
-                # adiciona imagem e legenda (se existir)
-                cell_content = [img]
+                # Moldura visual leve
+                frame_table = Table([[img]], colWidths=[250])
+                frame_table.setStyle(TableStyle([
+                    ("BOX", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ]))
+
+                cell = [frame_table]
                 if photo.caption:
-                    cell_content.append(Paragraph(photo.caption, styles["Caption"]))
+                    cell.append(Paragraph(photo.caption, styles["Caption"]))
+                row.append(cell)
 
-
-                row.append(cell_content)
-
-                # duas por linha
                 if len(row) == 2 or i == len(photos):
                     t = Table([row], colWidths=[260, 260])
                     t.setStyle(TableStyle([
@@ -457,7 +464,7 @@ def export_visit_pdf(visit_id):
                         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                     ]))
                     story.append(t)
-                    story.append(Spacer(1, 10))
+                    story.append(Spacer(1, 12))
                     row = []
 
             except Exception as e:
@@ -466,9 +473,8 @@ def export_visit_pdf(visit_id):
     else:
         story.append(Paragraph("<i>Sem fotos anexadas</i>", styles["NormalSmall"]))
 
-
     # ✍️ Rodapé
-    story.append(Spacer(1, 24))
+    story.append(Spacer(1, 30))
     story.append(Paragraph("<b>NutriCRM - CRM Inteligente para o Agronegócio</b>", styles["Label"]))
     story.append(Paragraph("Relatório técnico gerado automaticamente via sistema NutriCRM.", styles["NormalSmall"]))
 
@@ -477,13 +483,13 @@ def export_visit_pdf(visit_id):
     buffer.seek(0)
 
     filename = f"{safe(client.name)} - {safe(visit.variety)} - {safe(visit.recommendation)}.pdf"
-
     return send_file(
         buffer,
         mimetype="application/pdf",
         as_attachment=True,
         download_name=filename
     )
+
 
 
 
