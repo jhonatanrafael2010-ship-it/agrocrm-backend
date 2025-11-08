@@ -296,199 +296,183 @@ def create_visit():
 @bp.route('/visits/<int:visit_id>/pdf', methods=['GET'])
 def export_visit_pdf(visit_id):
     """
-    Gera o PDF técnico da visita:
-    - Layout profissional com moldura e sombra nas fotos
-    - 2 fotos por linha, legendas centralizadas
-    - Logo ampliada no topo
+    📄 Gera um PDF cumulativo com:
+    - Capa visual (logo, cliente, cultura, variedade, data inicial, consultor)
+    - Todas as visitas do mesmo plantio (ordenadas até a visita atual)
     """
     from io import BytesIO
     from reportlab.lib.pagesizes import A4
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_CENTER
+    from reportlab.graphics.shapes import Drawing, Rect, String
+    from reportlab.graphics import renderPDF
     from PIL import Image as PILImage
 
     visit = Visit.query.get_or_404(visit_id)
     client = Client.query.get(visit.client_id)
     property_ = Property.query.get(visit.property_id) if visit.property_id else None
     plot = Plot.query.get(visit.plot_id) if visit.plot_id else None
-
-    # 🧑‍🌾 Nome do consultor
     consultant_name = next(
         (c["name"] for c in CONSULTANTS if c["id"] == visit.consultant_id),
         f"Consultor {visit.consultant_id}" if visit.consultant_id else "-"
     )
 
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=40,
-        leftMargin=40,
-        topMargin=60,
-        bottomMargin=40,
-    )
+    # 🔍 Pega todas as visitas anteriores do mesmo plantio (mesmo ciclo)
+    if visit.planting_id:
+        visits_to_include = (
+            Visit.query.filter(
+                Visit.planting_id == visit.planting_id,
+                Visit.date <= visit.date
+            )
+            .order_by(Visit.date.asc())
+            .all()
+        )
+    else:
+        visits_to_include = [visit]
 
-    # 🎨 Estilos
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4,
+                            rightMargin=40, leftMargin=40,
+                            topMargin=60, bottomMargin=40)
+
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="Label", fontSize=11, leading=14,
                               textColor=colors.HexColor("#2E7D32"), spaceAfter=6))
     styles.add(ParagraphStyle(name="NormalSmall", fontSize=10, leading=13))
+    styles.add(ParagraphStyle(name="CenterTitle", fontSize=18, leading=22,
+                              alignment=TA_CENTER, textColor=colors.HexColor("#1B5E20"),
+                              spaceAfter=12, spaceBefore=12))
+    styles.add(ParagraphStyle(name="SubTitle", fontSize=13, leading=16,
+                              alignment=TA_CENTER, textColor=colors.HexColor("#4CAF50"),
+                              spaceAfter=8))
     styles.add(ParagraphStyle(name="Caption", alignment=TA_CENTER,
                               fontSize=9, textColor=colors.gray, spaceBefore=4, spaceAfter=10))
 
     story = []
 
-    # ✅ Logo da NutriCRM — ampliada e com proporção correta
+    # ============================================================
+    # 📘 CAPA VISUAL
+    # ============================================================
     try:
         static_dir = os.path.join(os.path.dirname(__file__), "static")
         logo_path = os.path.join(static_dir, "nutricrm_logo.png")
         if os.path.exists(logo_path):
             img_obj = PILImage.open(logo_path)
             aspect = img_obj.height / float(img_obj.width)
-            max_width = 350
-            max_height = 140
-
-            if aspect > 1:
-                display_height = max_height
-                display_width = max_height / aspect
-            else:
-                display_width = max_width
-                display_height = max_width * aspect
-
-            logo = Image(logo_path, width=display_width, height=display_height)
-            logo.hAlign = 'CENTER'
+            max_width = 300
+            logo = Image(logo_path, width=max_width, height=max_width * aspect)
+            logo.hAlign = "CENTER"
+            story.append(Spacer(1, 80))
             story.append(logo)
-            story.append(Spacer(1, 14))
-        else:
-            print(f"⚠️ Logo não encontrada: {logo_path}")
     except Exception as e:
-        print(f"⚠️ Erro ao carregar logo: {e}")
+        print(f"⚠️ Erro ao carregar logo da capa: {e}")
 
-    # Função utilitária
-    def safe(v): return v if v else "-"
+    story.append(Spacer(1, 40))
+    story.append(Paragraph("RELATÓRIO TÉCNICO DE ACOMPANHAMENTO", styles["CenterTitle"]))
+    story.append(Paragraph("Ciclo Fenológico — NutriCRM", styles["SubTitle"]))
+    story.append(Spacer(1, 40))
 
-    # 🧾 Dados principais
-    data_table = [
-        ["Cliente:", safe(client.name if client else None)],
-        ["Propriedade:", safe(property_.name if property_ else None)],
-        ["Talhão:", safe(plot.name if plot else None)],
-        ["Cultura:", safe(visit.culture)],
-        ["Variedade:", safe(visit.variety)],
-        ["Consultor:", safe(consultant_name)],
-        ["Data da Visita:", safe(visit.date.strftime("%d/%m/%Y") if visit.date else None)],
-        ["Status:", safe(visit.status.capitalize() if visit.status else None)],
-    ]
-    table = Table(data_table, colWidths=[120, 350])
-    table.setStyle(TableStyle([
+    first_visit = visits_to_include[0] if visits_to_include else visit
+    start_date = first_visit.date.strftime("%d/%m/%Y") if first_visit.date else "-"
+    last_date = visit.date.strftime("%d/%m/%Y") if visit.date else "-"
+
+    cover_table = Table([
+        ["Cliente:", client.name if client else "-"],
+        ["Propriedade:", property_.name if property_ else "-"],
+        ["Talhão:", plot.name if plot else "-"],
+        ["Cultura:", visit.culture or "-"],
+        ["Variedade:", visit.variety or "-"],
+        ["Consultor:", consultant_name],
+        ["Período:", f"{start_date} → {last_date}"]
+    ], colWidths=[120, 350])
+    cover_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 11),
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E8F5E9")),
         ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#1B5E20")),
-        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 0), (-1, -1), 10),
         ("BOX", (0, 0), (-1, -1), 0.25, colors.gray),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (0, 0), (0, -1), "RIGHT"),
-        ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
     ]))
-    story.append(table)
-    story.append(Spacer(1, 20))
+    story.append(cover_table)
+    story.append(Spacer(1, 60))
+    story.append(Paragraph("<i>Relatório cumulativo de visitas técnicas realizadas neste ciclo.</i>",
+                           styles["NormalSmall"]))
+    story.append(PageBreak())
 
-    # 🧠 Diagnóstico / Recomendações
-    if visit.recommendation:
-        story.append(Paragraph("<b>Recomendações Técnicas:</b>", styles["Label"]))
-        story.append(Paragraph(visit.recommendation or "-", styles["NormalSmall"]))
+    # ============================================================
+    # 📄 VISITAS CUMULATIVAS
+    # ============================================================
+    for idx, v in enumerate(visits_to_include, start=1):
+        story.append(Paragraph(f"<b>VISITA {idx} — {v.recommendation or 'Sem título'}</b>", styles["Label"]))
+        story.append(Paragraph(f"Data: {v.date.strftime('%d/%m/%Y') if v.date else '-'}", styles["NormalSmall"]))
+        story.append(Spacer(1, 6))
+
+        data_table = [
+            ["Status:", v.status.capitalize() if v.status else "-"],
+            ["Diagnóstico:", v.diagnosis or "-"],
+            ["Recomendações Técnicas:", v.recommendation or "-"]
+        ]
+        t = Table(data_table, colWidths=[140, 330])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E8F5E9")),
+            ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#1B5E20")),
+            ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 10),
+            ("BOX", (0, 0), (-1, -1), 0.25, colors.gray),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+            ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
+        ]))
+        story.append(t)
         story.append(Spacer(1, 10))
 
-    if visit.diagnosis:
-        story.append(Paragraph("<b>Diagnóstico:</b>", styles["Label"]))
-        story.append(Paragraph(visit.diagnosis or "-", styles["NormalSmall"]))
-        story.append(Spacer(1, 10))
-
-    # 📍 GPS
-    if visit.latitude and visit.longitude:
-        coords_text = f"{visit.latitude:.5f}, {visit.longitude:.5f}"
-        story.append(Paragraph("<b>Localização GPS:</b>", styles["Label"]))
-        story.append(Paragraph(coords_text, styles["NormalSmall"]))
-        story.append(Spacer(1, 10))
-
-    # 🖼️ Fotos da visita — 2 por linha, mantendo proporção real
-    if hasattr(visit, "photos") and visit.photos:
-        story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
-        photos = [p for p in visit.photos if p.url]
-        uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
-        row = []
-
-        for i, photo in enumerate(photos, 1):
-            try:
+        # Fotos
+        if hasattr(v, "photos") and v.photos:
+            story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
+            uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
+            row = []
+            for i, photo in enumerate(v.photos, 1):
                 file_name = os.path.basename(photo.url)
                 photo_path = os.path.join(uploads_dir, file_name)
                 if not os.path.exists(photo_path):
-                    print(f"⚠️ Arquivo não encontrado: {photo_path}")
                     continue
+                try:
+                    img_obj = PILImage.open(photo_path)
+                    aspect = img_obj.height / float(img_obj.width)
+                    max_width = 240
+                    img = Image(photo_path, width=max_width, height=max_width * aspect)
+                    img.hAlign = "CENTER"
+                    row.append(img)
+                    if len(row) == 2 or i == len(v.photos):
+                        story.append(Table([row], colWidths=[260, 260]))
+                        story.append(Spacer(1, 8))
+                        row = []
+                except Exception as e:
+                    print(f"⚠️ Erro ao processar foto {i}: {e}")
+                    continue
+        else:
+            story.append(Paragraph("<i>Sem fotos anexadas</i>", styles["NormalSmall"]))
 
-                img_obj = PILImage.open(photo_path)
-                aspect = img_obj.height / float(img_obj.width)
-                max_width = 240
-                max_height = 160
+        if idx < len(visits_to_include):
+            story.append(PageBreak())
 
-                # Corrige distorções mantendo proporção real
-                if aspect > (max_height / max_width):
-                    display_height = max_height
-                    display_width = max_height / aspect
-                else:
-                    display_width = max_width
-                    display_height = max_width * aspect
-
-                img = Image(photo_path, width=display_width, height=display_height)
-                img.hAlign = "CENTER"
-
-                # Moldura visual leve
-                frame_table = Table([[img]], colWidths=[250])
-                frame_table.setStyle(TableStyle([
-                    ("BOX", (0, 0), (-1, -1), 0.25, colors.lightgrey),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ]))
-
-                cell = [frame_table]
-                if photo.caption:
-                    cell.append(Paragraph(photo.caption, styles["Caption"]))
-                row.append(cell)
-
-                if len(row) == 2 or i == len(photos):
-                    t = Table([row], colWidths=[260, 260])
-                    t.setStyle(TableStyle([
-                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                    ]))
-                    story.append(t)
-                    story.append(Spacer(1, 12))
-                    row = []
-
-            except Exception as e:
-                print(f"⚠️ Erro ao processar foto {i}: {e}")
-                continue
-    else:
-        story.append(Paragraph("<i>Sem fotos anexadas</i>", styles["NormalSmall"]))
-
-    # ✍️ Rodapé
-    story.append(Spacer(1, 30))
+    # Rodapé
+    story.append(Spacer(1, 20))
     story.append(Paragraph("<b>NutriCRM - CRM Inteligente para o Agronegócio</b>", styles["Label"]))
-    story.append(Paragraph("Relatório técnico gerado automaticamente via sistema NutriCRM.", styles["NormalSmall"]))
+    story.append(Paragraph("Relatório técnico cumulativo — ciclo fenológico completo.", styles["NormalSmall"]))
 
-    # 📄 Gera o PDF
     doc.build(story)
     buffer.seek(0)
 
-    filename = f"{safe(client.name)} - {safe(visit.variety)} - {safe(visit.recommendation)}.pdf"
-    return send_file(
-        buffer,
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name=filename
-    )
+    filename = f"{client.name if client else 'Cliente'} - {visit.variety or 'Variedade'} - {visit.recommendation or 'Visita'}.pdf"
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
+
 
 
 
