@@ -587,12 +587,11 @@ def update_visit(vid: int):
     return jsonify(message='visit updated', visit=v.to_dict() | {"status": v.status}), 200
 
 
-
 @bp.route('/visits/<int:visit_id>', methods=['DELETE'])
 def delete_visit(visit_id):
     """
     Exclui uma visita. Se for a visita de plantio, remove também o plantio e TODAS
-    as visitas geradas automaticamente (fenológicas) do mesmo talhão.
+    as visitas geradas automaticamente (fenológicas) do mesmo talhão e plantio.
     """
     try:
         visit = Visit.query.get(visit_id)
@@ -607,23 +606,28 @@ def delete_visit(visit_id):
 
         if is_plantio:
             # 1️⃣ Identifica o plantio associado
-            planting = None
-            if visit.planting_id:
-                planting = Planting.query.get(visit.planting_id)
+            planting = Planting.query.get(visit.planting_id) if visit.planting_id else None
 
-            # 2️⃣ Busca TODAS as visitas fenológicas do mesmo cliente, propriedade e cultura após a data do plantio
-            future_visits = Visit.query.filter(
-                Visit.client_id == visit.client_id,
-                Visit.property_id == visit.property_id,
-                Visit.culture == visit.culture,
-                Visit.date > visit.date
-            ).all()
+            # 2️⃣ Busca visitas futuras vinculadas ao mesmo plantio_id
+            if planting:
+                future_visits = Visit.query.filter(
+                    Visit.planting_id == planting.id,
+                    Visit.date > visit.date
+                ).all()
+            else:
+                # fallback: se não houver planting_id, usa combinação básica
+                future_visits = Visit.query.filter(
+                    Visit.client_id == visit.client_id,
+                    Visit.property_id == visit.property_id,
+                    Visit.culture == visit.culture,
+                    Visit.date > visit.date
+                ).all()
 
             for fv in future_visits:
                 print(f"   → Removendo visita futura {fv.id} ({fv.recommendation})")
                 db.session.delete(fv)
 
-            # 3️⃣ Remove também o próprio plantio, se existir
+            # 3️⃣ Remove também o plantio, se existir
             if planting:
                 print(f"🌾 Removendo plantio {planting.id} vinculado.")
                 db.session.delete(planting)
@@ -645,6 +649,7 @@ def delete_visit(visit_id):
         print(f"❌ Erro interno ao excluir visita {visit_id}: {e}")
         db.session.rollback()
         return jsonify({'error': f'Erro interno ao excluir visita: {str(e)}'}), 500
+
 
 
 
@@ -943,21 +948,23 @@ def get_phenology_schedule():
     except Exception:
         return jsonify(message="invalid planting_date, expected YYYY-MM-DD"), 400
 
-    stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days_after_planting).all()
+    # ✅ Corrigido: usa o campo certo "days" da tabela "phenology_stages"
+    stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days).all()
     if not stages:
         return jsonify([]), 200
 
     events = []
     for st in stages:
-        date = planting_date + timedelta(days=st.days_after_planting)
+        date = planting_date + timedelta(days=st.days)
         events.append({
             "stage": st.name,
             "code": st.code,
             "suggested_date": date.isoformat(),
-            "color": "#60a5fa",  # azul para visitas planejadas
+            "color": "#60a5fa",
         })
 
     return jsonify(events), 200
+
 
 # ============================================================
 # 🔧 TESTES E UTILITÁRIOS

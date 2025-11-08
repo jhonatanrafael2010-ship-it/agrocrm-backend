@@ -41,6 +41,7 @@ def create_app(test_config=None):
         app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{sqlite_path}"
         print(f"🟡 Usando banco SQLite local: {sqlite_path} — motivo: {e}")
 
+
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret")
     app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
