@@ -1306,33 +1306,44 @@ def create_planting():
     db.session.flush()  # para ter p.id
 
     # === Gerar Visitas automáticas pela fenologia ===
-    # Só se tivermos planting_date e culture mapeada
+    # Usa a tabela real phenology_stage do banco
     if planting_date and culture:
-        key = culture.strip().lower()
-        stages = PHENOLOGY_TABLES.get(key)
+        from sqlalchemy import text
+
+        # busca do banco conforme cultura
+        stages = db.session.execute(
+            text("SELECT code, name, days FROM phenology_stage WHERE culture = :culture ORDER BY days"),
+            {"culture": culture}
+        ).fetchall()
+
         if stages:
-            # precisamos de client_id e property_id a partir do plot
             prop = Property.query.get(plot.property_id) if plot.property_id else None
             client = Client.query.get(prop.client_id) if (prop and prop.client_id) else None
 
             for st in stages:
-                try:
-                    visit_date = planting_date + datetime.timedelta(days=int(st['days']))
-                except Exception:
-                    continue  # ignora entrada inválida
+                if st.days == 0:
+                    continue  # ignora o plantio (já criado)
+
+                visit_date = planting_date + datetime.timedelta(days=int(st.days))
 
                 v = Visit(
                     client_id=(client.id if client else None),
                     property_id=(prop.id if prop else None),
                     plot_id=plot.id,
                     planting_id=p.id,
-                    consultant_id=None,          # opcional — pode preencher depois
+                    consultant_id=None,
                     date=visit_date,
                     checklist=None,
                     diagnosis=None,
-                    recommendation=f"{st['name']} ({st['code']}) — {culture}",
+                    recommendation=st.name,
+                    culture=culture,
+                    variety=variety,
+                    status='planned'
                 )
                 db.session.add(v)
+
+            print(f"✅ {len(stages)} visitas geradas para {culture}.")
+
 
     db.session.commit()
     return jsonify(message='planting created', planting=p.to_dict()), 201
