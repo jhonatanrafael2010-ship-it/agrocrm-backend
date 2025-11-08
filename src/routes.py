@@ -932,38 +932,44 @@ def public_visit_view(visit_id):
 @bp.route('/phenology/schedule', methods=['GET'])
 def get_phenology_schedule():
     """
-    Retorna o cronograma fenológico para uma cultura e data de plantio.
-    Exemplo de uso:
-    /api/phenology/schedule?culture=Milho&planting_date=2025-10-12
+    Retorna o cronograma fenológico real (do banco de dados)
+    com base na tabela phenology_stage.
     """
-    culture = request.args.get('culture')
-    planting_date = request.args.get('planting_date')
+    from datetime import datetime, timedelta
+
+    culture = request.args.get("culture")
+    planting_date = request.args.get("planting_date")
 
     if not culture or not planting_date:
-        return jsonify(message="culture and planting_date required"), 400
+        return jsonify({"error": "culture and planting_date required"}), 400
 
     try:
-        from datetime import datetime, timedelta
         planting_date = datetime.fromisoformat(planting_date).date()
-    except Exception:
-        return jsonify(message="invalid planting_date, expected YYYY-MM-DD"), 400
+    except ValueError:
+        return jsonify({"error": "invalid planting_date format"}), 400
 
-    # ✅ Corrigido: usa o campo certo "days" da tabela "phenology_stages"
-    stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days).all()
+    # ✅ Agora busca diretamente da tabela correta
+    stages = db.session.execute(
+        text("SELECT code, name, days FROM phenology_stage WHERE culture = :culture ORDER BY days"),
+        {"culture": culture}
+    ).fetchall()
+
     if not stages:
+        print(f"⚠️ Nenhum estágio encontrado para {culture}.")
         return jsonify([]), 200
 
     events = []
-    for st in stages:
-        date = planting_date + timedelta(days=st.days)
+    for s in stages:
+        date = planting_date + timedelta(days=s.days)
         events.append({
-            "stage": st.name,
-            "code": st.code,
+            "stage": s.name,
+            "code": s.code,
             "suggested_date": date.isoformat(),
-            "color": "#60a5fa",
         })
 
+    print(f"✅ {len(events)} estágios retornados para {culture}.")
     return jsonify(events), 200
+
 
 
 # ============================================================
