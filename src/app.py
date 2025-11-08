@@ -25,15 +25,17 @@ def create_app(test_config=None):
     CORS(app, supports_credentials=True)
 
     # =====================================================
-    # 🗄️ Configuração do banco de dados (força SQLite se PostgreSQL falhar)
+    # 🗄️ Configuração do banco de dados (usa SQLite se Postgres estiver desativado)
     # =====================================================
     try:
+        disable_pg = os.environ.get("DISABLE_PG", "").lower() == "true"
         internal_url = os.environ.get("INTERNAL_DATABASE_URL") or os.environ.get("DATABASE_URL")
-        if internal_url and internal_url.startswith("postgresql"):
+
+        if not disable_pg and internal_url and internal_url.startswith("postgresql"):
             app.config["SQLALCHEMY_DATABASE_URI"] = internal_url
             print("🟢 Usando banco PostgreSQL do Render.")
         else:
-            raise ValueError("Sem URL de Postgres, usando SQLite.")
+            raise ValueError("Postgres desativado ou indisponível — usando SQLite.")
     except Exception as e:
         sqlite_path = os.path.join(UPLOAD_DIR, "database.db")
         app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{sqlite_path}"
@@ -47,6 +49,7 @@ def create_app(test_config=None):
         "pool_size": 5,
         "max_overflow": 10,
     }
+
 
 
     # =====================================================
