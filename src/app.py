@@ -27,6 +27,8 @@ def seed_default_user():
 # 📂 Diretórios importantes
 # =====================================================
 BASE_DIR = os.path.dirname(__file__)
+DATA_DIR = os.path.join(BASE_DIR, "data")
+os.makedirs(DATA_DIR, exist_ok=True)
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR") or os.path.join(BASE_DIR, "uploads")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
@@ -57,7 +59,7 @@ def create_app(test_config=None):
             port_part = f":{db_port}" if db_port else ""
             app.config['SQLALCHEMY_DATABASE_URI'] = f"postgresql://{db_user}:{db_pass_enc}@{db_host}{port_part}/{db_name}"
         else:
-            app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
+            app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///uploads/database.db'
 
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret')

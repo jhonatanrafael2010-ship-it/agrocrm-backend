@@ -611,9 +611,11 @@ def delete_visit(visit_id):
             if visit.planting_id:
                 planting = Planting.query.get(visit.planting_id)
 
-            # 2️⃣ Busca TODAS as visitas fenológicas do mesmo talhão após a data do plantio
+            # 2️⃣ Busca TODAS as visitas fenológicas do mesmo cliente, propriedade e cultura após a data do plantio
             future_visits = Visit.query.filter(
-                Visit.plot_id == visit.plot_id,
+                Visit.client_id == visit.client_id,
+                Visit.property_id == visit.property_id,
+                Visit.culture == visit.culture,
                 Visit.date > visit.date
             ).all()
 
