@@ -208,11 +208,26 @@ def create_visit():
         if not culture or not variety:
             return jsonify(message="culture e variety são obrigatórios quando gerar cronograma"), 400
 
-        # Cria o registro de plantio, se houver talhão
-        if plot_id:
-            p = Planting(plot_id=plot_id, culture=culture, variety=variety, planting_date=visit_date)
+        # ✅ Cria o registro de plantio — mesmo que não haja talhão
+        if not plot_id:
+            p = Planting(
+                plot_id=None,
+                culture=culture,
+                variety=variety,
+                planting_date=visit_date
+            )
             db.session.add(p)
             db.session.flush()
+        else:
+            p = Planting(
+                plot_id=plot_id,
+                culture=culture,
+                variety=variety,
+                planting_date=visit_date
+            )
+            db.session.add(p)
+            db.session.flush()
+
 
         # Visita inicial (plantio)
         v0 = Visit(
@@ -330,7 +345,17 @@ def export_visit_pdf(visit_id):
             .all()
         )
     else:
-        visits_to_include = [visit]
+        # 🔁 fallback: agrupa todas as visitas do mesmo cliente + cultura até a data atual
+        visits_to_include = (
+            Visit.query.filter(
+                Visit.client_id == visit.client_id,
+                Visit.culture == visit.culture,
+                Visit.date <= visit.date
+            )
+            .order_by(Visit.date.asc())
+            .all()
+        )
+
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4,
@@ -374,9 +399,16 @@ def export_visit_pdf(visit_id):
     story.append(Paragraph("Ciclo Fenológico — NutriCRM", styles["SubTitle"]))
     story.append(Spacer(1, 40))
 
-    first_visit = visits_to_include[0] if visits_to_include else visit
-    start_date = first_visit.date.strftime("%d/%m/%Y") if first_visit.date else "-"
-    last_date = visit.date.strftime("%d/%m/%Y") if visit.date else "-"
+    # 📅 Define o período automaticamente com base nas visitas cumulativas
+    if visits_to_include:
+        first_visit = visits_to_include[0]
+        last_visit = visits_to_include[-1]
+        start_date = first_visit.date.strftime("%d/%m/%Y") if first_visit.date else "-"
+        last_date = last_visit.date.strftime("%d/%m/%Y") if last_visit.date else "-"
+    else:
+        start_date = visit.date.strftime("%d/%m/%Y") if visit.date else "-"
+        last_date = start_date
+
 
     cover_table = Table([
         ["Cliente:", client.name if client else "-"],
