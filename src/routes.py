@@ -324,11 +324,12 @@ def create_visit():
             else:
                 # 🔹 Cria automaticamente um plantio técnico se não existir nenhum
                 new_plant = Planting(
-                    plot_id=v.plot_id,
+                    plot_id=v.plot_id or 0,  # evita erro se for None
                     culture=v.culture,
                     variety=v.variety,
                     planting_date=v.date or datetime.date.today()
                 )
+
                 db.session.add(new_plant)
                 db.session.flush()
                 v.planting_id = new_plant.id

@@ -3,6 +3,9 @@ from urllib.parse import quote_plus
 from flask import Flask, jsonify, send_from_directory, abort
 from flask_cors import CORS
 from flask_migrate import Migrate
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
+
 from models import db, Culture, Variety, PhenologyStage, User, Client, Consultant
 from routes import bp as api_bp
 
@@ -22,10 +25,22 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 # =====================================================
 def create_app(test_config=None):
     app = Flask(__name__, static_folder="static")
-    CORS(app, supports_credentials=True)
 
     # =====================================================
-    # 🗄️ Configuração do banco de dados (usa SQLite se Postgres estiver desativado)
+    # 🌐 Configuração CORS — permite frontend acessar API
+    # =====================================================
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": [
+                "https://agrocrm-frontend.onrender.com",
+                "http://localhost:5173"
+            ],
+            "supports_credentials": True
+        }
+    })
+
+    # =====================================================
+    # 🗄️ Configuração do banco de dados
     # =====================================================
     try:
         disable_pg = os.environ.get("DISABLE_PG", "").lower() == "true"
@@ -41,7 +56,6 @@ def create_app(test_config=None):
         app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{sqlite_path}"
         print(f"🟡 Usando banco SQLite local: {sqlite_path} — motivo: {e}")
 
-
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret")
     app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
@@ -51,8 +65,6 @@ def create_app(test_config=None):
         "max_overflow": 10,
     }
 
-
-
     # =====================================================
     # 🔌 Inicializações
     # =====================================================
@@ -61,7 +73,20 @@ def create_app(test_config=None):
     app.register_blueprint(api_bp)
 
     # =====================================================
-    # 🖼️ Rotas para arquivos estáticos e uploads
+    # 🔁 Protege contra conexões perdidas do PostgreSQL
+    # =====================================================
+    @event.listens_for(Engine, "engine_connect")
+    def ping_connection(connection, branch):
+        if branch:
+            return
+        try:
+            connection.scalar("SELECT 1")
+        except Exception:
+            connection.close()
+            connection.connect()
+
+    # =====================================================
+    # 🖼️ Rotas para uploads e arquivos estáticos
     # =====================================================
     @app.route("/uploads/<path:filename>")
     def serve_uploads(filename):
