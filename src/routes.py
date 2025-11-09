@@ -484,13 +484,15 @@ def export_visit_pdf(visit_id):
             try:
                 img_obj = PILImage.open(photo_path)
                 aspect = img_obj.height / float(img_obj.width)
-                max_width = 240  # largura fixa para caber 2 por linha
+
+                # 🔹 Reduz 30% o tamanho da imagem
+                max_width = 168  # antes era 240 → 240 * 0.7 = 168
                 img = Image(photo_path, width=max_width, height=max_width * aspect)
                 img.hAlign = "CENTER"
 
-                # legenda (caption)
+                # 🔹 Legenda preta
                 caption_text = (photo.caption or "").strip() or "—"
-                caption_par = Paragraph(f"<i>{caption_text}</i>", styles["Caption"])
+                caption_par = Paragraph(f"<font color='black'><i>{caption_text}</i></font>", styles["Caption"])
 
                 # adiciona imagem e legenda empilhadas verticalmente
                 cell = [img, caption_par]
@@ -517,6 +519,7 @@ def export_visit_pdf(visit_id):
             story.append(Spacer(1, 20))
 
         story.append(PageBreak())
+
 
 
     # Rodapé
