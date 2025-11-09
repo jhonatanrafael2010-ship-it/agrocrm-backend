@@ -124,12 +124,18 @@ def create_app(test_config=None):
     # =====================================================
     # 🌾 Inicialização e seeds automáticos
     # =====================================================
+        # Executa população inicial apenas se o banco estiver vazio
     with app.app_context():
-        db.create_all()
         try:
-            auto_populate_database()
+            if not Client.query.first():
+                db.create_all()
+                auto_populate_database()
+                print("✅ Banco criado e populado com sucesso (primeira execução).")
+            else:
+                print("ℹ️ Banco já existente, sem recriação.")
         except Exception as e:
-            print(f"⚠️ Erro ao executar população automática: {e}")
+            print(f"⚠️ Erro ao verificar/popular banco: {e}")
+
 
     return app
 
