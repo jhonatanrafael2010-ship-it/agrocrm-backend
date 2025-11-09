@@ -436,15 +436,20 @@ def export_visit_pdf(visit_id):
     story.append(PageBreak())
 
     # ============================================================
-    # 📄 VISITAS CUMULATIVAS
+    # 📄 VISITAS CUMULATIVAS (apenas com fotos)
     # ============================================================
     for idx, v in enumerate(visits_to_include, start=1):
+        # pula visitas que não têm fotos anexadas
+        if not getattr(v, "photos", None) or len(v.photos) == 0:
+            continue
+
         story.append(Paragraph(f"<b>VISITA {idx} — {v.recommendation or 'Sem título'}</b>", styles["Label"]))
         story.append(Paragraph(f"Data: {v.date.strftime('%d/%m/%Y') if v.date else '-'}", styles["NormalSmall"]))
+        story.append(Paragraph(f"Status: {v.status.capitalize() if v.status else '-'}", styles["NormalSmall"]))
         story.append(Spacer(1, 6))
 
+        # --- Diagnóstico e Recomendação ---
         data_table = [
-            ["Status:", v.status.capitalize() if v.status else "-"],
             ["Diagnóstico:", v.diagnosis or "-"],
             ["Recomendações Técnicas:", v.recommendation or "-"]
         ]
@@ -463,35 +468,56 @@ def export_visit_pdf(visit_id):
         story.append(t)
         story.append(Spacer(1, 10))
 
-        # Fotos
-        if hasattr(v, "photos") and v.photos:
-            story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
-            uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
-            row = []
-            for i, photo in enumerate(v.photos, 1):
-                file_name = os.path.basename(photo.url)
-                photo_path = os.path.join(uploads_dir, file_name)
-                if not os.path.exists(photo_path):
-                    continue
-                try:
-                    img_obj = PILImage.open(photo_path)
-                    aspect = img_obj.height / float(img_obj.width)
-                    max_width = 240
-                    img = Image(photo_path, width=max_width, height=max_width * aspect)
-                    img.hAlign = "CENTER"
-                    row.append(img)
-                    if len(row) == 2 or i == len(v.photos):
-                        story.append(Table([row], colWidths=[260, 260]))
-                        story.append(Spacer(1, 8))
-                        row = []
-                except Exception as e:
-                    print(f"⚠️ Erro ao processar foto {i}: {e}")
-                    continue
-        else:
-            story.append(Paragraph("<i>Sem fotos anexadas</i>", styles["NormalSmall"]))
+        # --- FOTOS 2x2 ---
+        story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
+        uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
 
-        if idx < len(visits_to_include):
-            story.append(PageBreak())
+        # Lista de linhas (2 por linha)
+        photo_rows = []
+        current_row = []
+        for i, photo in enumerate(v.photos, start=1):
+            file_name = os.path.basename(photo.url)
+            photo_path = os.path.join(uploads_dir, file_name)
+            if not os.path.exists(photo_path):
+                continue
+
+            try:
+                img_obj = PILImage.open(photo_path)
+                aspect = img_obj.height / float(img_obj.width)
+                max_width = 240  # largura fixa para caber 2 por linha
+                img = Image(photo_path, width=max_width, height=max_width * aspect)
+                img.hAlign = "CENTER"
+
+                # legenda (caption)
+                caption_text = (photo.caption or "").strip() or "—"
+                caption_par = Paragraph(f"<i>{caption_text}</i>", styles["Caption"])
+
+                # adiciona imagem e legenda empilhadas verticalmente
+                cell = [img, caption_par]
+                current_row.append(cell)
+
+                # quebra de linha a cada 2 fotos
+                if len(current_row) == 2 or i == len(v.photos):
+                    photo_rows.append(current_row)
+                    current_row = []
+
+            except Exception as e:
+                print(f"⚠️ Erro ao processar foto {i}: {e}")
+                continue
+
+        # cria as tabelas (2 colunas x até 2 linhas = 4 fotos por página)
+        if photo_rows:
+            grid_table = Table(photo_rows, colWidths=[260, 260])
+            grid_table.setStyle(TableStyle([
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ]))
+            story.append(grid_table)
+            story.append(Spacer(1, 20))
+
+        story.append(PageBreak())
+
 
     # Rodapé
     story.append(Spacer(1, 20))
