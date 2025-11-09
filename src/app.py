@@ -75,15 +75,21 @@ def create_app(test_config=None):
     # =====================================================
     # 🔁 Protege contra conexões perdidas do PostgreSQL
     # =====================================================
+    from sqlalchemy import text
+
     @event.listens_for(Engine, "engine_connect")
     def ping_connection(connection, branch):
+        """Evita 'server closed the connection unexpectedly' no Render/PostgreSQL."""
         if branch:
             return
         try:
-            connection.scalar("SELECT 1")
+            # Testa a conexão com uma query simples
+            connection.scalar(text("SELECT 1"))
         except Exception:
+            # Fecha e reabre de forma segura
             connection.close()
-            connection.connect()
+            connection.engine.connect()
+
 
     # =====================================================
     # 🖼️ Rotas para uploads e arquivos estáticos
