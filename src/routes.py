@@ -92,6 +92,8 @@ def get_visits():
         status = request.args.get('status', type=str)
 
         q = Visit.query
+
+        # ✅ Filtros opcionais
         if client_id:
             q = q.filter_by(client_id=client_id)
         if property_id:
@@ -101,54 +103,55 @@ def get_visits():
         if consultant_id:
             q = q.filter_by(consultant_id=consultant_id)
         if status:
-            q = q.filter_by(status=status)
+            q = q.filter(Visit.status.ilike(status))  # ← insensível a maiúsculas/minúsculas
 
-        items = q.order_by(Visit.date.asc().nullslast()).all()
+        # ✅ Apenas visitas concluídas se status=done (inclusive sem property_id)
+        if status and status.lower() == "done":
+            q = q.filter(Visit.status.ilike("done"))
+
+        visits = q.order_by(Visit.date.asc().nullslast()).all()
+
         result = []
-
         backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
 
-        for v in items:
-            client = Client.query.get(v.client_id)
-            consultant_name = next(
-                (c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id),
-                None
-            )
+        for v in visits:
+            # ignora visitas planned/pendentes caso status=done
+            if status and status.lower() == "done" and v.status != "done":
+                continue
 
-            # ✅ Monta URLs completas das fotos
-            backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "http://localhost:5000"
+            client = Client.query.get(v.client_id)
+            consultant_name = next((c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id), None)
+
             photos = []
             for p in v.photos:
-                # Garante nome limpo
                 file_name = os.path.basename(p.url)
                 photos.append({
                     "id": p.id,
                     "url": f"{backend_url}/uploads/{file_name}"
                 })
 
-            # 🔍 tenta pegar cultura e variedade do Planting, mas se não tiver, usa diretamente da visita (caso venha preenchido)
-            culture = None
-            variety = None
-            if v.planting:
-                culture = v.planting.culture
-                variety = v.planting.variety
-            else:
-                culture = getattr(v, "culture", None)
-                variety = getattr(v, "variety", None)
+            # busca cultura/variedade mesmo sem plantio
+            culture = v.culture or (v.planting.culture if v.planting else None)
+            variety = v.variety or (v.planting.variety if v.planting else None)
 
             result.append({
-                **v.to_dict(),
-                "client_name": client.name if client else f"Cliente {v.client_id}",
-                "consultant_name": consultant_name or "—",
+                "id": v.id,
+                "date": v.date.isoformat() if v.date else None,
+                "client_id": v.client_id,
+                "property_id": v.property_id,
+                "plot_id": v.plot_id,
+                "consultant_id": v.consultant_id,
+                "culture": culture,
+                "variety": variety,
+                "recommendation": v.recommendation,
                 "status": v.status,
-                "culture": culture or "—",
-                "variety": variety or "—",
+                "client_name": client.name if client else f"Cliente {v.client_id or '-'}",
+                "consultant_name": consultant_name or "—",
                 "photos": photos,
             })
 
-
-
         return jsonify(result), 200
+
 
     except Exception as e:
         print(f"⚠️ Erro ao listar visitas: {e}")
