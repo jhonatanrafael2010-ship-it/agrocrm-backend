@@ -118,7 +118,7 @@ class Plot(db.Model):
 class Planting(db.Model):
     __tablename__ = 'plantings'
     id = db.Column(db.Integer, primary_key=True)
-    plot_id = db.Column(db.Integer, db.ForeignKey('plots.id'), nullable=False, index=True)
+    plot_id = db.Column(db.Integer, db.ForeignKey('plots.id'), nullable=True, index=True)
     culture = db.Column(db.String(120), nullable=True)
     variety = db.Column(db.String(200), nullable=True)
     planting_date = db.Column(db.Date, nullable=True)
