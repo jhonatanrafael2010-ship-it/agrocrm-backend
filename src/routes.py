@@ -93,7 +93,7 @@ def get_visits():
 
         q = Visit.query
 
-        # ✅ Filtros opcionais
+        # ✅ Filtros opcionais simples
         if client_id:
             q = q.filter_by(client_id=client_id)
         if property_id:
@@ -103,22 +103,13 @@ def get_visits():
         if consultant_id:
             q = q.filter_by(consultant_id=consultant_id)
         if status:
-            q = q.filter(Visit.status.ilike(status))  # ← insensível a maiúsculas/minúsculas
-
-        # ✅ Apenas visitas concluídas se status=done (inclusive sem property_id)
-        if status and status.lower() == "done":
-            q = q.filter(Visit.status.ilike("done"))
+            q = q.filter(Visit.status.ilike(status))
 
         visits = q.order_by(Visit.date.asc().nullslast()).all()
-
         result = []
         backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
 
         for v in visits:
-            # ignora visitas planned/pendentes caso status=done
-            if status and status.lower() == "done" and v.status != "done":
-                continue
-
             client = Client.query.get(v.client_id)
             consultant_name = next((c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id), None)
 
@@ -130,7 +121,6 @@ def get_visits():
                     "url": f"{backend_url}/uploads/{file_name}"
                 })
 
-            # busca cultura/variedade mesmo sem plantio
             culture = v.culture or (v.planting.culture if v.planting else None)
             variety = v.variety or (v.planting.variety if v.planting else None)
 
@@ -152,10 +142,10 @@ def get_visits():
 
         return jsonify(result), 200
 
-
     except Exception as e:
         print(f"⚠️ Erro ao listar visitas: {e}")
         return jsonify(error=str(e)), 500
+
 
 
 
