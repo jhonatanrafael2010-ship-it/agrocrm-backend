@@ -312,9 +312,9 @@ def create_visit():
                 db.session.commit()
                 print(f"🔗 Visita {v.id} vinculada automaticamente ao plantio {v.planting_id}")
             else:
-                # 🔹 Cria automaticamente um plantio técnico se não existir nenhum
+                # 🔹 Cria automaticamente um plantio técnico mesmo sem talhão
                 new_plant = Planting(
-                    plot_id=v.plot_id or 0,  # evita erro se for None
+                    plot_id=v.plot_id if v.plot_id else None,
                     culture=v.culture,
                     variety=v.variety,
                     planting_date=v.date or datetime.date.today()
@@ -324,7 +324,8 @@ def create_visit():
                 db.session.flush()
                 v.planting_id = new_plant.id
                 db.session.commit()
-                print(f"🌱 Criado plantio técnico e vinculado à visita {v.id}")
+                print(f"🌱 Criado plantio técnico (sem talhão) e vinculado à visita {v.id}")
+
 
     except Exception as e:
         db.session.rollback()
