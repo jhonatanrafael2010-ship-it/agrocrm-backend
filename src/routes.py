@@ -266,32 +266,32 @@ def create_visit():
             # ✅ Commit geral
             db.session.commit()
 
+            # ✅ GUARDA o ID antes que o objeto seja expurgado
+            new_visit_id = getattr(v0, "id", None)
+            print(f"✅ Nova visita criada com ID {new_visit_id}")
+
+            if not new_visit_id:
+                print("⚠️ Nenhum ID recuperado após commit.")
+                return jsonify(message="visita criada, mas sem ID"), 201
+
             try:
-                # Recupera o ID antes de o objeto ser expurgado
-                new_visit_id = getattr(v0, "id", None)
-                if not new_visit_id:
-                    print("⚠️ Nenhum ID obtido para a visita criada.")
-                    return jsonify(message="visita criada, mas sem ID"), 201
-
-                # Cria uma nova sessão para ler os dados
-                from sqlalchemy.orm import scoped_session, sessionmaker
-                Session = scoped_session(sessionmaker(bind=db.engine))
-                temp_sess = Session()
-                visit_data = temp_sess.query(Visit).get(new_visit_id)
-                temp_sess.close()
-
+                # ✅ Reabre uma consulta limpa na sessão principal
+                visit_data = db.session.query(Visit).filter_by(id=new_visit_id).first()
                 if not visit_data:
-                    print("⚠️ Visit não encontrada após commit (id:", new_visit_id, ")")
+                    print(f"⚠️ Visit {new_visit_id} não encontrada após commit")
                     return jsonify(message="visita criada, mas não pôde ser lida"), 201
 
+                # ✅ Converte e retorna normalmente
                 return jsonify({
                     "message": "visita criada com sucesso",
                     "visit": visit_data.to_dict()
                 }), 201
 
             except Exception as e:
+                db.session.rollback()
                 print(f"⚠️ Erro ao converter visita para JSON: {e}")
                 return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
+
 
 
 
