@@ -100,11 +100,20 @@ def get_visits():
             q = q.filter_by(plot_id=plot_id)
         if consultant_id:
             q = q.filter_by(consultant_id=consultant_id)
-        # ✅ Corrige o filtro de status para incluir visitas concluídas de qualquer tipo
-        if not status or status.lower() in ['done', 'completed', 'finalized']:
+        # Filtro de status mais inteligente
+        scope = request.args.get('scope', type=str)  # novo parâmetro opcional: all / done / planned
+
+        if scope == 'done':
             q = q.filter(Visit.status.in_(['done', 'completed', 'finalized']))
-        elif status:
-            q = q.filter(Visit.status == status)
+        elif scope == 'planned':
+            q = q.filter(Visit.status == 'planned')
+        elif scope == 'all':
+            # inclui tudo — usado no calendário
+            pass
+        else:
+            # padrão: visitas concluídas
+            q = q.filter(Visit.status.in_(['done', 'completed', 'finalized']))
+
 
 
         items = q.order_by(Visit.date.asc().nullslast()).all()
