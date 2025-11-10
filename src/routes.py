@@ -378,23 +378,63 @@ def export_visit_pdf(visit_id):
 
 
 
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4,
-                            rightMargin=40, leftMargin=40,
-                            topMargin=60, bottomMargin=40)
+    from reportlab.lib.units import inch
 
+    # ============================================================
+    # 🎨 FUNDO ESCURO (modo dark)
+    # ============================================================
+    def draw_dark_background(canvas, doc):
+        canvas.saveState()
+        canvas.setFillColor(colors.HexColor("#121212"))  # fundo escuro
+        canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
+        canvas.restoreState()
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=60,
+        bottomMargin=40
+    )
+
+    # ============================================================
+    # 🧾 ESTILOS (modo escuro)
+    # ============================================================
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Label", fontSize=11, leading=14,
-                              textColor=colors.HexColor("#2E7D32"), spaceAfter=6))
-    styles.add(ParagraphStyle(name="NormalSmall", fontSize=10, leading=13))
-    styles.add(ParagraphStyle(name="CenterTitle", fontSize=18, leading=22,
-                              alignment=TA_CENTER, textColor=colors.HexColor("#1B5E20"),
-                              spaceAfter=12, spaceBefore=12))
-    styles.add(ParagraphStyle(name="SubTitle", fontSize=13, leading=16,
-                              alignment=TA_CENTER, textColor=colors.HexColor("#4CAF50"),
-                              spaceAfter=8))
-    styles.add(ParagraphStyle(name="Caption", alignment=TA_CENTER,
-                              fontSize=9, textColor=colors.gray, spaceBefore=4, spaceAfter=10))
+    styles.add(ParagraphStyle(
+        name="Label",
+        fontSize=11, leading=14,
+        textColor=colors.HexColor("#BBF7D0"),  # verde-claro
+        spaceAfter=6
+    ))
+    styles.add(ParagraphStyle(
+        name="NormalSmall",
+        fontSize=10, leading=13,
+        textColor=colors.whitesmoke
+    ))
+    styles.add(ParagraphStyle(
+        name="CenterTitle",
+        fontSize=18, leading=22,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#A5D6A7"),
+        spaceAfter=12, spaceBefore=12
+    ))
+    styles.add(ParagraphStyle(
+        name="SubTitle",
+        fontSize=13, leading=16,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#81C784"),
+        spaceAfter=8
+    ))
+    styles.add(ParagraphStyle(
+        name="Caption",
+        alignment=TA_CENTER,
+        fontSize=9,
+        textColor=colors.HexColor("#BDBDBD"),
+        spaceBefore=4, spaceAfter=10
+    ))
 
     story = []
 
@@ -472,14 +512,14 @@ def export_visit_pdf(visit_id):
         t = Table(data_table, colWidths=[140, 330])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E8F5E9")),
-            ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#1B5E20")),
             ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
             ("FONTSIZE", (0, 0), (-1, -1), 10),
-            ("BOX", (0, 0), (-1, -1), 0.25, colors.gray),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (0, 0), (0, -1), "RIGHT"),
-            ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
+            ("BOX", (0,0), (-1,-1), 0.25, colors.HexColor("#EEEEEE")),
+            ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#9E9E9E")),
+            ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#1E1E1E")),
+            ("TEXTCOLOR", (0,0), (-1,-1), colors.whitesmoke),
         ]))
         story.append(t)
         story.append(Spacer(1, 10))
@@ -539,12 +579,17 @@ def export_visit_pdf(visit_id):
         if idx < len(visits_to_include):
             story.append(PageBreak())
 
-    # Rodapé
+    # ============================================================
+    # 🏁 Rodapé
+    # ============================================================
     story.append(Spacer(1, 20))
     story.append(Paragraph("<b>NutriCRM - CRM Inteligente para o Agronegócio</b>", styles["Label"]))
     story.append(Paragraph("Relatório técnico cumulativo — ciclo fenológico completo.", styles["NormalSmall"]))
 
-    doc.build(story)
+    # ============================================================
+    # 🧱 Construção com fundo escuro em todas as páginas
+    # ============================================================
+    doc.build(story, onFirstPage=draw_dark_background, onLaterPages=draw_dark_background)
     buffer.seek(0)
 
     filename = f"{client.name if client else 'Cliente'} - {visit.variety or 'Variedade'} - {visit.recommendation or 'Visita'}.pdf"
