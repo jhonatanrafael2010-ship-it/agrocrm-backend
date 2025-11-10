@@ -484,32 +484,57 @@ def export_visit_pdf(visit_id):
         story.append(t)
         story.append(Spacer(1, 10))
 
-        # Fotos
+        # ============================================================
+        # 🖼️ FOTOS (com legenda e tamanho reduzido)
+        # ============================================================
         if hasattr(v, "_valid_photos") and v._valid_photos:
             story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
+
             uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
             row = []
-            for i, photo in enumerate(v.photos, 1):
-                file_name = os.path.basename(photo.url)
-                photo_path = os.path.join(uploads_dir, file_name)
-                if not os.path.exists(photo_path):
-                    continue
+            photo_cells = []
+
+            for i, photo in enumerate(v._valid_photos, 1):
                 try:
+                    file_name = os.path.basename(photo.url)
+                    photo_path = os.path.join(uploads_dir, file_name)
+                    if not os.path.exists(photo_path):
+                        continue
+
                     img_obj = PILImage.open(photo_path)
                     aspect = img_obj.height / float(img_obj.width)
-                    max_width = 240
+
+                    # 🔹 Reduz 30% do tamanho anterior (~240 → ~170)
+                    max_width = 170
                     img = Image(photo_path, width=max_width, height=max_width * aspect)
                     img.hAlign = "CENTER"
-                    row.append(img)
-                    if len(row) == 2 or i == len(v.photos):
-                        story.append(Table([row], colWidths=[260, 260]))
-                        story.append(Spacer(1, 8))
-                        row = []
+
+                    # 🔹 Adiciona legenda logo abaixo da imagem
+                    caption_text = getattr(photo, "caption", "") or ""
+                    caption = Paragraph(
+                        f"<font size=8 color='#555555'><i>{caption_text}</i></font>",
+                        styles["Caption"]
+                    )
+
+                    # 🔹 Agrupa imagem + legenda em uma célula
+                    cell = [img, caption]
+                    photo_cells.append(cell)
+
+                    # 🔹 Organiza 4 por página (2 colunas x 2 linhas)
+                    if len(photo_cells) == 4 or i == len(v._valid_photos):
+                        table_data = []
+                        for j in range(0, len(photo_cells), 2):
+                            table_data.append(photo_cells[j:j+2])
+                        story.append(Table(table_data, colWidths=[200, 200]))
+                        story.append(Spacer(1, 10))
+                        photo_cells = []
+
                 except Exception as e:
                     print(f"⚠️ Erro ao processar foto {i}: {e}")
                     continue
         else:
             story.append(Paragraph("<i>Sem fotos anexadas</i>", styles["NormalSmall"]))
+
 
         if idx < len(visits_to_include):
             story.append(PageBreak())
