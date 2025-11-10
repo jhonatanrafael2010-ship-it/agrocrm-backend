@@ -101,18 +101,19 @@ def get_visits():
         if consultant_id:
             q = q.filter_by(consultant_id=consultant_id)
         # Filtro de status mais inteligente
-        scope = request.args.get('scope', type=str)  # novo parâmetro opcional: all / done / planned
+        scope = request.args.get('scope', type=str)
 
         if scope == 'done':
+            # apenas visitas concluídas
             q = q.filter(Visit.status.in_(['done', 'completed', 'finalized']))
         elif scope == 'planned':
             q = q.filter(Visit.status == 'planned')
         elif scope == 'all':
-            # inclui tudo — usado no calendário
-            pass
+            pass  # inclui todas
         else:
-            # padrão: visitas concluídas
-            q = q.filter(Visit.status.in_(['done', 'completed', 'finalized']))
+            # padrão: inclui planned + done
+            q = q.filter(Visit.status.in_(['done', 'completed', 'finalized', 'planned']))
+
 
 
 
