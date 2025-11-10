@@ -297,41 +297,38 @@ def create_visit():
     db.session.add(v)
     db.session.commit()
 
-    # ======================================================
-    # 🔗 Associação automática da visita ao plantio correto
-    # ======================================================
-    try:
-        if not v.planting_id and v.culture:
-            planting_match = Planting.query.filter(
-                Planting.culture.ilike(v.culture),
-                (Planting.variety.ilike(v.variety) if v.variety else True)
-            ).order_by(Planting.id.desc()).first()
+        # ======================================================
+        # 🔗 Associação automática da visita ao plantio correto
+        # ======================================================
+        try:
+            if not v.planting_id and v.culture:
+                planting_match = Planting.query.filter(
+                    Planting.culture.ilike(v.culture),
+                    (Planting.variety.ilike(v.variety) if v.variety else True)
+                ).order_by(Planting.id.desc()).first()
 
-            if planting_match:
-                v.planting_id = planting_match.id
-                db.session.commit()
-                print(f"🔗 Visita {v.id} vinculada automaticamente ao plantio {v.planting_id}")
-            else:
-                # 🔹 Cria automaticamente um plantio técnico mesmo sem talhão
-                new_plant = Planting(
-                    plot_id=v.plot_id if v.plot_id else None,
-                    culture=v.culture,
-                    variety=v.variety,
-                    planting_date=v.date or datetime.date.today()
-                )
+                if planting_match:
+                    v.planting_id = planting_match.id
+                    db.session.commit()
+                    print(f"🔗 Visita {v.id} vinculada automaticamente ao plantio {v.planting_id}")
+                else:
+                    # 🔹 Cria automaticamente um plantio técnico mesmo sem talhão
+                    new_plant = Planting(
+                        plot_id=None if not v.plot_id else v.plot_id,
+                        culture=v.culture,
+                        variety=v.variety,
+                        planting_date=v.date or _d.today()
+                    )
+                    db.session.add(new_plant)
+                    db.session.flush()
+                    v.planting_id = new_plant.id
+                    db.session.commit()
+                    print(f"🌱 Criado plantio técnico (sem talhão) e vinculado à visita {v.id}")
 
-                db.session.add(new_plant)
-                db.session.flush()
-                v.planting_id = new_plant.id
-                db.session.commit()
-                print(f"🌱 Criado plantio técnico (sem talhão) e vinculado à visita {v.id}")
+        except Exception as e:
+            db.session.rollback()
+            print(f"⚠️ Falha ao vincular visita {v.id} a um plantio: {e}")
 
-
-    except Exception as e:
-        db.session.rollback()
-        print(f"⚠️ Falha ao vincular visita {v.id} a um plantio: {e}")
-
-    return jsonify(message="visita criada", visit=v.to_dict()), 201
 
 
 
