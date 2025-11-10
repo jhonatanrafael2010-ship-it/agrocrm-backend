@@ -263,26 +263,25 @@ def create_visit():
             )
             db.session.add(vv)
 
-        # ✅ Agora sim, um único commit geral
-        db.session.commit()
+            # ✅ Agora sim, um único commit geral
+            db.session.commit()
 
-        # 🔄 Recarrega a primeira visita de forma segura
-        try:
-            with db.engine.connect() as conn:
-                result = conn.execute(
-                    db.text("SELECT * FROM visits WHERE id = :id"),
-                    {"id": v0.id},
-                ).mappings().first()
+            try:
+                # recarrega a visita recém-criada de forma limpa
+                visit_data = Visit.query.get(v0.id)
+                if not visit_data:
+                    print("⚠️ Visit não encontrada após commit")
+                    return jsonify(message="visita criada, mas não pôde ser lida"), 201
 
-            if not result:
-                print("⚠️ Visit não encontrada após commit")
-                return jsonify(message="visita criada, mas não pôde ser lida"), 201
+                return jsonify(
+                    message="visita criada com sucesso",
+                    visit=visit_data.to_dict()
+                ), 201
 
-            return jsonify(message="visita criada com sucesso", visit=dict(result)), 201
+            except Exception as e:
+                print(f"⚠️ Erro ao converter visita para JSON: {e}")
+                return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
 
-        except Exception as e:
-            print(f"⚠️ Erro ao converter visita para JSON: {e}")
-            return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
 
     # ======================================================
     # 🌱 VISITA NORMAL (SEM CRONOGRAMA)
