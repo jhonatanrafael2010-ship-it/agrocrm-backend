@@ -205,12 +205,11 @@ def create_visit():
     # ======================================================
     # 🌾 GERAÇÃO AUTOMÁTICA DO CRONOGRAMA FENOLÓGICO
     # ======================================================
-    p = None
     if gen_schedule:
         if not culture or not variety:
             return jsonify(message="culture e variety são obrigatórios quando gerar cronograma"), 400
 
-        # ✅ Cria o registro de plantio — mesmo que não haja talhão
+        # ✅ Cria o registro de plantio
         p = Planting(
             plot_id=plot_id if plot_id else None,
             culture=culture,
@@ -218,14 +217,14 @@ def create_visit():
             planting_date=visit_date
         )
         db.session.add(p)
-        db.session.flush()
+        db.session.flush()  # garante p.id
 
         # 🌱 Visita inicial (plantio)
         v0 = Visit(
             client_id=client_id,
             property_id=property_id or None,
             plot_id=plot_id or None,
-            planting_id=p.id if p else None,
+            planting_id=p.id,
             consultant_id=consultant_id,
             date=visit_date,
             recommendation="Plantio",
@@ -251,7 +250,7 @@ def create_visit():
                 client_id=client_id,
                 property_id=property_id or None,
                 plot_id=plot_id or None,
-                planting_id=p.id if p else None,
+                planting_id=p.id,
                 consultant_id=consultant_id,
                 date=fut_date,
                 recommendation=st.name,
@@ -263,34 +262,16 @@ def create_visit():
             )
             db.session.add(vv)
 
-            # ✅ Commit geral
-            db.session.commit()
+        # ✅ Commit único no final
+        db.session.commit()
 
-            # ✅ GUARDA o ID antes que o objeto seja expurgado
-            new_visit_id = getattr(v0, "id", None)
-            print(f"✅ Nova visita criada com ID {new_visit_id}")
+        print(f"✅ Plantio e {len(stages)} visitas fenológicas criadas para {culture}.")
+        return jsonify({
+            "message": "cronograma fenológico criado com sucesso",
+            "planting_id": p.id,
+            "first_visit_id": v0.id
+        }), 201
 
-            if not new_visit_id:
-                print("⚠️ Nenhum ID recuperado após commit.")
-                return jsonify(message="visita criada, mas sem ID"), 201
-
-            try:
-                # ✅ Reabre uma consulta limpa na sessão principal
-                visit_data = db.session.query(Visit).filter_by(id=new_visit_id).first()
-                if not visit_data:
-                    print(f"⚠️ Visit {new_visit_id} não encontrada após commit")
-                    return jsonify(message="visita criada, mas não pôde ser lida"), 201
-
-                # ✅ Converte e retorna normalmente
-                return jsonify({
-                    "message": "visita criada com sucesso",
-                    "visit": visit_data.to_dict()
-                }), 201
-
-            except Exception as e:
-                db.session.rollback()
-                print(f"⚠️ Erro ao converter visita para JSON: {e}")
-                return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
 
 
 
