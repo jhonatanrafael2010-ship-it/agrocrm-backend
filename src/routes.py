@@ -100,8 +100,12 @@ def get_visits():
             q = q.filter_by(plot_id=plot_id)
         if consultant_id:
             q = q.filter_by(consultant_id=consultant_id)
-        if status:
-            q = q.filter_by(status=status)
+        # ✅ Corrige o filtro de status para incluir visitas concluídas de qualquer tipo
+        if not status or status.lower() in ['done', 'completed', 'finalized']:
+            q = q.filter(Visit.status.in_(['done', 'completed', 'finalized']))
+        elif status:
+            q = q.filter(Visit.status == status)
+
 
         items = q.order_by(Visit.date.asc().nullslast()).all()
         result = []
