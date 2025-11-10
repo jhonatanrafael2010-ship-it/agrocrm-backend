@@ -256,13 +256,13 @@ def create_visit():
 
             fut_date = visit_date + timedelta(days=int(st.days))
             vv = Visit(
-                client_id=client_id,
-                property_id=property_id or None,
-                plot_id=plot_id or None,
+                client_id=client_id,  # garante o vínculo com o mesmo cliente
+                property_id=property_id,  # idem para fazenda
+                plot_id=plot_id,  # idem para talhão
                 planting_id=p.id if p else None,
-                consultant_id=consultant_id,
+                consultant_id=consultant_id or v0.consultant_id,  # fallback seguro
                 date=fut_date,
-                recommendation=st.name,
+                recommendation=st.name.strip().capitalize(),
                 status='planned',
                 culture=culture,
                 variety=variety,
@@ -270,6 +270,7 @@ def create_visit():
                 longitude=longitude
             )
             db.session.add(vv)
+
 
         db.session.commit()
         return jsonify(message="visita criada com cronograma", visit=v0.to_dict()), 201
