@@ -217,7 +217,8 @@ def create_visit():
             planting_date=visit_date
         )
         db.session.add(p)
-        db.session.flush()  # garante p.id
+        db.session.flush()   # ✅ força gerar o ID antes do commit
+        planting_id = p.id   # ✅ salva em variável simples
 
         # 🌱 Visita inicial (plantio)
         v0 = Visit(
@@ -268,7 +269,7 @@ def create_visit():
         print(f"✅ Plantio e {len(stages)} visitas fenológicas criadas para {culture}.")
         return jsonify({
             "message": "cronograma fenológico criado com sucesso",
-            "planting_id": p.id,
+            "planting_id": planting_id,   # ✅ agora usa a variável segura
             "first_visit_id": v0.id
         }), 201
 
