@@ -274,18 +274,28 @@ def create_visit():
             )
             db.session.add(vv)
 
-        db.session.commit()
+            db.session.commit()
+            db.session.close()  # 🔒 fecha a sessão atual
 
-        try:
-            # 🔄 Recarrega a visita para evitar o erro de objeto "detached"
-            v0_ref = Visit.query.get(v0.id)
-            v0_data = v0_ref.to_dict() if v0_ref else {}
+            try:
+                # 🔄 abre nova sessão limpa e recarrega a visita
+                from models import db as db_module, Visit  # importa dentro para evitar contexto antigo
+                with db_module.engine.connect() as conn:
+                    result = conn.execute(
+                        db_module.text("SELECT * FROM visits WHERE id = :id"),
+                        {"id": v0.id},
+                    ).mappings().first()
 
-            return jsonify(message="visita criada com sucesso", visit=v0_data), 201
+                if not result:
+                    print("⚠️ Visit não encontrada após commit")
+                    return jsonify(message="visita criada, mas não pôde ser lida"), 201
 
-        except Exception as e:
-            print(f"⚠️ Erro ao converter visita para dicionário: {e}")
-            return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
+                return jsonify(message="visita criada com sucesso", visit=dict(result)), 201
+
+            except Exception as e:
+                print(f"⚠️ Erro ao converter visita para JSON: {e}")
+                return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
+
 
 
 
