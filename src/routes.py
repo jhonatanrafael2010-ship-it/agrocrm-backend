@@ -267,10 +267,11 @@ def create_visit():
 
         db.session.commit()
 
-        # ✅ Recarrega a visita do banco antes de converter para dicionário
-        db.session.refresh(v0)
+        # ✅ Recarrega do banco como nova instância (corrige ObjectDeletedError)
+        v0_reloaded = Visit.query.get(v0.id)
 
-        return jsonify(message="visita criada com cronograma", visit=v0.to_dict()), 201
+        return jsonify(message="visita criada com cronograma", visit=v0_reloaded.to_dict()), 201
+
 
 
     # ======================================================
