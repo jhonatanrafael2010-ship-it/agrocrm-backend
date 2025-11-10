@@ -276,24 +276,24 @@ def create_visit():
 
         db.session.commit()
 
-        # ✅ Recarrega a visita do banco (evita ObjectDeletedError)
-        v0_reloaded = Visit.query.get(v0.id)
+        try:
+            v0_data = {
+                "id": v0.id,
+                "client_id": v0.client_id,
+                "property_id": v0.property_id,
+                "plot_id": v0.plot_id,
+                "consultant_id": v0.consultant_id,
+                "date": v0.date.isoformat() if v0.date else None,
+                "status": v0.status,
+                "recommendation": v0.recommendation,
+                "culture": v0.culture,
+                "variety": v0.variety
+            }
+            return jsonify(message="visita criada com cronograma", visit=v0_data), 201
+        except Exception as e:
+            print(f"⚠️ Erro ao converter visita para dicionário: {e}")
+            return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
 
-        # Retorna apenas dados essenciais (evita lazy-load após commit)
-        v0_data = {
-            "id": v0_reloaded.id,
-            "client_id": v0_reloaded.client_id,
-            "property_id": v0_reloaded.property_id,
-            "plot_id": v0_reloaded.plot_id,
-            "consultant_id": v0_reloaded.consultant_id,
-            "date": v0_reloaded.date.isoformat() if v0_reloaded.date else None,
-            "status": v0_reloaded.status,
-            "recommendation": v0_reloaded.recommendation,
-            "culture": v0_reloaded.culture,
-            "variety": v0_reloaded.variety
-        }
-
-        return jsonify(message="visita criada com cronograma", visit=v0_data), 201
 
 
 
@@ -1354,20 +1354,27 @@ from datetime import datetime
 @bp.route('/plantings', methods=['GET'])
 def get_plantings():
     """List plantings. Optional filters: plot_id, property_id, client_id"""
-    plot_id = request.args.get('plot_id', type=int)
-    property_id = request.args.get('property_id', type=int)
-    client_id = request.args.get('client_id', type=int)
+    try:
+        plot_id = request.args.get('plot_id', type=int)
+        property_id = request.args.get('property_id', type=int)
+        client_id = request.args.get('client_id', type=int)
 
-    q = Planting.query
-    if plot_id:
-        q = q.filter_by(plot_id=plot_id)
-    if property_id:
-        q = q.join(Plot).filter(Plot.property_id == property_id)
-    if client_id:
-        q = q.join(Plot).join(Property).filter(Property.client_id == client_id)
+        q = Planting.query
+        if plot_id:
+            q = q.filter_by(plot_id=plot_id)
+        if property_id:
+            q = q.join(Plot).filter(Plot.property_id == property_id)
+        if client_id:
+            q = q.join(Plot).join(Property).filter(Property.client_id == client_id)
 
-    items = q.order_by(Planting.id.desc()).all()
-    return jsonify([it.to_dict() for it in items]), 200
+        items = q.order_by(Planting.id.desc()).all()
+        return jsonify([it.to_dict() for it in items]), 200
+
+    except Exception as e:
+        print(f"❌ Erro em /api/plantings: {e}")
+        db.session.rollback()
+        return jsonify({"error": f"Erro interno ao listar plantios: {str(e)}"}), 500
+
 
 
 @bp.route('/plantings/<int:pid>', methods=['GET'])
