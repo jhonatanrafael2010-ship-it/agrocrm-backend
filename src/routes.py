@@ -277,22 +277,16 @@ def create_visit():
         db.session.commit()
 
         try:
-            v0_data = {
-                "id": v0.id,
-                "client_id": v0.client_id,
-                "property_id": v0.property_id,
-                "plot_id": v0.plot_id,
-                "consultant_id": v0.consultant_id,
-                "date": v0.date.isoformat() if v0.date else None,
-                "status": v0.status,
-                "recommendation": v0.recommendation,
-                "culture": v0.culture,
-                "variety": v0.variety
-            }
-            return jsonify(message="visita criada com cronograma", visit=v0_data), 201
+            # 🔄 Recarrega a visita para evitar o erro de objeto "detached"
+            v0_ref = Visit.query.get(v0.id)
+            v0_data = v0_ref.to_dict() if v0_ref else {}
+
+            return jsonify(message="visita criada com sucesso", visit=v0_data), 201
+
         except Exception as e:
             print(f"⚠️ Erro ao converter visita para dicionário: {e}")
             return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
+
 
 
 
