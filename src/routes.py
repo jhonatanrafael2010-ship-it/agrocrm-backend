@@ -111,8 +111,12 @@ def get_visits():
         elif scope == 'all':
             pass  # inclui todas
         else:
-            # padrão: inclui planned + done
-            q = q.filter(Visit.status.in_(['done', 'completed', 'finalized', 'planned']))
+            # padrão: inclui planned + done + visitas sem status definido
+            q = q.filter(
+                (Visit.status.in_(['done', 'completed', 'finalized', 'planned'])) |
+                (Visit.status.is_(None)) |
+                (Visit.status == "")
+            )
 
 
 
