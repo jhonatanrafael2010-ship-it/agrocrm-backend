@@ -166,6 +166,8 @@ def create_visit():
     com base na cultura e na data de plantio.
     """
     from datetime import date as _d, timedelta
+    from models import db, Visit, Client, Property, Plot, Planting, PhenologyStage
+
     data = request.get_json(silent=True) or {}
 
     client_id = data.get('client_id')
@@ -203,35 +205,22 @@ def create_visit():
     # ======================================================
     # 🌾 GERAÇÃO AUTOMÁTICA DO CRONOGRAMA FENOLÓGICO
     # ======================================================
-    from models import PhenologyStage
-
     p = None
     if gen_schedule:
         if not culture or not variety:
             return jsonify(message="culture e variety são obrigatórios quando gerar cronograma"), 400
 
         # ✅ Cria o registro de plantio — mesmo que não haja talhão
-        if not plot_id:
-            p = Planting(
-                plot_id=None,
-                culture=culture,
-                variety=variety,
-                planting_date=visit_date
-            )
-            db.session.add(p)
-            db.session.flush()
-        else:
-            p = Planting(
-                plot_id=plot_id,
-                culture=culture,
-                variety=variety,
-                planting_date=visit_date
-            )
-            db.session.add(p)
-            db.session.flush()
+        p = Planting(
+            plot_id=plot_id if plot_id else None,
+            culture=culture,
+            variety=variety,
+            planting_date=visit_date
+        )
+        db.session.add(p)
+        db.session.flush()
 
-
-        # Visita inicial (plantio)
+        # 🌱 Visita inicial (plantio)
         v0 = Visit(
             client_id=client_id,
             property_id=property_id or None,
@@ -248,7 +237,7 @@ def create_visit():
         )
         db.session.add(v0)
 
-        # Gera visitas futuras conforme fenologia
+        # 🔁 Gera visitas futuras conforme fenologia
         stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days.asc()).all()
         if culture.lower() == "soja":
             stages = [s for s in stages if "maturação fisiológica" not in s.name.lower()]
@@ -274,32 +263,26 @@ def create_visit():
             )
             db.session.add(vv)
 
-            db.session.commit()
-            db.session.close()  # 🔒 fecha a sessão atual
+        # ✅ Agora sim, um único commit geral
+        db.session.commit()
 
-            try:
-                # 🔄 abre nova sessão limpa e recarrega a visita
-                from models import db as db_module, Visit  # importa dentro para evitar contexto antigo
-                with db_module.engine.connect() as conn:
-                    result = conn.execute(
-                        db_module.text("SELECT * FROM visits WHERE id = :id"),
-                        {"id": v0.id},
-                    ).mappings().first()
+        # 🔄 Recarrega a primeira visita de forma segura
+        try:
+            with db.engine.connect() as conn:
+                result = conn.execute(
+                    db.text("SELECT * FROM visits WHERE id = :id"),
+                    {"id": v0.id},
+                ).mappings().first()
 
-                if not result:
-                    print("⚠️ Visit não encontrada após commit")
-                    return jsonify(message="visita criada, mas não pôde ser lida"), 201
+            if not result:
+                print("⚠️ Visit não encontrada após commit")
+                return jsonify(message="visita criada, mas não pôde ser lida"), 201
 
-                return jsonify(message="visita criada com sucesso", visit=dict(result)), 201
+            return jsonify(message="visita criada com sucesso", visit=dict(result)), 201
 
-            except Exception as e:
-                print(f"⚠️ Erro ao converter visita para JSON: {e}")
-                return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
-
-
-
-
-
+        except Exception as e:
+            print(f"⚠️ Erro ao converter visita para JSON: {e}")
+            return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
 
     # ======================================================
     # 🌱 VISITA NORMAL (SEM CRONOGRAMA)
@@ -330,7 +313,6 @@ def create_visit():
     db.session.add(v)
     db.session.commit()
 
-
     # ======================================================
     # 🔗 Associação automática da visita ao plantio correto
     # ======================================================
@@ -348,7 +330,7 @@ def create_visit():
             else:
                 # 🔹 Cria automaticamente um plantio técnico mesmo sem talhão
                 new_plant = Planting(
-                    plot_id=None if not v.plot_id else v.plot_id,
+                    plot_id=v.plot_id if v.plot_id else None,
                     culture=v.culture,
                     variety=v.variety,
                     planting_date=v.date or _d.today()
@@ -363,7 +345,22 @@ def create_visit():
         db.session.rollback()
         print(f"⚠️ Falha ao vincular visita {v.id} a um plantio: {e}")
 
-    return jsonify(message="visita criada", visit=v.to_dict()), 201
+    # ======================================================
+    # ✅ Retorno seguro mesmo se sessão estiver em rollback_only
+    # ======================================================
+    try:
+        with db.engine.connect() as conn:
+            result = conn.execute(
+                db.text("SELECT * FROM visits WHERE id = :id"),
+                {"id": v.id},
+            ).mappings().first()
+
+        return jsonify(message="visita criada com sucesso", visit=dict(result)), 201
+
+    except Exception as e:
+        print(f"⚠️ Erro ao converter visita (normal) para JSON: {e}")
+        return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
+
 
 
 
