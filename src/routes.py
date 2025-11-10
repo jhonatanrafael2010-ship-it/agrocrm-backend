@@ -21,6 +21,15 @@ from models import db, User, Client, Property, Plot, Visit, Planting, Opportunit
 
 bp = Blueprint('api', __name__, url_prefix='/api')
 
+# ✅ Libera o acesso do frontend hospedado no Render
+from flask_cors import CORS
+
+CORS(bp, resources={r"/*": {"origins": [
+    "https://agrocrm-frontend.onrender.com",
+    "http://localhost:5173"
+]}})
+
+
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/opt/render/project/src/uploads")
 
 # ============================================================
@@ -267,10 +276,24 @@ def create_visit():
 
         db.session.commit()
 
-        # ✅ Recarrega do banco como nova instância (corrige ObjectDeletedError)
+        # ✅ Recarrega a visita do banco (evita ObjectDeletedError)
         v0_reloaded = Visit.query.get(v0.id)
 
-        return jsonify(message="visita criada com cronograma", visit=v0_reloaded.to_dict()), 201
+        # Retorna apenas dados essenciais (evita lazy-load após commit)
+        v0_data = {
+            "id": v0_reloaded.id,
+            "client_id": v0_reloaded.client_id,
+            "property_id": v0_reloaded.property_id,
+            "plot_id": v0_reloaded.plot_id,
+            "consultant_id": v0_reloaded.consultant_id,
+            "date": v0_reloaded.date.isoformat() if v0_reloaded.date else None,
+            "status": v0_reloaded.status,
+            "recommendation": v0_reloaded.recommendation,
+            "culture": v0_reloaded.culture,
+            "variety": v0_reloaded.variety
+        }
+
+        return jsonify(message="visita criada com cronograma", visit=v0_data), 201
 
 
 
