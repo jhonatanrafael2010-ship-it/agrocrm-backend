@@ -263,24 +263,36 @@ def create_visit():
             )
             db.session.add(vv)
 
-            # ✅ Agora sim, um único commit geral
+            # ✅ Commit geral
             db.session.commit()
 
             try:
-                # recarrega a visita recém-criada de forma limpa
-                visit_data = Visit.query.get(v0.id)
+                # Recupera o ID antes de o objeto ser expurgado
+                new_visit_id = getattr(v0, "id", None)
+                if not new_visit_id:
+                    print("⚠️ Nenhum ID obtido para a visita criada.")
+                    return jsonify(message="visita criada, mas sem ID"), 201
+
+                # Cria uma nova sessão para ler os dados
+                from sqlalchemy.orm import scoped_session, sessionmaker
+                Session = scoped_session(sessionmaker(bind=db.engine))
+                temp_sess = Session()
+                visit_data = temp_sess.query(Visit).get(new_visit_id)
+                temp_sess.close()
+
                 if not visit_data:
-                    print("⚠️ Visit não encontrada após commit")
+                    print("⚠️ Visit não encontrada após commit (id:", new_visit_id, ")")
                     return jsonify(message="visita criada, mas não pôde ser lida"), 201
 
-                return jsonify(
-                    message="visita criada com sucesso",
-                    visit=visit_data.to_dict()
-                ), 201
+                return jsonify({
+                    "message": "visita criada com sucesso",
+                    "visit": visit_data.to_dict()
+                }), 201
 
             except Exception as e:
                 print(f"⚠️ Erro ao converter visita para JSON: {e}")
                 return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
+
 
 
     # ======================================================
