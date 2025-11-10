@@ -334,27 +334,48 @@ def export_visit_pdf(visit_id):
         f"Consultor {visit.consultant_id}" if visit.consultant_id else "-"
     )
 
-    # 🔍 Pega todas as visitas anteriores do mesmo plantio (mesmo ciclo)
+    # ============================================================
+    # 🔍 Seleciona visitas cumulativas do mesmo ciclo
+    # ============================================================
     if visit.planting_id:
+        # 🔹 Todas as visitas desse mesmo plantio, até a data atual
         visits_to_include = (
-            Visit.query.filter(
-                Visit.planting_id == visit.planting_id,
-                Visit.date <= visit.date
-            )
+            Visit.query
+            .filter(Visit.planting_id == visit.planting_id)
             .order_by(Visit.date.asc())
             .all()
         )
     else:
-        # 🔁 fallback: agrupa todas as visitas do mesmo cliente + cultura até a data atual
+        # 🔹 Se não houver planting_id, agrupa pelo cliente + cultura + talhão
         visits_to_include = (
-            Visit.query.filter(
+            Visit.query
+            .filter(
                 Visit.client_id == visit.client_id,
+                Visit.property_id == visit.property_id,
+                Visit.plot_id == visit.plot_id,
                 Visit.culture == visit.culture,
-                Visit.date <= visit.date
             )
             .order_by(Visit.date.asc())
             .all()
         )
+
+    # 🔸 Mantém apenas as visitas que possuem ao menos 1 foto válida
+    visits_with_photos = []
+    uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
+
+    for v in visits_to_include:
+        valid_photos = []
+        for p in getattr(v, "photos", []):
+            file_name = os.path.basename(p.url)
+            photo_path = os.path.join(uploads_dir, file_name)
+            if os.path.exists(photo_path):
+                valid_photos.append(p)
+        if valid_photos:
+            v._valid_photos = valid_photos  # atributo temporário
+            visits_with_photos.append(v)
+
+    visits_to_include = visits_with_photos
+
 
 
     buffer = BytesIO()
@@ -464,7 +485,7 @@ def export_visit_pdf(visit_id):
         story.append(Spacer(1, 10))
 
         # Fotos
-        if hasattr(v, "photos") and v.photos:
+        if hasattr(v, "_valid_photos") and v._valid_photos:
             story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
             uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
             row = []
