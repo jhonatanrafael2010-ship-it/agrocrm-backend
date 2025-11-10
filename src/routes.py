@@ -266,7 +266,12 @@ def create_visit():
             db.session.add(vv)
 
         db.session.commit()
+
+        # ✅ Recarrega a visita do banco antes de converter para dicionário
+        db.session.refresh(v0)
+
         return jsonify(message="visita criada com cronograma", visit=v0.to_dict()), 201
+
 
     # ======================================================
     # 🌱 VISITA NORMAL (SEM CRONOGRAMA)
