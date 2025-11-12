@@ -647,6 +647,13 @@ def create_visits_bulk():
     return jsonify([v.to_dict() | {"status": v.status} for v in created]), 201
 
 
+@bp.route("/visits", methods=["GET"])
+def list_visits():
+    scope = request.args.get("scope")
+    visits = Visit.query.all()
+    return jsonify([v.to_dict() for v in visits])
+
+
 @bp.route('/visits/<int:vid>', methods=['PUT'])
 def update_visit(vid: int):
     v = Visit.query.get(vid)
