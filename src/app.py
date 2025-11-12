@@ -14,6 +14,7 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 
+db_status = {"engine": "desconhecido"}  # 🧠 guarda status atual
 
 # =====================================================
 # 🚀 Criação da aplicação Flask
@@ -24,8 +25,6 @@ def create_app(test_config=None):
 
     pg_url = os.environ.get("DATABASE_URL") or os.environ.get("INTERNAL_DATABASE_URL")
     sqlite_path = os.path.join(UPLOAD_DIR, "fallback_local.db")
-
-    db_status = {"engine": "desconhecido"}  # 🧠 guarda status atual
 
     # =====================================================
     # 🧠 Testa conexão real com PostgreSQL
@@ -134,7 +133,7 @@ def create_app(test_config=None):
     # =====================================================
     @app.route("/api/status")
     def db_status_route():
-        engine = db_status["engine"]
+        engine = db_status.get("engine", "desconhecido")
         if engine == "postgresql":
             label = "🟢 Conectado ao servidor principal (PostgreSQL)"
         elif engine == "sqlite":
