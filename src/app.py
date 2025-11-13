@@ -1,17 +1,12 @@
 import os
-from urllib.parse import quote_plus
 from flask import Flask, jsonify, send_from_directory, abort
 from flask_cors import CORS
 from flask_migrate import Migrate
-from sqlalchemy import event
-from sqlalchemy.engine import Engine
-
-from models import db, Culture, Variety, PhenologyStage, User, Client, Consultant
+from sqlalchemy import text
+from threading import Timer
+from models import db, Client, Consultant
 from routes import bp as api_bp
 
-# =====================================================
-# 📂 Diretórios principais
-# =====================================================
 BASE_DIR = os.path.dirname(__file__)
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR") or os.path.join(BASE_DIR, "uploads")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -19,43 +14,79 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 
+db_status = {"engine": "desconhecido"}  # 🧠 guarda status atual
 
 # =====================================================
 # 🚀 Criação da aplicação Flask
 # =====================================================
 def create_app(test_config=None):
     app = Flask(__name__, static_folder="static")
+    CORS(app, supports_credentials=True)
+
+    pg_url = os.environ.get("DATABASE_URL") or os.environ.get("INTERNAL_DATABASE_URL")
+    sqlite_path = os.path.join(UPLOAD_DIR, "fallback_local.db")
 
     # =====================================================
-    # 🌐 Configuração CORS — permite frontend acessar API
+    # 🧠 Testa conexão real com PostgreSQL
     # =====================================================
-    CORS(app, resources={
-        r"/api/*": {
-            "origins": [
-                "https://agrocrm-frontend.onrender.com",
-                "http://localhost:5173"
-            ],
-            "supports_credentials": True
-        }
-    })
+    def try_postgres():
+        if not pg_url or not pg_url.startswith("postgresql"):
+            return False
+        try:
+            tmp_app = Flask(__name__)
+            tmp_app.config["SQLALCHEMY_DATABASE_URI"] = pg_url
+            tmp_db = db
+            tmp_db.init_app(tmp_app)
+            with tmp_app.app_context():
+                tmp_db.session.execute(text("SELECT 1"))
+            return True
+        except Exception:
+            return False
 
     # =====================================================
-    # 🗄️ Configuração do banco de dados
+    # 🔁 Conecta com fallback automático
     # =====================================================
-    try:
-        disable_pg = os.environ.get("DISABLE_PG", "").lower() == "true"
-        internal_url = os.environ.get("INTERNAL_DATABASE_URL") or os.environ.get("DATABASE_URL")
-
-        if not disable_pg and internal_url and internal_url.startswith("postgresql"):
-            app.config["SQLALCHEMY_DATABASE_URI"] = internal_url
-            print("🟢 Usando banco PostgreSQL do Render.")
+    def connect_database():
+        if pg_url and try_postgres():
+            app.config["SQLALCHEMY_DATABASE_URI"] = pg_url
+            db.init_app(app)
+            db_status["engine"] = "postgresql"
+            print("🟢 Conectado ao PostgreSQL do Render.")
         else:
-            raise ValueError("Postgres desativado ou indisponível — usando SQLite.")
-    except Exception as e:
-        sqlite_path = os.path.join(UPLOAD_DIR, "database.db")
-        app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{sqlite_path}"
-        print(f"🟡 Usando banco SQLite local: {sqlite_path} — motivo: {e}")
+            app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{sqlite_path}"
+            db.init_app(app)
+            db_status["engine"] = "sqlite"
+            print(f"🟡 Usando banco SQLite local: {sqlite_path}")
 
+    connect_database()
+
+    # =====================================================
+    # ⏱️ Verificação automática a cada 30 min
+    # =====================================================
+    def periodic_check():
+        try:
+            if db_status["engine"] == "sqlite" and try_postgres():
+                print("✅ PostgreSQL disponível novamente — migrando de volta...")
+                app.config["SQLALCHEMY_DATABASE_URI"] = pg_url
+                with app.app_context():
+                    db.engine.dispose()
+                    db.create_all()
+                    db_status["engine"] = "postgresql"
+                    print("🔄 Migração automática concluída com sucesso.")
+            elif db_status["engine"] == "postgresql":
+                with app.app_context():
+                    db.session.execute(text("SELECT 1"))
+        except Exception as e:
+            print(f"⚠️ Verificação periódica detectou erro: {e}")
+            db_status["engine"] = "sqlite"
+        finally:
+            Timer(1800, periodic_check).start()  # 30 minutos
+
+    Timer(1800, periodic_check).start()
+
+    # =====================================================
+    # ⚙️ Configurações adicionais
+    # =====================================================
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret")
     app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
@@ -65,34 +96,11 @@ def create_app(test_config=None):
         "max_overflow": 10,
     }
 
-    # =====================================================
-    # 🔌 Inicializações
-    # =====================================================
-    db.init_app(app)
     Migrate(app, db)
     app.register_blueprint(api_bp)
 
     # =====================================================
-    # 🔁 Protege contra conexões perdidas do PostgreSQL
-    # =====================================================
-    from sqlalchemy import text
-
-    @event.listens_for(Engine, "engine_connect")
-    def ping_connection(connection, branch):
-        """Evita 'server closed the connection unexpectedly' no Render/PostgreSQL."""
-        if branch:
-            return
-        try:
-            # Testa a conexão com uma query simples
-            connection.scalar(text("SELECT 1"))
-        except Exception:
-            # Fecha e reabre de forma segura
-            connection.close()
-            connection.engine.connect()
-
-
-    # =====================================================
-    # 🖼️ Rotas para uploads e arquivos estáticos
+    # 🖼️ Rotas de arquivos
     # =====================================================
     @app.route("/uploads/<path:filename>")
     def serve_uploads(filename):
@@ -111,40 +119,49 @@ def create_app(test_config=None):
         return send_from_directory(STATIC_DIR, filename)
 
     # =====================================================
-    # 🏠 Rota principal de teste
+    # 🏠 Rota principal
     # =====================================================
     @app.route("/")
     def index():
         return jsonify({
             "message": "✅ API do NutriCRM rodando com sucesso!",
-            "version": "1.0",
-            "status": "ok",
+            "status": "ok"
         })
 
     # =====================================================
-    # 🌾 Inicialização e seeds automáticos
+    # 📡 Nova rota de status da base
     # =====================================================
-        # Executa população inicial apenas se o banco estiver vazio
-    with app.app_context():
-        try:
-            if not Client.query.first():
-                db.create_all()
-                auto_populate_database()
-                print("✅ Banco criado e populado com sucesso (primeira execução).")
-            else:
-                print("ℹ️ Banco já existente, sem recriação.")
-        except Exception as e:
-            print(f"⚠️ Erro ao verificar/popular banco: {e}")
+    @app.route("/api/status")
+    def db_status_route():
+        engine = db_status.get("engine", "desconhecido")
+        if engine == "postgresql":
+            label = "🟢 Conectado ao servidor principal (PostgreSQL)"
+        elif engine == "sqlite":
+            label = "🟡 Operando em modo local (SQLite)"
+        else:
+            label = "🔴 Banco de dados desconhecido"
+        return jsonify({
+            "engine": engine,
+            "message": label
+        })
 
+    # =====================================================
+    # 🌾 Seeds automáticos
+    # =====================================================
+    with app.app_context():
+        db.create_all()
+        try:
+            auto_populate_database()
+        except Exception as e:
+            print(f"⚠️ Erro ao executar população automática: {e}")
 
     return app
 
 
 # =====================================================
-# 🌱 Função para popular dados iniciais
+# 🌱 População inicial
 # =====================================================
 def auto_populate_database():
-    """Cria consultores e clientes padrão se o banco estiver vazio."""
     try:
         if Client.query.first():
             print("ℹ️ Banco já possui clientes. Nenhuma ação necessária.")
@@ -168,14 +185,13 @@ def auto_populate_database():
 
         db.session.commit()
         print("✅ Banco populado com sucesso!")
-
     except Exception as e:
         db.session.rollback()
         print(f"❌ Erro ao popular banco: {e}")
 
 
 # =====================================================
-# 👟 Execução principal
+# 👟 Execução direta
 # =====================================================
 app = create_app()
 

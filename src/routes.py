@@ -21,15 +21,6 @@ from models import db, User, Client, Property, Plot, Visit, Planting, Opportunit
 
 bp = Blueprint('api', __name__, url_prefix='/api')
 
-# ✅ Libera o acesso do frontend hospedado no Render
-from flask_cors import CORS
-
-CORS(bp, resources={r"/*": {"origins": [
-    "https://agrocrm-frontend.onrender.com",
-    "http://localhost:5173"
-]}})
-
-
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/opt/render/project/src/uploads")
 
 # ============================================================
@@ -101,8 +92,6 @@ def get_visits():
         status = request.args.get('status', type=str)
 
         q = Visit.query
-
-        # ✅ Filtros opcionais simples
         if client_id:
             q = q.filter_by(client_id=client_id)
         if property_id:
@@ -111,50 +100,58 @@ def get_visits():
             q = q.filter_by(plot_id=plot_id)
         if consultant_id:
             q = q.filter_by(consultant_id=consultant_id)
-        if status:
-            q = q.filter(Visit.status.ilike(status))
 
-        visits = q.order_by(Visit.date.asc().nullslast()).all()
+
+        items = q.order_by(Visit.date.asc().nullslast()).all()
         result = []
+
         backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
 
-        for v in visits:
+        for v in items:
             client = Client.query.get(v.client_id)
-            consultant_name = next((c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id), None)
+            consultant_name = next(
+                (c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id),
+                None
+            )
 
+            # ✅ Monta URLs completas das fotos
+            backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "http://localhost:5000"
             photos = []
             for p in v.photos:
+                # Garante nome limpo
                 file_name = os.path.basename(p.url)
                 photos.append({
                     "id": p.id,
                     "url": f"{backend_url}/uploads/{file_name}"
                 })
 
-            culture = v.culture or (v.planting.culture if v.planting else None)
-            variety = v.variety or (v.planting.variety if v.planting else None)
+            # 🔍 tenta pegar cultura e variedade do Planting, mas se não tiver, usa diretamente da visita (caso venha preenchido)
+            culture = None
+            variety = None
+            if v.planting:
+                culture = v.planting.culture
+                variety = v.planting.variety
+            else:
+                culture = getattr(v, "culture", None)
+                variety = getattr(v, "variety", None)
 
             result.append({
-                "id": v.id,
-                "date": v.date.isoformat() if v.date else None,
-                "client_id": v.client_id,
-                "property_id": v.property_id,
-                "plot_id": v.plot_id,
-                "consultant_id": v.consultant_id,
-                "culture": culture,
-                "variety": variety,
-                "recommendation": v.recommendation,
-                "status": v.status,
-                "client_name": client.name if client else f"Cliente {v.client_id or '-'}",
+                **v.to_dict(),
+                "client_name": client.name if client else f"Cliente {v.client_id}",
                 "consultant_name": consultant_name or "—",
+                "status": v.status,
+                "culture": culture or "—",
+                "variety": variety or "—",
                 "photos": photos,
             })
+
+
 
         return jsonify(result), 200
 
     except Exception as e:
         print(f"⚠️ Erro ao listar visitas: {e}")
         return jsonify(error=str(e)), 500
-
 
 
 
@@ -166,8 +163,6 @@ def create_visit():
     com base na cultura e na data de plantio.
     """
     from datetime import date as _d, timedelta
-    from models import db, Visit, Client, Property, Plot, Planting, PhenologyStage
-
     data = request.get_json(silent=True) or {}
 
     client_id = data.get('client_id')
@@ -205,27 +200,40 @@ def create_visit():
     # ======================================================
     # 🌾 GERAÇÃO AUTOMÁTICA DO CRONOGRAMA FENOLÓGICO
     # ======================================================
+    from models import PhenologyStage
+
+    p = None
     if gen_schedule:
         if not culture or not variety:
             return jsonify(message="culture e variety são obrigatórios quando gerar cronograma"), 400
 
-        # ✅ Cria o registro de plantio
-        p = Planting(
-            plot_id=plot_id if plot_id else None,
-            culture=culture,
-            variety=variety,
-            planting_date=visit_date
-        )
-        db.session.add(p)
-        db.session.flush()   # ✅ força gerar o ID antes do commit
-        planting_id = p.id   # ✅ salva em variável simples
+        # ✅ Cria o registro de plantio — mesmo que não haja talhão
+        if not plot_id:
+            p = Planting(
+                plot_id=None,
+                culture=culture,
+                variety=variety,
+                planting_date=visit_date
+            )
+            db.session.add(p)
+            db.session.flush()
+        else:
+            p = Planting(
+                plot_id=plot_id,
+                culture=culture,
+                variety=variety,
+                planting_date=visit_date
+            )
+            db.session.add(p)
+            db.session.flush()
 
-        # 🌱 Visita inicial (plantio)
+
+        # Visita inicial (plantio)
         v0 = Visit(
             client_id=client_id,
             property_id=property_id or None,
             plot_id=plot_id or None,
-            planting_id=p.id,
+            planting_id=p.id if p else None,
             consultant_id=consultant_id,
             date=visit_date,
             recommendation="Plantio",
@@ -237,7 +245,7 @@ def create_visit():
         )
         db.session.add(v0)
 
-        # 🔁 Gera visitas futuras conforme fenologia
+        # Gera visitas futuras conforme fenologia
         stages = PhenologyStage.query.filter_by(culture=culture).order_by(PhenologyStage.days.asc()).all()
         if culture.lower() == "soja":
             stages = [s for s in stages if "maturação fisiológica" not in s.name.lower()]
@@ -248,13 +256,13 @@ def create_visit():
 
             fut_date = visit_date + timedelta(days=int(st.days))
             vv = Visit(
-                client_id=client_id,
-                property_id=property_id or None,
-                plot_id=plot_id or None,
-                planting_id=p.id,
-                consultant_id=consultant_id,
+                client_id=client_id,  # garante o vínculo com o mesmo cliente
+                property_id=property_id,  # idem para fazenda
+                plot_id=plot_id,  # idem para talhão
+                planting_id=p.id if p else None,
+                consultant_id=consultant_id or v0.consultant_id,  # fallback seguro
                 date=fut_date,
-                recommendation=st.name,
+                recommendation=st.name.strip().capitalize(),
                 status='planned',
                 culture=culture,
                 variety=variety,
@@ -263,19 +271,9 @@ def create_visit():
             )
             db.session.add(vv)
 
-        # ✅ Commit único no final
+
         db.session.commit()
-
-        print(f"✅ Plantio e {len(stages)} visitas fenológicas criadas para {culture}.")
-        return jsonify({
-            "message": "cronograma fenológico criado com sucesso",
-            "planting_id": planting_id,   # ✅ agora usa a variável segura
-            "first_visit_id": v0.id
-        }), 201
-
-
-
-
+        return jsonify(message="visita criada com cronograma", visit=v0.to_dict()), 201
 
     # ======================================================
     # 🌱 VISITA NORMAL (SEM CRONOGRAMA)
@@ -305,58 +303,7 @@ def create_visit():
 
     db.session.add(v)
     db.session.commit()
-
-    # ======================================================
-    # 🔗 Associação automática da visita ao plantio correto
-    # ======================================================
-    try:
-        if not v.planting_id and v.culture:
-            planting_match = Planting.query.filter(
-                Planting.culture.ilike(v.culture),
-                (Planting.variety.ilike(v.variety) if v.variety else True)
-            ).order_by(Planting.id.desc()).first()
-
-            if planting_match:
-                v.planting_id = planting_match.id
-                db.session.commit()
-                print(f"🔗 Visita {v.id} vinculada automaticamente ao plantio {v.planting_id}")
-            else:
-                # 🔹 Cria automaticamente um plantio técnico mesmo sem talhão
-                new_plant = Planting(
-                    plot_id=v.plot_id if v.plot_id else None,
-                    culture=v.culture,
-                    variety=v.variety,
-                    planting_date=v.date or _d.today()
-                )
-                db.session.add(new_plant)
-                db.session.flush()
-                v.planting_id = new_plant.id
-                db.session.commit()
-                print(f"🌱 Criado plantio técnico (sem talhão) e vinculado à visita {v.id}")
-
-    except Exception as e:
-        db.session.rollback()
-        print(f"⚠️ Falha ao vincular visita {v.id} a um plantio: {e}")
-
-    # ======================================================
-    # ✅ Retorno seguro mesmo se sessão estiver em rollback_only
-    # ======================================================
-    try:
-        with db.engine.connect() as conn:
-            result = conn.execute(
-                db.text("SELECT * FROM visits WHERE id = :id"),
-                {"id": v.id},
-            ).mappings().first()
-
-        return jsonify(message="visita criada com sucesso", visit=dict(result)), 201
-
-    except Exception as e:
-        print(f"⚠️ Erro ao converter visita (normal) para JSON: {e}")
-        return jsonify(message="visita criada, mas erro ao converter para JSON"), 201
-
-
-
-
+    return jsonify(message="visita criada", visit=v.to_dict()), 201
 
 
 
@@ -387,46 +334,107 @@ def export_visit_pdf(visit_id):
         f"Consultor {visit.consultant_id}" if visit.consultant_id else "-"
     )
 
-    # 🔍 Pega todas as visitas anteriores do mesmo plantio (mesmo ciclo)
+    # ============================================================
+    # 🔍 Seleciona visitas cumulativas do mesmo ciclo
+    # ============================================================
     if visit.planting_id:
+        # 🔹 Todas as visitas desse mesmo plantio, até a data atual
         visits_to_include = (
-            Visit.query.filter(
-                Visit.planting_id == visit.planting_id,
-                Visit.date <= visit.date
-            )
+            Visit.query
+            .filter(Visit.planting_id == visit.planting_id)
             .order_by(Visit.date.asc())
             .all()
         )
     else:
-        # 🔁 fallback: agrupa todas as visitas do mesmo cliente + cultura até a data atual
+        # 🔹 Se não houver planting_id, agrupa pelo cliente + cultura + talhão
         visits_to_include = (
-            Visit.query.filter(
+            Visit.query
+            .filter(
                 Visit.client_id == visit.client_id,
+                Visit.property_id == visit.property_id,
+                Visit.plot_id == visit.plot_id,
                 Visit.culture == visit.culture,
-                Visit.date <= visit.date
             )
             .order_by(Visit.date.asc())
             .all()
         )
 
+    # 🔸 Mantém apenas as visitas que possuem ao menos 1 foto válida
+    visits_with_photos = []
+    uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
+
+    for v in visits_to_include:
+        valid_photos = []
+        for p in getattr(v, "photos", []):
+            file_name = os.path.basename(p.url)
+            photo_path = os.path.join(uploads_dir, file_name)
+            if os.path.exists(photo_path):
+                valid_photos.append(p)
+        if valid_photos:
+            v._valid_photos = valid_photos  # atributo temporário
+            visits_with_photos.append(v)
+
+    visits_to_include = visits_with_photos
+
+
+
+    from reportlab.lib.units import inch
+
+    # ============================================================
+    # 🎨 FUNDO ESCURO (modo dark)
+    # ============================================================
+    def draw_dark_background(canvas, doc):
+        canvas.saveState()
+        canvas.setFillColor(colors.HexColor("#121212"))  # fundo escuro
+        canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
+        canvas.restoreState()
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4,
-                            rightMargin=40, leftMargin=40,
-                            topMargin=60, bottomMargin=40)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=60,
+        bottomMargin=40
+    )
 
+    # ============================================================
+    # 🧾 ESTILOS (modo escuro)
+    # ============================================================
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Label", fontSize=11, leading=14,
-                              textColor=colors.HexColor("#2E7D32"), spaceAfter=6))
-    styles.add(ParagraphStyle(name="NormalSmall", fontSize=10, leading=13))
-    styles.add(ParagraphStyle(name="CenterTitle", fontSize=18, leading=22,
-                              alignment=TA_CENTER, textColor=colors.HexColor("#1B5E20"),
-                              spaceAfter=12, spaceBefore=12))
-    styles.add(ParagraphStyle(name="SubTitle", fontSize=13, leading=16,
-                              alignment=TA_CENTER, textColor=colors.HexColor("#4CAF50"),
-                              spaceAfter=8))
-    styles.add(ParagraphStyle(name="Caption", alignment=TA_CENTER,
-                              fontSize=9, textColor=colors.gray, spaceBefore=4, spaceAfter=10))
+    styles.add(ParagraphStyle(
+        name="Label",
+        fontSize=11, leading=14,
+        textColor=colors.HexColor("#BBF7D0"),  # verde-claro
+        spaceAfter=6
+    ))
+    styles.add(ParagraphStyle(
+        name="NormalSmall",
+        fontSize=10, leading=13,
+        textColor=colors.whitesmoke
+    ))
+    styles.add(ParagraphStyle(
+        name="CenterTitle",
+        fontSize=18, leading=22,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#A5D6A7"),
+        spaceAfter=12, spaceBefore=12
+    ))
+    styles.add(ParagraphStyle(
+        name="SubTitle",
+        fontSize=13, leading=16,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#81C784"),
+        spaceAfter=8
+    ))
+    styles.add(ParagraphStyle(
+        name="Caption",
+        alignment=TA_CENTER,
+        fontSize=9,
+        textColor=colors.HexColor("#BDBDBD"),
+        spaceBefore=4, spaceAfter=10
+    ))
 
     story = []
 
@@ -489,98 +497,99 @@ def export_visit_pdf(visit_id):
     story.append(PageBreak())
 
     # ============================================================
-    # 📄 VISITAS CUMULATIVAS (apenas com fotos)
+    # 📄 VISITAS CUMULATIVAS
     # ============================================================
     for idx, v in enumerate(visits_to_include, start=1):
-        # pula visitas que não têm fotos anexadas
-        if not getattr(v, "photos", None) or len(v.photos) == 0:
-            continue
-
         story.append(Paragraph(f"<b>VISITA {idx} — {v.recommendation or 'Sem título'}</b>", styles["Label"]))
         story.append(Paragraph(f"Data: {v.date.strftime('%d/%m/%Y') if v.date else '-'}", styles["NormalSmall"]))
-        story.append(Paragraph(f"Status: {v.status.capitalize() if v.status else '-'}", styles["NormalSmall"]))
         story.append(Spacer(1, 6))
 
-        # --- Diagnóstico e Recomendação ---
         data_table = [
+            ["Status:", v.status.capitalize() if v.status else "-"],
             ["Diagnóstico:", v.diagnosis or "-"],
             ["Recomendações Técnicas:", v.recommendation or "-"]
         ]
         t = Table(data_table, colWidths=[140, 330])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E8F5E9")),
-            ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#1B5E20")),
             ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
             ("FONTSIZE", (0, 0), (-1, -1), 10),
-            ("BOX", (0, 0), (-1, -1), 0.25, colors.gray),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (0, 0), (0, -1), "RIGHT"),
-            ("BACKGROUND", (0, 0), (-1, -1), colors.whitesmoke),
+            ("BOX", (0,0), (-1,-1), 0.25, colors.HexColor("#EEEEEE")),
+            ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#9E9E9E")),
+            ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#1E1E1E")),
+            ("TEXTCOLOR", (0,0), (-1,-1), colors.whitesmoke),
         ]))
         story.append(t)
         story.append(Spacer(1, 10))
 
-        # --- FOTOS 2x2 ---
-        story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
-        uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
+        # ============================================================
+        # 🖼️ FOTOS (com legenda e tamanho reduzido)
+        # ============================================================
+        if hasattr(v, "_valid_photos") and v._valid_photos:
+            story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
 
-        # Lista de linhas (2 por linha)
-        photo_rows = []
-        current_row = []
-        for i, photo in enumerate(v.photos, start=1):
-            file_name = os.path.basename(photo.url)
-            photo_path = os.path.join(uploads_dir, file_name)
-            if not os.path.exists(photo_path):
-                continue
+            uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
+            row = []
+            photo_cells = []
 
-            try:
-                img_obj = PILImage.open(photo_path)
-                aspect = img_obj.height / float(img_obj.width)
+            for i, photo in enumerate(v._valid_photos, 1):
+                try:
+                    file_name = os.path.basename(photo.url)
+                    photo_path = os.path.join(uploads_dir, file_name)
+                    if not os.path.exists(photo_path):
+                        continue
 
-                # 🔹 Reduz 30% o tamanho da imagem
-                max_width = 168  # antes era 240 → 240 * 0.7 = 168
-                img = Image(photo_path, width=max_width, height=max_width * aspect)
-                img.hAlign = "CENTER"
+                    img_obj = PILImage.open(photo_path)
+                    aspect = img_obj.height / float(img_obj.width)
 
-                # 🔹 Legenda preta
-                caption_text = (photo.caption or "").strip() or "—"
-                caption_par = Paragraph(f"<font color='black'><i>{caption_text}</i></font>", styles["Caption"])
+                    # 🔹 Reduz 30% do tamanho anterior (~240 → ~170)
+                    max_width = 170
+                    img = Image(photo_path, width=max_width, height=max_width * aspect)
+                    img.hAlign = "CENTER"
 
-                # adiciona imagem e legenda empilhadas verticalmente
-                cell = [img, caption_par]
-                current_row.append(cell)
+                    # 🔹 Adiciona legenda logo abaixo da imagem
+                    caption_text = getattr(photo, "caption", "") or ""
+                    caption = Paragraph(
+                        f"<font size=8 color='#555555'><i>{caption_text}</i></font>",
+                        styles["Caption"]
+                    )
 
-                # quebra de linha a cada 2 fotos
-                if len(current_row) == 2 or i == len(v.photos):
-                    photo_rows.append(current_row)
-                    current_row = []
+                    # 🔹 Agrupa imagem + legenda em uma célula
+                    cell = [img, caption]
+                    photo_cells.append(cell)
 
-            except Exception as e:
-                print(f"⚠️ Erro ao processar foto {i}: {e}")
-                continue
+                    # 🔹 Organiza 4 por página (2 colunas x 2 linhas)
+                    if len(photo_cells) == 4 or i == len(v._valid_photos):
+                        table_data = []
+                        for j in range(0, len(photo_cells), 2):
+                            table_data.append(photo_cells[j:j+2])
+                        story.append(Table(table_data, colWidths=[200, 200]))
+                        story.append(Spacer(1, 10))
+                        photo_cells = []
 
-        # cria as tabelas (2 colunas x até 2 linhas = 4 fotos por página)
-        if photo_rows:
-            grid_table = Table(photo_rows, colWidths=[260, 260])
-            grid_table.setStyle(TableStyle([
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-            ]))
-            story.append(grid_table)
-            story.append(Spacer(1, 20))
-
-        story.append(PageBreak())
-
+                except Exception as e:
+                    print(f"⚠️ Erro ao processar foto {i}: {e}")
+                    continue
+        else:
+            story.append(Paragraph("<i>Sem fotos anexadas</i>", styles["NormalSmall"]))
 
 
-    # Rodapé
+        if idx < len(visits_to_include):
+            story.append(PageBreak())
+
+    # ============================================================
+    # 🏁 Rodapé
+    # ============================================================
     story.append(Spacer(1, 20))
     story.append(Paragraph("<b>NutriCRM - CRM Inteligente para o Agronegócio</b>", styles["Label"]))
     story.append(Paragraph("Relatório técnico cumulativo — ciclo fenológico completo.", styles["NormalSmall"]))
 
-    doc.build(story)
+    # ============================================================
+    # 🧱 Construção com fundo escuro em todas as páginas
+    # ============================================================
+    doc.build(story, onFirstPage=draw_dark_background, onLaterPages=draw_dark_background)
     buffer.seek(0)
 
     filename = f"{client.name if client else 'Cliente'} - {visit.variety or 'Variedade'} - {visit.recommendation or 'Visita'}.pdf"
@@ -636,6 +645,13 @@ def create_visits_bulk():
 
     db.session.commit()
     return jsonify([v.to_dict() | {"status": v.status} for v in created]), 201
+
+
+@bp.route("/visits", methods=["GET"])
+def list_visits():
+    scope = request.args.get("scope")
+    visits = Visit.query.all()
+    return jsonify([v.to_dict() for v in visits])
 
 
 @bp.route('/visits/<int:vid>', methods=['PUT'])
@@ -1348,27 +1364,20 @@ from datetime import datetime
 @bp.route('/plantings', methods=['GET'])
 def get_plantings():
     """List plantings. Optional filters: plot_id, property_id, client_id"""
-    try:
-        plot_id = request.args.get('plot_id', type=int)
-        property_id = request.args.get('property_id', type=int)
-        client_id = request.args.get('client_id', type=int)
+    plot_id = request.args.get('plot_id', type=int)
+    property_id = request.args.get('property_id', type=int)
+    client_id = request.args.get('client_id', type=int)
 
-        q = Planting.query
-        if plot_id:
-            q = q.filter_by(plot_id=plot_id)
-        if property_id:
-            q = q.join(Plot).filter(Plot.property_id == property_id)
-        if client_id:
-            q = q.join(Plot).join(Property).filter(Property.client_id == client_id)
+    q = Planting.query
+    if plot_id:
+        q = q.filter_by(plot_id=plot_id)
+    if property_id:
+        q = q.join(Plot).filter(Plot.property_id == property_id)
+    if client_id:
+        q = q.join(Plot).join(Property).filter(Property.client_id == client_id)
 
-        items = q.order_by(Planting.id.desc()).all()
-        return jsonify([it.to_dict() for it in items]), 200
-
-    except Exception as e:
-        print(f"❌ Erro em /api/plantings: {e}")
-        db.session.rollback()
-        return jsonify({"error": f"Erro interno ao listar plantios: {str(e)}"}), 500
-
+    items = q.order_by(Planting.id.desc()).all()
+    return jsonify([it.to_dict() for it in items]), 200
 
 
 @bp.route('/plantings/<int:pid>', methods=['GET'])
