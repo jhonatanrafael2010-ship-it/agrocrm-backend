@@ -781,23 +781,37 @@ import os
 def upload_photos(visit_id):
     """Upload de múltiplas fotos com legendas (captions)."""
     visit = Visit.query.get_or_404(visit_id)
+
+    # garante que /uploads existe
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
     files = request.files.getlist('photos')
-    captions = request.form.getlist('captions')  # lista paralela de legendas
+    captions = request.form.getlist('captions')
 
     if not files:
         return jsonify({"error": "Nenhum arquivo enviado"}), 400
 
     saved = []
+
     for i, file in enumerate(files):
-        filename = secure_filename(file.filename)
+        # 🔥 nome único 100% seguro
+        unique = uuid.uuid4().hex
+        original = secure_filename(file.filename)
+        filename = f"{unique}_{original}"
+
         save_path = os.path.join(UPLOAD_DIR, filename)
         file.save(save_path)
 
-        # Captura legenda correspondente
+        # legenda correspondente
         caption = captions[i] if i < len(captions) else None
-        photo = Photo(visit_id=visit_id, url=f"/uploads/{filename}", caption=caption)
+
+        photo = Photo(
+            visit_id=visit_id,
+            url=f"/uploads/{filename}",
+            caption=caption
+        )
         db.session.add(photo)
-        db.session.flush()  # garante que o ID exista
+        db.session.flush()
 
         saved.append({
             "id": photo.id,
@@ -806,7 +820,12 @@ def upload_photos(visit_id):
         })
 
     db.session.commit()
-    return jsonify({"message": f"{len(saved)} foto(s) salvas.", "photos": saved}), 201
+
+    return jsonify({
+        "message": f"{len(saved)} foto(s) salvas.",
+        "photos": saved
+    }), 201
+
 
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['GET'])
@@ -922,7 +941,12 @@ def public_visit_view(visit_id):
     photos = []
     for p in visit.photos:
         file_name = os.path.basename(p.url)
-        photos.append({"url": f"/uploads/{file_name}"})
+        photos.append({
+            "id": p.id,
+            "url": f"{backend_url}/uploads/{file_name}",
+            "caption": p.caption or ""
+        })
+
 
     html_template = """
     <!DOCTYPE html>
