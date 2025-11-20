@@ -122,8 +122,10 @@ def get_visits():
                 file_name = os.path.basename(p.url)
                 photos.append({
                     "id": p.id,
-                    "url": f"{backend_url}/uploads/{file_name}"
+                    "url": f"{backend_url}/uploads/{file_name}",
+                    "caption": p.caption or ""
                 })
+
 
             # 🔍 tenta pegar cultura e variedade do Planting, mas se não tiver, usa diretamente da visita (caso venha preenchido)
             culture = None
@@ -819,9 +821,10 @@ def list_photos(visit_id):
         full_url = f"{backend_url}/uploads/{file_name}"
         photos.append({
             "id": p.id,
-            "url": full_url,
-            "caption": getattr(p, "caption", "")
+            "url": f"{backend_url}/uploads/{file_name}",
+            "caption": p.caption or ""
         })
+
 
     return jsonify(photos), 200
 
