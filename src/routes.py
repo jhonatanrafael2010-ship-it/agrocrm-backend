@@ -680,6 +680,11 @@ def update_visit(vid: int):
             return jsonify(message='consultant not found'), 404
         v.consultant_id = cid
 
+    # 🔒 NÃO alterar a data quando preserve_date=true
+    if data.get("preserve_date"):
+        data["date"] = v.date.isoformat() if v.date else None
+
+
     if 'date' in data:
         if not data['date']:
             v.date = None
