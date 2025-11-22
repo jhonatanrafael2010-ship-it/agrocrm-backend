@@ -83,7 +83,7 @@ def list_consultants():
 def ping():
     return "pong", 200
 
-    
+
 
 # ============================================================
 # 🌱 VISITS ENDPOINTS
@@ -1123,10 +1123,6 @@ def get_phenology_schedule():
 # ============================================================
 # 🔧 TESTES E UTILITÁRIOS
 # ============================================================
-
-@bp.route('/ping')
-def ping():
-    return jsonify({"status": "ok"}), 200
 
 
 @bp.route('/status')
