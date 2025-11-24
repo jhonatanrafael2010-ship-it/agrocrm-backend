@@ -322,6 +322,7 @@ def create_visit():
 
 
 @bp.route('/visits/<int:visit_id>/pdf', methods=['GET'])
+@cross_origin()
 def export_visit_pdf(visit_id):
     """
     📄 Gera um PDF cumulativo com:
@@ -337,6 +338,7 @@ def export_visit_pdf(visit_id):
     from reportlab.graphics.shapes import Drawing, Rect, String
     from reportlab.graphics import renderPDF
     from PIL import Image as PILImage
+    from flask_cors import cross_origin
 
     visit = Visit.query.get_or_404(visit_id)
     client = Client.query.get(visit.client_id)
@@ -1707,3 +1709,4 @@ def me():
     if err:
         return jsonify(message=err), 401
     return jsonify(id=user.id, email=user.email), 200
+
