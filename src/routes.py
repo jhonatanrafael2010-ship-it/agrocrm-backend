@@ -1,5 +1,6 @@
 from werkzeug.utils import secure_filename
 import os
+from flask import current_app, request, jsonify
 import uuid
 import datetime
 from flask import Blueprint, jsonify, request, send_file
@@ -17,6 +18,11 @@ from reportlab.graphics.shapes import Drawing, String, Rect
 from reportlab.graphics.barcode import qr
 from reportlab.pdfgen.canvas import Canvas
 from models import db, User, Client, Property, Plot, Visit, Planting, Opportunity, Photo, PhenologyStage
+from reportlab.lib.enums import TA_CENTER
+from PIL import Image as PILImage
+from flask_cors import cross_origin
+from reportlab.platypus import PageBreak
+from flask import render_template_string
 
 
 
@@ -89,9 +95,6 @@ def ping():
 # 🌱 VISITS ENDPOINTS
 # ============================================================
 
-import os
-from flask import current_app, request, jsonify
-
 @bp.route('/visits', methods=['GET'])
 def get_visits():
     """Retorna visitas com nomes de cliente, consultor e fotos associadas"""
@@ -126,7 +129,6 @@ def get_visits():
             )
 
             # ✅ Monta URLs completas das fotos
-            backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
             photos = []
             for p in v.photos:
                 # Garante nome limpo
@@ -322,23 +324,13 @@ def create_visit():
 
 
 @bp.route('/visits/<int:visit_id>/pdf', methods=['GET'])
-@cross_origin()
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
 def export_visit_pdf(visit_id):
     """
     📄 Gera um PDF cumulativo com:
     - Capa visual (logo, cliente, cultura, variedade, data inicial, consultor)
     - Todas as visitas do mesmo plantio (ordenadas até a visita atual)
     """
-    from io import BytesIO
-    from reportlab.lib.pagesizes import A4
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib import colors
-    from reportlab.lib.enums import TA_CENTER
-    from reportlab.graphics.shapes import Drawing, Rect, String
-    from reportlab.graphics import renderPDF
-    from PIL import Image as PILImage
-    from flask_cors import cross_origin
 
     visit = Visit.query.get_or_404(visit_id)
     client = Client.query.get(visit.client_id)
@@ -841,7 +833,7 @@ def upload_photos(visit_id):
 def list_photos(visit_id):
     """Lista todas as fotos de uma visita (com legendas incluídas)."""
     visit = Visit.query.get_or_404(visit_id)
-    backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "http://localhost:5000"
+    backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
     photos = []
 
     for p in visit.photos:
@@ -932,12 +924,17 @@ def delete_all_photos_of_visit(visit_id):
 
 
 
-from flask import render_template_string
 
 @bp.route("/view/visit/<int:visit_id>", methods=["GET"])
 def public_visit_view(visit_id):
     """🌿 Página pública de visualização de visita (NutriCRM Viewer)"""
     from models import Visit, Client, Property, Plot, Consultant
+
+    # ================================
+    # ✅ CORREÇÃO OBRIGATÓRIA AQUI
+    # ================================
+    backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
+
     visit = Visit.query.get_or_404(visit_id)
     client = Client.query.get(visit.client_id)
     prop = Property.query.get(visit.property_id)
@@ -952,10 +949,9 @@ def public_visit_view(visit_id):
         file_name = os.path.basename(p.url)
         photos.append({
             "id": p.id,
-            "url": f"{backend_url}/uploads/{file_name}",
+            "url": f"{backend_url}/uploads/{file_name}",  # agora funciona
             "caption": p.caption or ""
         })
-
 
     html_template = """
     <!DOCTYPE html>
