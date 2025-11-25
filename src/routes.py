@@ -328,7 +328,7 @@ def create_visit():
 def export_visit_pdf(visit_id):
     """
     📄 Gera um PDF cumulativo com:
-    - Capa visual (logo, cliente, cultura, variedade, data inicial, consultor)
+    - Capa visual (logo, cliente, cultura, variedade, período)
     - Todas as visitas do mesmo plantio (ordenadas até a visita atual)
     """
 
@@ -336,16 +336,16 @@ def export_visit_pdf(visit_id):
     client = Client.query.get(visit.client_id)
     property_ = Property.query.get(visit.property_id) if visit.property_id else None
     plot = Plot.query.get(visit.plot_id) if visit.plot_id else None
+
     consultant_name = next(
         (c["name"] for c in CONSULTANTS if c["id"] == visit.consultant_id),
         f"Consultor {visit.consultant_id}" if visit.consultant_id else "-"
     )
 
-    # ============================================================
-    # 🔍 Seleciona visitas cumulativas do mesmo ciclo
-    # ============================================================
+    # ============================
+    # 🔍 BUSCA VISITAS DO CICLO
+    # ============================
     if visit.planting_id:
-        # 🔹 Todas as visitas desse mesmo plantio, até a data atual
         visits_to_include = (
             Visit.query
             .filter(Visit.planting_id == visit.planting_id)
@@ -353,7 +353,6 @@ def export_visit_pdf(visit_id):
             .all()
         )
     else:
-        # 🔹 Se não houver planting_id, agrupa pelo cliente + cultura + talhão
         visits_to_include = (
             Visit.query
             .filter(
@@ -366,9 +365,11 @@ def export_visit_pdf(visit_id):
             .all()
         )
 
-    # 🔸 Mantém apenas as visitas que possuem ao menos 1 foto válida
-    visits_with_photos = []
+    # ============================
+    # 🔎 FILTRA VISITAS COM FOTOS
+    # ============================
     uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
+    visits_with_photos = []
 
     for v in visits_to_include:
         valid_photos = []
@@ -377,66 +378,53 @@ def export_visit_pdf(visit_id):
             photo_path = os.path.join(uploads_dir, file_name)
             if os.path.exists(photo_path):
                 valid_photos.append(p)
+
         if valid_photos:
-            v._valid_photos = valid_photos  # atributo temporário
+            v._valid_photos = valid_photos
             visits_with_photos.append(v)
 
     visits_to_include = visits_with_photos
 
+    # ============================
+    # 📄 PDF DARK MODE
+    # ============================
+    buffer = BytesIO()
 
-
-    from reportlab.lib.units import inch
-
-    # ============================================================
-    # 🎨 FUNDO ESCURO (modo dark)
-    # ============================================================
     def draw_dark_background(canvas, doc):
         canvas.saveState()
-        canvas.setFillColor(colors.HexColor("#121212"))  # fundo escuro
+        canvas.setFillColor(colors.HexColor("#121212"))
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
         canvas.restoreState()
 
-    buffer = BytesIO()
     doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=40,
-        leftMargin=40,
-        topMargin=60,
-        bottomMargin=40
+        buffer, pagesize=A4,
+        rightMargin=40, leftMargin=40,
+        topMargin=60, bottomMargin=40
     )
 
-    # ============================================================
-    # 🧾 ESTILOS (modo escuro)
-    # ============================================================
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(
-        name="Label",
+    styles.add(ParagraphStyle(name="Label",
         fontSize=11, leading=14,
-        textColor=colors.HexColor("#BBF7D0"),  # verde-claro
+        textColor=colors.HexColor("#BBF7D0"),
         spaceAfter=6
     ))
-    styles.add(ParagraphStyle(
-        name="NormalSmall",
+    styles.add(ParagraphStyle(name="NormalSmall",
         fontSize=10, leading=13,
         textColor=colors.whitesmoke
     ))
-    styles.add(ParagraphStyle(
-        name="CenterTitle",
+    styles.add(ParagraphStyle(name="CenterTitle",
         fontSize=18, leading=22,
         alignment=TA_CENTER,
         textColor=colors.HexColor("#A5D6A7"),
         spaceAfter=12, spaceBefore=12
     ))
-    styles.add(ParagraphStyle(
-        name="SubTitle",
+    styles.add(ParagraphStyle(name="SubTitle",
         fontSize=13, leading=16,
         alignment=TA_CENTER,
         textColor=colors.HexColor("#81C784"),
         spaceAfter=8
     ))
-    styles.add(ParagraphStyle(
-        name="Caption",
+    styles.add(ParagraphStyle(name="Caption",
         alignment=TA_CENTER,
         fontSize=9,
         textColor=colors.HexColor("#BDBDBD"),
@@ -445,38 +433,33 @@ def export_visit_pdf(visit_id):
 
     story = []
 
-    # ============================================================
-    # 📘 CAPA VISUAL
-    # ============================================================
+    # ============================
+    # 📘 CAPA
+    # ============================
     try:
         static_dir = os.path.join(os.path.dirname(__file__), "static")
         logo_path = os.path.join(static_dir, "nutricrm_logo.png")
         if os.path.exists(logo_path):
             img_obj = PILImage.open(logo_path)
             aspect = img_obj.height / float(img_obj.width)
-            max_width = 300
-            logo = Image(logo_path, width=max_width, height=max_width * aspect)
+            logo = Image(logo_path, width=300, height=300 * aspect)
             logo.hAlign = "CENTER"
             story.append(Spacer(1, 80))
             story.append(logo)
-    except Exception as e:
-        print(f"⚠️ Erro ao carregar logo da capa: {e}")
+    except:
+        pass
 
     story.append(Spacer(1, 40))
     story.append(Paragraph("RELATÓRIO TÉCNICO DE ACOMPANHAMENTO", styles["CenterTitle"]))
     story.append(Paragraph("Ciclo Fenológico — NutriCRM", styles["SubTitle"]))
     story.append(Spacer(1, 40))
 
-    # 📅 Define o período automaticamente com base nas visitas cumulativas
+    # Período
     if visits_to_include:
-        first_visit = visits_to_include[0]
-        last_visit = visits_to_include[-1]
-        start_date = first_visit.date.strftime("%d/%m/%Y") if first_visit.date else "-"
-        last_date = last_visit.date.strftime("%d/%m/%Y") if last_visit.date else "-"
+        start_date = visits_to_include[0].date.strftime("%d/%m/%Y")
+        last_date = visits_to_include[-1].date.strftime("%d/%m/%Y")
     else:
-        start_date = visit.date.strftime("%d/%m/%Y") if visit.date else "-"
-        last_date = start_date
-
+        start_date = last_date = visit.date.strftime("%d/%m/%Y")
 
     cover_table = Table([
         ["Cliente:", client.name if client else "-"],
@@ -487,202 +470,129 @@ def export_visit_pdf(visit_id):
         ["Consultor:", consultant_name],
         ["Período:", f"{start_date} → {last_date}"]
     ], colWidths=[120, 350])
+
     cover_table.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 0), (-1, -1), 11),
-        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E8F5E9")),
-        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#1B5E20")),
-        ("BOX", (0, 0), (-1, -1), 0.25, colors.gray),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("ALIGN", (0, 0), (0, -1), "RIGHT"),
+        ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#1E1E1E")),
+        ("TEXTCOLOR", (0,0), (-1,-1), colors.whitesmoke),
+        ("BOX", (0,0), (-1,-1), 0.25, colors.gray),
+        ("GRID", (0,0), (-1,-1), 0.25, colors.gray),
+        ("ALIGN", (0,0), (0,-1), "RIGHT"),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
     ]))
+
     story.append(cover_table)
     story.append(Spacer(1, 60))
     story.append(Paragraph("<i>Relatório cumulativo de visitas técnicas realizadas neste ciclo.</i>",
                            styles["NormalSmall"]))
     story.append(PageBreak())
 
+    # ============================
+    # 🔧 COMPRESSÃO
+    # ============================
+    def smart_params(total):
+        if total <= 6: return (1600, 85)
+        if total <= 12: return (1400, 72)
+        if total <= 20: return (1200, 65)
+        return (1000, 55)
 
-    # ============================================================
-    # 🔧 Funções avançadas de compressão
-    # ============================================================
-
-    def smart_compression_params(total_photos, original_size_kb):
-        """
-        Retorna a melhor combinação de:
-        - tamanho máximo (px)
-        - qualidade JPEG
-        Baseado na quantidade de fotos e no tamanho das fotos.
-        """
-
-        # Muito poucas fotos → qualidade alta
-        if total_photos <= 6:
-            return 1600, 85
-
-        # Médio → compressão equilibrada
-        if total_photos <= 12:
-            return 1400, 72
-
-        # Muitas fotos → compressão forte
-        if total_photos <= 20:
-            return 1200, 65
-
-        # PDF gigante → compressão agressiva
-        return 1000, 55
-
-
-    def compress_image_smart(path, total_photos):
-        """
-        Comprime automaticamente levando em conta:
-        - quantidade total de fotos
-        - tamanho real da imagem original
-        """
-
+    def compress_image(path, total):
         try:
             img = PILImage.open(path)
-
-            # tamanho da foto original
-            original_kb = os.path.getsize(path) / 1024
-
-            max_px, quality = smart_compression_params(total_photos, original_kb)
-
-            # Redimensiona com alta qualidade
+            max_px, quality = smart_params(total)
             img.thumbnail((max_px, max_px), PILImage.LANCZOS)
-
-            buffer = BytesIO()
-            img.save(buffer, format="JPEG", optimize=True, quality=quality)
-            buffer.seek(0)
-
-            return buffer
-
-        except Exception as e:
-            print(f"⚠️ Erro ao comprimir imagem {path}: {e}")
+            buf = BytesIO()
+            img.save(buf, "JPEG", optimize=True, quality=quality)
+            buf.seek(0)
+            return buf
+        except:
             return open(path, "rb")
 
-
-
-    # ============================================================
-    # 📄 VISITAS CUMULATIVAS
-    # ============================================================
+    # ============================
+    # 📄 VISITAS
+    # ============================
     for idx, v in enumerate(visits_to_include, start=1):
         story.append(Paragraph(f"<b>VISITA {idx} — {v.recommendation or 'Sem título'}</b>", styles["Label"]))
-        story.append(Paragraph(f"Data: {v.date.strftime('%d/%m/%Y') if v.date else '-'}", styles["NormalSmall"]))
+        story.append(Paragraph(f"Data: {v.date.strftime('%d/%m/%Y')}", styles["NormalSmall"]))
         story.append(Spacer(1, 6))
 
-        data_table = [
+        data_table = Table([
             ["Status:", v.status.capitalize() if v.status else "-"],
             ["Diagnóstico:", v.diagnosis or "-"],
             ["Recomendações Técnicas:", v.recommendation or "-"]
-        ]
-        t = Table(data_table, colWidths=[140, 330])
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#E8F5E9")),
-            ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
-            ("FONTSIZE", (0, 0), (-1, -1), 10),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN", (0, 0), (0, -1), "RIGHT"),
-            ("BOX", (0,0), (-1,-1), 0.25, colors.HexColor("#EEEEEE")),
-            ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#9E9E9E")),
+        ], colWidths=[140, 330])
+
+        data_table.setStyle(TableStyle([
             ("BACKGROUND", (0,0), (-1,-1), colors.HexColor("#1E1E1E")),
             ("TEXTCOLOR", (0,0), (-1,-1), colors.whitesmoke),
+            ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#444444")),
+            ("ALIGN", (0,0), (0,-1), "RIGHT"),
         ]))
-        story.append(t)
-        story.append(Spacer(1, 10))
 
-        # ============================================================
-        # 🖼️ FOTOS (com legenda e tamanho reduzido)
-        # ============================================================
+        story.append(data_table)
+        story.append(Spacer(1, 12))
+
+        # Fotos
         if hasattr(v, "_valid_photos") and v._valid_photos:
             story.append(Paragraph("<b>Fotos da Visita:</b>", styles["Label"]))
-
-            uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
-            row = []
             photo_cells = []
+            total = len(v._valid_photos)
+            cols = 2 if total <= 6 else 3
+            col_width = 500 / cols
 
             for i, photo in enumerate(v._valid_photos, 1):
-                try:
-                    file_name = os.path.basename(photo.url)
-                    photo_path = os.path.join(uploads_dir, file_name)
-                    if not os.path.exists(photo_path):
-                        continue
-
-                    total_photos = len(v._valid_photos)
-
-                    # Compressão inteligente
-                    compressed = compress_image_smart(photo_path, total_photos)
-
-                    # Abre imagem comprimida com Pillow para obter proporção
-                    img_obj = PILImage.open(compressed)
-                    aspect = img_obj.height / float(img_obj.width)
-
-                    # Largura depende automaticamente da quantidade de fotos
-                    if total_photos <= 4:
-                        max_width = 200
-                    elif total_photos <= 8:
-                        max_width = 180
-                    else:
-                        max_width = 150
-
-                    img = Image(compressed, width=max_width, height=max_width * aspect)
-                    img.hAlign = "CENTER"
-
-
-                    # 🔹 Adiciona legenda logo abaixo da imagem
-                    caption_text = getattr(photo, "caption", "") or ""
-                    caption = Paragraph(
-                        f"<font size=8 color='#555555'><i>{caption_text}</i></font>",
-                        styles["Caption"]
-                    )
-
-                    # 🔹 Agrupa imagem + legenda em uma célula
-                    cell = [img, caption]
-                    photo_cells.append(cell)
-
-                   
-                    # 📌 GRID INTELIGENTE
-                    cols = 2 if total_photos <= 6 else 3
-                    col_width = 500 / cols
-
-                    if len(photo_cells) == cols or i == len(v._valid_photos):
-                        story.append(
-                            Table(
-                                [photo_cells],
-                                colWidths=[col_width] * len(photo_cells),
-                                hAlign="CENTER"
-                            )
-                        )
-                        story.append(Spacer(1, 12))
-                        photo_cells = []
-
-                        story.append(Spacer(1, 10))
-                        photo_cells = []
-
-                except Exception as e:
-                    print(f"⚠️ Erro ao processar foto {i}: {e}")
+                file_name = os.path.basename(photo.url)
+                photo_path = os.path.join(uploads_dir, file_name)
+                if not os.path.exists(photo_path):
                     continue
-        else:
-            story.append(Paragraph("<i>Sem fotos anexadas</i>", styles["NormalSmall"]))
 
+                compressed = compress_image(photo_path, total)
+
+                img_obj = PILImage.open(compressed)
+                compressed.seek(0)
+                aspect = img_obj.height / float(img_obj.width)
+
+                max_width = 200 if total <= 4 else (180 if total <= 8 else 150)
+                img = Image(compressed, width=max_width, height=max_width * aspect)
+
+                caption = Paragraph(
+                    f"<i>{getattr(photo, 'caption', '')}</i>", styles["Caption"]
+                )
+
+                photo_cells.append([img, caption])
+
+                if len(photo_cells) == cols or i == total:
+                    story.append(
+                        Table(
+                            [photo_cells],
+                            colWidths=[col_width] * len(photo_cells),
+                            hAlign="CENTER"
+                        )
+                    )
+                    story.append(Spacer(1, 14))
+                    photo_cells = []
+
+        else:
+            story.append(Paragraph("<i>Sem fotos anexadas.</i>", styles["NormalSmall"]))
 
         if idx < len(visits_to_include):
             story.append(PageBreak())
 
-    # ============================================================
-    # 🏁 Rodapé
-    # ============================================================
+    # ============================
+    # 🏁 RODAPÉ
+    # ============================
     story.append(Spacer(1, 20))
     story.append(Paragraph("<b>NutriCRM - CRM Inteligente para o Agronegócio</b>", styles["Label"]))
     story.append(Paragraph("Relatório técnico cumulativo — ciclo fenológico completo.", styles["NormalSmall"]))
 
-    # ============================================================
-    # 🧱 Construção com fundo escuro em todas as páginas
-    # ============================================================
+    # ============================
+    # FINALIZA PDF
+    # ============================
     doc.build(story, onFirstPage=draw_dark_background, onLaterPages=draw_dark_background)
-    buffer.seek(0)
 
+    buffer.seek(0)
     filename = f"{client.name if client else 'Cliente'} - {visit.variety or 'Variedade'} - {visit.recommendation or 'Visita'}.pdf"
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
 
 
 

@@ -2,7 +2,7 @@ import os
 from flask import Flask, jsonify, send_from_directory, abort
 from flask_cors import CORS
 from flask_migrate import Migrate
-from sqlalchemy import text
+from sqlalchemy import text, create_engine
 from models import db, Client, Consultant
 from routes import bp as api_bp
 
@@ -13,7 +13,7 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 
-db_status = {"engine": "desconhecido"}  # 🧠 guarda status atual
+db_status = {"engine": "desconhecido"}
 
 # =====================================================
 # 🚀 Criação da aplicação Flask
@@ -22,47 +22,45 @@ def create_app(test_config=None):
     app = Flask(__name__, static_folder="static")
     CORS(app, supports_credentials=True)
 
-    pg_url = os.environ.get("DATABASE_URL") or os.environ.get("INTERNAL_DATABASE_URL")
+    pg_url = os.environ.get("DATABASE_URL")
     sqlite_path = os.path.join(UPLOAD_DIR, "fallback_local.db")
 
     # =====================================================
-    # 🧠 Testa PostgreSQL real
+    # 🧠 Testa PostgreSQL corretamente (sem criar outro Flask)
     # =====================================================
-    def try_postgres():
-        if not pg_url or not pg_url.startswith("postgresql"):
+    def try_postgres_connection():
+        if not pg_url:
             return False
         try:
-            tmp_app = Flask(__name__)
-            tmp_app.config["SQLALCHEMY_DATABASE_URI"] = pg_url
-            tmp_db = db
-            tmp_db.init_app(tmp_app)
-            with tmp_app.app_context():
-                tmp_db.session.execute(text("SELECT 1"))
+            engine = create_engine(pg_url, pool_pre_ping=True)
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
             return True
-        except Exception:
+        except Exception as e:
+            print("⚠️ PostgreSQL indisponível:", e)
             return False
 
     @app.route("/api/ping")
     def ping():
         return jsonify({"status": "ok"})
-       
 
     # =====================================================
-    # ⚙️ Configurações SQLAlchemy (ANTES do init_app)
+    # ⚙ Configurações antes do init_app
     # =====================================================
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret")
     app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-        "pool_pre_ping": True,      # evita SSL EOF
-        "pool_recycle": 180,        # recicla conexões velhas
-        "pool_size": 5,
-        "max_overflow": 10,
+        "pool_pre_ping": True,
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_recycle": 180,
+        "pool_timeout": 30
     }
 
     # =====================================================
-    # 🔌 Seleciona o banco (SEM fallback dinâmico)
+    # 🔌 Seleção final do banco
     # =====================================================
-    if pg_url and try_postgres():
+    if try_postgres_connection():
         print("🟢 Conectado ao PostgreSQL do Render.")
         app.config["SQLALCHEMY_DATABASE_URI"] = pg_url
         db_status["engine"] = "postgresql"
@@ -71,17 +69,12 @@ def create_app(test_config=None):
         app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{sqlite_path}"
         db_status["engine"] = "sqlite"
 
-    # Agora sim inicializa o DB
+    # 🔥 Inicializa DB
     db.init_app(app)
     Migrate(app, db)
 
     # =====================================================
-    # ❌ Removido: fallback automático PostgreSQL <-> SQLite
-    #    (isso quebrava PDF, sync, fotos e o APK)
-    # =====================================================
-
-    # =====================================================
-    # Rotas e blueprints
+    # Rotas
     # =====================================================
     app.register_blueprint(api_bp)
 
@@ -106,56 +99,49 @@ def create_app(test_config=None):
     @app.route("/api/status")
     def db_status_route():
         engine = db_status["engine"]
-        if engine == "postgresql":
-            msg = "🟢 Conectado ao PostgreSQL"
-        else:
-            msg = "🟡 Operando em SQLite"
-        return jsonify({"engine": engine, "message": msg})
+        return jsonify({
+            "engine": engine,
+            "message": "🟢 PostgreSQL" if engine == "postgresql" else "🟡 SQLite"
+        })
 
     # =====================================================
-    # Seeds iniciais
+    # Seeds — só roda em SQLite
     # =====================================================
     with app.app_context():
         db.create_all()
-        try:
-            auto_populate_database()
-        except Exception as e:
-            print("⚠️ Erro ao popular banco:", e)
+        if db_status["engine"] == "sqlite":
+            try:
+                auto_populate_database()
+            except Exception as e:
+                print("⚠️ Erro ao executar seeds:", e)
 
     return app
 
 
-
 # =====================================================
-# 🌱 População inicial
+# 🌱 Seeds
 # =====================================================
 def auto_populate_database():
-    try:
-        if Client.query.first():
-            print("ℹ️ Banco já possui clientes. Nenhuma ação necessária.")
-            return
+    if Client.query.first():
+        print("ℹ️ Banco já possui clientes.")
+        return
 
-        print("🌱 Criando dados iniciais (clientes e consultores)...")
+    print("🌱 Criando dados iniciais...")
+    for nome in ["Jhonatan", "Pedro", "Felipe", "Everton", "Alexandre"]:
+        db.session.add(Consultant(name=nome))
 
-        if Consultant.query.count() == 0:
-            for nome in ["Jhonatan", "Pedro", "Felipe", "Everton", "Alexandre"]:
-                db.session.add(Consultant(name=nome))
+    clientes = [
+        "Edevi Massoni", "Livenio Sanini", "Eduardo Lorenzi",
+        "Claudio Duffeck", "Elias Soares", "Everton Melchior",
+        "Ademir Fischer", "Marcos Zanin", "Ivan Zanin",
+        "Simao Da Silva", "Robson Nadin", "Ademir Bonfanti"
+    ]
 
-        clientes = [
-            "Edevi Massoni", "Livenio Sanini", "Eduardo Lorenzi",
-            "Claudio Duffeck", "Elias Soares", "Everton Melchior",
-            "Ademir Fischer", "Marcos Zanin", "Ivan Zanin",
-            "Simao Da Silva", "Robson Nadin", "Ademir Bonfanti"
-        ]
+    for nome in clientes:
+        db.session.add(Client(name=nome, document="--", segment="Agronegócio", vendor=""))
 
-        for nome in clientes:
-            db.session.add(Client(name=nome, document="--", segment="Agronegócio", vendor=""))
-
-        db.session.commit()
-        print("✅ Banco populado com sucesso!")
-    except Exception as e:
-        db.session.rollback()
-        print(f"❌ Erro ao popular banco: {e}")
+    db.session.commit()
+    print("✅ Seeds concluídos.")
 
 
 # =====================================================
