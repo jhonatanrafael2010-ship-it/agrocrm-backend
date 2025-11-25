@@ -503,6 +503,65 @@ def export_visit_pdf(visit_id):
                            styles["NormalSmall"]))
     story.append(PageBreak())
 
+
+    # ============================================================
+    # 🔧 Funções avançadas de compressão
+    # ============================================================
+
+    def smart_compression_params(total_photos, original_size_kb):
+        """
+        Retorna a melhor combinação de:
+        - tamanho máximo (px)
+        - qualidade JPEG
+        Baseado na quantidade de fotos e no tamanho das fotos.
+        """
+
+        # Muito poucas fotos → qualidade alta
+        if total_photos <= 6:
+            return 1600, 85
+
+        # Médio → compressão equilibrada
+        if total_photos <= 12:
+            return 1400, 72
+
+        # Muitas fotos → compressão forte
+        if total_photos <= 20:
+            return 1200, 65
+
+        # PDF gigante → compressão agressiva
+        return 1000, 55
+
+
+    def compress_image_smart(path, total_photos):
+        """
+        Comprime automaticamente levando em conta:
+        - quantidade total de fotos
+        - tamanho real da imagem original
+        """
+
+        try:
+            img = PILImage.open(path)
+
+            # tamanho da foto original
+            original_kb = os.path.getsize(path) / 1024
+
+            max_px, quality = smart_compression_params(total_photos, original_kb)
+
+            # Redimensiona com alta qualidade
+            img.thumbnail((max_px, max_px), PILImage.LANCZOS)
+
+            buffer = BytesIO()
+            img.save(buffer, format="JPEG", optimize=True, quality=quality)
+            buffer.seek(0)
+
+            return buffer
+
+        except Exception as e:
+            print(f"⚠️ Erro ao comprimir imagem {path}: {e}")
+            return open(path, "rb")
+
+
+
     # ============================================================
     # 📄 VISITAS CUMULATIVAS
     # ============================================================
@@ -548,13 +607,26 @@ def export_visit_pdf(visit_id):
                     if not os.path.exists(photo_path):
                         continue
 
-                    img_obj = PILImage.open(photo_path)
+                    total_photos = len(v._valid_photos)
+
+                    # Compressão inteligente
+                    compressed = compress_image_smart(photo_path, total_photos)
+
+                    # Abre imagem comprimida com Pillow para obter proporção
+                    img_obj = PILImage.open(compressed)
                     aspect = img_obj.height / float(img_obj.width)
 
-                    # 🔹 Reduz 30% do tamanho anterior (~240 → ~170)
-                    max_width = 170
-                    img = Image(photo_path, width=max_width, height=max_width * aspect)
+                    # Largura depende automaticamente da quantidade de fotos
+                    if total_photos <= 4:
+                        max_width = 200
+                    elif total_photos <= 8:
+                        max_width = 180
+                    else:
+                        max_width = 150
+
+                    img = Image(compressed, width=max_width, height=max_width * aspect)
                     img.hAlign = "CENTER"
+
 
                     # 🔹 Adiciona legenda logo abaixo da imagem
                     caption_text = getattr(photo, "caption", "") or ""
@@ -567,12 +639,22 @@ def export_visit_pdf(visit_id):
                     cell = [img, caption]
                     photo_cells.append(cell)
 
-                    # 🔹 Organiza 4 por página (2 colunas x 2 linhas)
-                    if len(photo_cells) == 4 or i == len(v._valid_photos):
-                        table_data = []
-                        for j in range(0, len(photo_cells), 2):
-                            table_data.append(photo_cells[j:j+2])
-                        story.append(Table(table_data, colWidths=[200, 200]))
+                   
+                    # 📌 GRID INTELIGENTE
+                    cols = 2 if total_photos <= 6 else 3
+                    col_width = 500 / cols
+
+                    if len(photo_cells) == cols or i == len(v._valid_photos):
+                        story.append(
+                            Table(
+                                [photo_cells],
+                                colWidths=[col_width] * len(photo_cells),
+                                hAlign="CENTER"
+                            )
+                        )
+                        story.append(Spacer(1, 12))
+                        photo_cells = []
+
                         story.append(Spacer(1, 10))
                         photo_cells = []
 
