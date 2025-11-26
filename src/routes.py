@@ -399,28 +399,72 @@ def export_visit_pdf(visit_id):
         canvas.restoreState()
 
     # Capa com faixa lateral
+    # Capa com faixa lateral (versão PRO LEVE, segura para Render)
     def draw_cover_background(canvas, doc):
         canvas.saveState()
 
-        # Fundo escuro
-        canvas.setFillColor(colors.HexColor("#101010"))
+        # ============================================
+        # 1) Fundo principal (super leve)
+        # ============================================
+        canvas.setFillColor(colors.HexColor("#0E0E0E"))
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
 
-        # Faixa verde principal (mais forte)
+        # ============================================
+        # 2) Faixa verde lateral
+        # ============================================
         canvas.setFillColor(colors.HexColor("#00E676"))
         canvas.rect(0, 0, 28, A4[1], fill=True, stroke=False)
 
-        # 🔥 Degradê para dentro da página
-        # Gera 18 retângulos diminuindo a opacidade gradualmente
-        for i in range(1, 18):
-            alpha = 0.12 - (i * 0.006)   # opacidade decrescente
-            if alpha < 0:
-                alpha = 0
+        # ============================================
+        # 3) Degradê leve (apenas 4 faixas)
+        # ============================================
+        grad_colors = [
+            colors.Color(0, 1, 0.65, 0.10),
+            colors.Color(0, 1, 0.65, 0.07),
+            colors.Color(0, 1, 0.65, 0.04),
+            colors.Color(0, 1, 0.65, 0.02),
+        ]
 
-            canvas.setFillColor(colors.Color(0, 1, 0.65, alpha))  # mesma cor, mais transparente
-            canvas.rect(28 + i * 8, 0, 8, A4[1], fill=True, stroke=False)
+        offset = 28
+        width = 60  # cada faixa
+
+        for c in grad_colors:
+            canvas.setFillColor(c)
+            canvas.rect(offset, 0, width, A4[1], fill=True, stroke=False)
+            offset += width
+
+        # ============================================
+        # 4) Textura minimalista (30 pontos)
+        # ============================================
+        canvas.setFillColor(colors.Color(1, 1, 1, 0.02))
+        import random
+        for _ in range(30):
+            x = random.randint(40, int(A4[0]) - 40)
+            y = random.randint(40, int(A4[1]) - 40)
+            canvas.circle(x, y, 1.3, fill=True, stroke=False)
+
+        # ============================================
+        # 5) Borda neon leve (1 path)
+        # ============================================
+        neon = colors.Color(0, 1, 0.6, 0.08)
+        canvas.setStrokeColor(neon)
+        canvas.setLineWidth(5)
+        canvas.rect(15, 15, A4[0] - 30, A4[1] - 30, stroke=True, fill=False)
+
+        # ============================================
+        # 6) Marca d’água leve
+        # ============================================
+        canvas.saveState()
+        canvas.setFont("Helvetica-Bold", 110)
+        canvas.setFillColor(colors.Color(1, 1, 1, 0.04))
+        canvas.translate(A4[0] / 2, A4[1] / 2)
+        canvas.rotate(30)
+        canvas.drawCentredString(0, 0, "NutriCRM")
+        canvas.restoreState()
 
         canvas.restoreState()
+
+
 
 
     doc = SimpleDocTemplate(
