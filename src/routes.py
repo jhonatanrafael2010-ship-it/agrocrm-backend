@@ -397,9 +397,8 @@ def export_visit_pdf(visit_id):
         canvas.setFillColor(colors.HexColor("#101010"))
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
         canvas.restoreState()
-
-    # Capa com faixa lateral
-    # Capa com faixa lateral (versão PRO LEVE, segura para Render)
+        
+    # Capa com faixa lateral (versão PRO LEVE sem marca d'água)
     def draw_cover_background(canvas, doc):
         canvas.saveState()
 
@@ -426,7 +425,7 @@ def export_visit_pdf(visit_id):
         ]
 
         offset = 28
-        width = 60  # cada faixa
+        width = 60  # largura de cada faixa
 
         for c in grad_colors:
             canvas.setFillColor(c)
@@ -444,25 +443,15 @@ def export_visit_pdf(visit_id):
             canvas.circle(x, y, 1.3, fill=True, stroke=False)
 
         # ============================================
-        # 5) Borda neon leve (1 path)
+        # 5) Borda neon leve
         # ============================================
         neon = colors.Color(0, 1, 0.6, 0.08)
         canvas.setStrokeColor(neon)
         canvas.setLineWidth(5)
         canvas.rect(15, 15, A4[0] - 30, A4[1] - 30, stroke=True, fill=False)
 
-        # ============================================
-        # 6) Marca d’água leve
-        # ============================================
-        canvas.saveState()
-        canvas.setFont("Helvetica-Bold", 110)
-        canvas.setFillColor(colors.Color(1, 1, 1, 0.04))
-        canvas.translate(A4[0] / 2, A4[1] / 2)
-        canvas.rotate(30)
-        canvas.drawCentredString(0, 0, "NutriCRM")
         canvas.restoreState()
 
-        canvas.restoreState()
 
 
 
