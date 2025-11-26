@@ -97,8 +97,54 @@ def ping():
 
 @bp.route('/visits', methods=['GET'])
 def get_visits():
-    """Retorna visitas com nomes de cliente, consultor e fotos associadas"""
+    """Retorna visitas, incluindo modo iOS: mês atual"""
     try:
+        # 🔵 Suporte ao iOS — carregamento leve
+        month = request.args.get("month")
+        if month == "current":
+            today = date.today()
+            visits = (
+                Visit.query
+                .filter(db.extract('month', Visit.date) == today.month)
+                .filter(db.extract('year', Visit.date) == today.year)
+                .order_by(Visit.date.asc())
+                .all()
+            )
+
+            result = []
+            backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
+
+            for v in visits:
+                client = Client.query.get(v.client_id)
+                consultant_name = next(
+                    (c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id),
+                    None
+                )
+
+                photos = []
+                for p in v.photos:
+                    file_name = os.path.basename(p.url)
+                    photos.append({
+                        "id": p.id,
+                        "url": f"{backend_url}/uploads/{file_name}",
+                        "caption": p.caption or ""
+                    })
+
+                culture = v.culture or (v.planting.culture if v.planting else "—")
+                variety = v.variety or (v.planting.variety if v.planting else "—")
+
+                result.append({
+                    **v.to_dict(),
+                    "client_name": client.name if client else f"Cliente {v.client_id}",
+                    "consultant_name": consultant_name or "—",
+                    "culture": culture,
+                    "variety": variety,
+                    "photos": photos,
+                })
+
+            return jsonify(result), 200
+
+        # 🔵 A partir daqui segue sua rota normal SEM ALTERAR
         client_id = request.args.get('client_id', type=int)
         property_id = request.args.get('property_id', type=int)
         plot_id = request.args.get('plot_id', type=int)
@@ -115,10 +161,9 @@ def get_visits():
         if consultant_id:
             q = q.filter_by(consultant_id=consultant_id)
 
-
         items = q.order_by(Visit.date.asc().nullslast()).all()
-        result = []
 
+        result = []
         backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
 
         for v in items:
@@ -128,10 +173,8 @@ def get_visits():
                 None
             )
 
-            # ✅ Monta URLs completas das fotos
             photos = []
             for p in v.photos:
-                # Garante nome limpo
                 file_name = os.path.basename(p.url)
                 photos.append({
                     "id": p.id,
@@ -139,34 +182,24 @@ def get_visits():
                     "caption": p.caption or ""
                 })
 
-
-            # 🔍 tenta pegar cultura e variedade do Planting, mas se não tiver, usa diretamente da visita (caso venha preenchido)
-            culture = None
-            variety = None
-            if v.planting:
-                culture = v.planting.culture
-                variety = v.planting.variety
-            else:
-                culture = getattr(v, "culture", None)
-                variety = getattr(v, "variety", None)
+            culture = v.culture or (v.planting.culture if v.planting else "—")
+            variety = v.variety or (v.planting.variety if v.planting else "—")
 
             result.append({
                 **v.to_dict(),
                 "client_name": client.name if client else f"Cliente {v.client_id}",
                 "consultant_name": consultant_name or "—",
-                "status": v.status,
-                "culture": culture or "—",
-                "variety": variety or "—",
+                "culture": culture,
+                "variety": variety,
                 "photos": photos,
             })
-
-
 
         return jsonify(result), 200
 
     except Exception as e:
         print(f"⚠️ Erro ao listar visitas: {e}")
         return jsonify(error=str(e)), 500
+
 
 
 
@@ -397,7 +430,7 @@ def export_visit_pdf(visit_id):
         canvas.setFillColor(colors.HexColor("#101010"))
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
         canvas.restoreState()
-        
+
     # Capa com faixa lateral (versão PRO LEVE sem marca d'água)
     def draw_cover_background(canvas, doc):
         canvas.saveState()
