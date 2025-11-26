@@ -515,6 +515,15 @@ def export_visit_pdf(visit_id):
         story.append(Paragraph(f"Data: {v.date.strftime('%d/%m/%Y')}", styles["NormalSmall"]))
         story.append(Spacer(1, 6))
 
+        # 🔥 MOSTRAR GPS DA VISITA
+        if v.latitude and v.longitude:
+            story.append(Paragraph(
+                f"📍 Localização: {v.latitude:.5f}, {v.longitude:.5f}",
+                styles["NormalSmall"]
+            ))
+            story.append(Spacer(1, 6))
+
+
         data_table = Table([
             ["Status:", v.status.capitalize() if v.status else "-"],
             ["Diagnóstico:", v.diagnosis or "-"],
@@ -557,6 +566,15 @@ def export_visit_pdf(visit_id):
                 caption = Paragraph(
                     f"<i>{getattr(photo, 'caption', '')}</i>", styles["Caption"]
                 )
+
+                # 🔥 EXIBIR GPS DA FOTO (se existir)
+                if getattr(photo, "latitude", None) and getattr(photo, "longitude", None):
+                    gps_text = f"{photo.latitude:.5f}, {photo.longitude:.5f}"
+                    caption = Paragraph(
+                        f"<i>{getattr(photo, 'caption', '')}</i><br/><small>📍 {gps_text}</small>",
+                        styles["Caption"]
+                    )
+
 
                 photo_cells.append([img, caption])
 
