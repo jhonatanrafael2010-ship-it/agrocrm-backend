@@ -401,15 +401,27 @@ def export_visit_pdf(visit_id):
     # Capa com faixa lateral
     def draw_cover_background(canvas, doc):
         canvas.saveState()
-        # Fundo
+
+        # Fundo escuro
         canvas.setFillColor(colors.HexColor("#101010"))
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
 
-        # Faixa vertical à esquerda
+        # Faixa verde principal (mais forte)
         canvas.setFillColor(colors.HexColor("#00E676"))
-        canvas.rect(0, 0, 25, A4[1], fill=True, stroke=False)
+        canvas.rect(0, 0, 28, A4[1], fill=True, stroke=False)
+
+        # 🔥 Degradê para dentro da página
+        # Gera 18 retângulos diminuindo a opacidade gradualmente
+        for i in range(1, 18):
+            alpha = 0.12 - (i * 0.006)   # opacidade decrescente
+            if alpha < 0:
+                alpha = 0
+
+            canvas.setFillColor(colors.Color(0, 1, 0.65, alpha))  # mesma cor, mais transparente
+            canvas.rect(28 + i * 8, 0, 8, A4[1], fill=True, stroke=False)
 
         canvas.restoreState()
+
 
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
@@ -509,40 +521,41 @@ def export_visit_pdf(visit_id):
     story = []
 
     # ============================
-    # 📘 CAPA MODERNA
+    # 📘 CAPA MODERNA (texto antes da logo)
     # ============================
-    story.append(Spacer(1, 40))
+    story.append(Spacer(1, 60))
 
-    # Logo centralizada, se existir
+    story.append(Paragraph("RELATÓRIO TÉCNICO DE ACOMPANHAMENTO", styles["CoverTitle"]))
+    story.append(Paragraph("Ciclo Fenológico", styles["CoverSubtitle"]))
+
+    # Nome grande do cliente
+    if client and client.name:
+        styles.add(ParagraphStyle(
+            name="ClientNameBig",
+            fontSize=22,
+            leading=28,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#FFFFFF"),
+            spaceBefore=10,
+            spaceAfter=35
+        ))
+        story.append(Paragraph(client.name.strip(), styles["ClientNameBig"]))
+
+
+    # Agora a logo vem DEPOIS do texto
     try:
         static_dir = os.path.join(os.path.dirname(__file__), "static")
         logo_path = os.path.join(static_dir, "nutricrm_logo.png")
         if os.path.exists(logo_path):
             img_obj = PILImage.open(logo_path)
             aspect = img_obj.height / float(img_obj.width)
-            logo_width = 200
+            logo_width = 160
             logo = Image(logo_path, width=logo_width, height=logo_width * aspect)
             logo.hAlign = "CENTER"
             story.append(logo)
-            story.append(Spacer(1, 20))
+            story.append(Spacer(1, 25))
     except Exception:
         pass
-
-    story.append(Paragraph("RELATÓRIO TÉCNICO DE ACOMPANHAMENTO", styles["CoverTitle"]))
-    story.append(Paragraph("Ciclo Fenológico", styles["CoverSubtitle"]))
-
-    # 🔥 NOVO — Nome do cliente centralizado e destacado
-    if client and client.name:
-        styles.add(ParagraphStyle(
-            name="ClientNameBig",
-            fontSize=20,
-            leading=24,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor("#FFFFFF"),
-            spaceBefore=10,
-            spaceAfter=25
-        ))
-        story.append(Paragraph(client.name.strip(), styles["ClientNameBig"]))
 
 
     # Período
@@ -552,7 +565,7 @@ def export_visit_pdf(visit_id):
     else:
         start_date = last_date = visit.date.strftime("%d/%m/%Y")
 
-    # Bloco de informações (sem tabelas, sem "-")
+    # Bloco de informações
     story.append(Spacer(1, 10))
 
     def add_cover_line(label: str, value: str | None):
@@ -561,7 +574,6 @@ def export_visit_pdf(visit_id):
             return
         story.append(Paragraph(label, styles["CoverInfoLabel"]))
         story.append(Paragraph(value, styles["CoverInfo"]))
-
 
     add_cover_line("Propriedade:", property_.name if property_ else "")
     add_cover_line("Talhão:", plot.name if plot else "")
@@ -572,13 +584,14 @@ def export_visit_pdf(visit_id):
     period_text = f"{start_date} → {last_date}"
     add_cover_line("Período de acompanhamento:", period_text)
 
-    story.append(Spacer(1, 30))
+    story.append(Spacer(1, 25))
     story.append(Paragraph(
         "<i>Relatório cumulativo de visitas técnicas realizadas neste ciclo fenológico.</i>",
         styles["SmallHint"]
     ))
 
     story.append(PageBreak())
+
 
     # ============================
     # 🔧 COMPRESSÃO DE IMAGENS
