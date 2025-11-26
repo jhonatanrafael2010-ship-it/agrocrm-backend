@@ -529,7 +529,21 @@ def export_visit_pdf(visit_id):
         pass
 
     story.append(Paragraph("RELATÓRIO TÉCNICO DE ACOMPANHAMENTO", styles["CoverTitle"]))
-    story.append(Paragraph("Ciclo Fenológico — NutriCRM", styles["CoverSubtitle"]))
+    story.append(Paragraph("Ciclo Fenológico", styles["CoverSubtitle"]))
+
+    # 🔥 NOVO — Nome do cliente centralizado e destacado
+    if client and client.name:
+        styles.add(ParagraphStyle(
+            name="ClientNameBig",
+            fontSize=20,
+            leading=24,
+            alignment=TA_CENTER,
+            textColor=colors.HexColor("#FFFFFF"),
+            spaceBefore=10,
+            spaceAfter=25
+        ))
+        story.append(Paragraph(client.name.strip(), styles["ClientNameBig"]))
+
 
     # Período
     if visits_to_include:
@@ -548,7 +562,7 @@ def export_visit_pdf(visit_id):
         story.append(Paragraph(label, styles["CoverInfoLabel"]))
         story.append(Paragraph(value, styles["CoverInfo"]))
 
-    add_cover_line("Cliente:", client.name if client else "")
+
     add_cover_line("Propriedade:", property_.name if property_ else "")
     add_cover_line("Talhão:", plot.name if plot else "")
     add_cover_line("Cultura:", visit.culture or "")
@@ -721,7 +735,7 @@ def export_visit_pdf(visit_id):
     # ============================
     story.append(Spacer(1, 20))
     story.append(Paragraph(
-        "<b>NutriCRM — CRM Inteligente para o Agronegócio</b>",
+        "<b>NutriCRM</b>",
         styles["Footer"]
     ))
     story.append(Paragraph(
