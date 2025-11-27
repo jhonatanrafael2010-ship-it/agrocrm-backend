@@ -97,10 +97,21 @@ def ping():
 
 @bp.route('/visits', methods=['GET'])
 def get_visits():
-    """Retorna visitas, incluindo modo iOS: mês atual"""
+    """
+    Rota unificada:
+    - ?month=current → modo iOS (visitas só do mês)
+    - ?scope=all → retorna todas as visitas (usado no Acompanhamentos/Calendar)
+    - sem params → retorna visitas com filtros normais
+    """
+    from datetime import date
+
     try:
-        # 🔵 Suporte ao iOS — carregamento leve
         month = request.args.get("month")
+        scope = request.args.get("scope")
+
+        # ============================================
+        # 🍏 iOS → apenas visitas do mês atual
+        # ============================================
         if month == "current":
             today = date.today()
             visits = (
@@ -111,62 +122,41 @@ def get_visits():
                 .all()
             )
 
-            result = []
-            backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
+        # ============================================
+        # 🔵 Acompanhamentos / Calendar Desktop → all
+        # ============================================
+        elif scope == "all":
+            visits = Visit.query.order_by(Visit.date.asc().nullslast()).all()
 
-            for v in visits:
-                client = Client.query.get(v.client_id)
-                consultant_name = next(
-                    (c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id),
-                    None
-                )
+        # ============================================
+        # 🔧 Filtros normais (client_id, talhão, etc.)
+        # ============================================
+        else:
+            client_id = request.args.get('client_id', type=int)
+            property_id = request.args.get('property_id', type=int)
+            plot_id = request.args.get('plot_id', type=int)
+            consultant_id = request.args.get('consultant_id', type=int)
+            status = request.args.get('status', type=str)
 
-                photos = []
-                for p in v.photos:
-                    file_name = os.path.basename(p.url)
-                    photos.append({
-                        "id": p.id,
-                        "url": f"{backend_url}/uploads/{file_name}",
-                        "caption": p.caption or ""
-                    })
+            q = Visit.query
+            if client_id:
+                q = q.filter_by(client_id=client_id)
+            if property_id:
+                q = q.filter_by(property_id=property_id)
+            if plot_id:
+                q = q.filter_by(plot_id=plot_id)
+            if consultant_id:
+                q = q.filter_by(consultant_id=consultant_id)
 
-                culture = v.culture or (v.planting.culture if v.planting else "—")
-                variety = v.variety or (v.planting.variety if v.planting else "—")
+            visits = q.order_by(Visit.date.asc().nullslast()).all()
 
-                result.append({
-                    **v.to_dict(),
-                    "client_name": client.name if client else f"Cliente {v.client_id}",
-                    "consultant_name": consultant_name or "—",
-                    "culture": culture,
-                    "variety": variety,
-                    "photos": photos,
-                })
-
-            return jsonify(result), 200
-
-        # 🔵 A partir daqui segue sua rota normal SEM ALTERAR
-        client_id = request.args.get('client_id', type=int)
-        property_id = request.args.get('property_id', type=int)
-        plot_id = request.args.get('plot_id', type=int)
-        consultant_id = request.args.get('consultant_id', type=int)
-        status = request.args.get('status', type=str)
-
-        q = Visit.query
-        if client_id:
-            q = q.filter_by(client_id=client_id)
-        if property_id:
-            q = q.filter_by(property_id=property_id)
-        if plot_id:
-            q = q.filter_by(plot_id=plot_id)
-        if consultant_id:
-            q = q.filter_by(consultant_id=consultant_id)
-
-        items = q.order_by(Visit.date.asc().nullslast()).all()
-
+        # ============================================
+        # 📸 Montagem final da resposta (unificada)
+        # ============================================
         result = []
         backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
 
-        for v in items:
+        for v in visits:
             client = Client.query.get(v.client_id)
             consultant_name = next(
                 (c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id),
@@ -199,6 +189,7 @@ def get_visits():
     except Exception as e:
         print(f"⚠️ Erro ao listar visitas: {e}")
         return jsonify(error=str(e)), 500
+
 
 
 
