@@ -182,6 +182,7 @@ def get_visits():
                 "culture": culture,
                 "variety": variety,
                 "photos": photos,
+                "fenologia_real": v.fenologia_real or "",
             })
 
         return jsonify(result), 200
@@ -216,6 +217,8 @@ def create_visit():
     recommendation = (data.get('recommendation') or '').strip()
     latitude = data.get('latitude')
     longitude = data.get('longitude')
+    fenologia_real = data.get("fenologia_real")
+
 
     # ========================
     # ✅ VALIDAÇÕES BÁSICAS
@@ -330,7 +333,8 @@ def create_visit():
         culture=culture,
         variety=variety,
         latitude=latitude,
-        longitude=longitude
+        longitude=longitude,
+        fenologia_real=fenologia_real
     )
 
     # 🌿 Preenche cultura e variedade a partir do plantio, se não vierem do frontend
@@ -702,6 +706,10 @@ def export_visit_pdf(visit_id):
         if getattr(v, "latitude", None) is not None and getattr(v, "longitude", None) is not None:
             meta_lines.append(f"📍 Localização: {v.latitude:.5f}, {v.longitude:.5f}")
 
+        if v.fenologia_real:
+            meta_lines.append(f"🌱 Fenologia observada: {v.fenologia_real}")
+
+
         if meta_lines:
             story.append(Paragraph("<br/>".join(meta_lines), styles["VisitMeta"]))
 
@@ -900,9 +908,26 @@ def update_visit(vid: int):
 
     data = request.get_json(silent=True) or {}
 
-    for tf in ('checklist','diagnosis','recommendation'):
+
+    print("📩 PAYLOAD RECEBIDO NO PUT:", data)
+
+    # Campos simples
+    for tf in ('checklist','diagnosis','fenologia_real'):
         if tf in data:
             setattr(v, tf, data[tf])
+
+    # recommendation só atualiza se vier texto != vazio
+    if "recommendation" in data:
+        rec = data.get("recommendation")
+        if rec not in (None, "", " "):
+            v.recommendation = rec.strip()
+
+    
+    # 🛡️ Proteção: nunca deixar o backend sobrescrever a recomendação original
+    # das visitas automáticas geradas pela fenologia.
+    if v.planting_id and data.get("recommendation") is None:
+        pass  # não substituir recommendation automaticamente
+
 
     if 'client_id' in data and data['client_id']:
         if not Client.query.get(data['client_id']): return jsonify(message='client not found'), 404

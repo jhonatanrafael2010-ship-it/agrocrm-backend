@@ -157,6 +157,7 @@ class Visit(db.Model):
     status = db.Column(db.String(20), nullable=True, server_default='planned')
     culture = db.Column(db.String(120), nullable=True)
     variety = db.Column(db.String(200), nullable=True)
+    fenologia_real = db.Column(db.String(120), nullable=True)
     latitude = db.Column(db.Float, nullable=True)
     longitude = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
@@ -167,12 +168,26 @@ class Visit(db.Model):
             match = next((c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id), None)
             consultant_name = match or f"Consultor {self.consultant_id}"
 
+        # ✔ Nome do cliente
         client_line = f"👤 {self.client.name}" if self.client else ""
+
+        # ✔ Variedade
         variety_line = f"🌱 {self.variety}" if self.variety else ""
-        stage_line = f"📍 {self.recommendation}" if self.recommendation else ""
+
+        # ⭐ NOVO — prioridade para fenologia observada
+        stage_value = self.fenologia_real or self.recommendation
+        stage_line = f"📍 {stage_value}" if stage_value else ""
+
+        # ✔ Consultor
         consultant_line = f"👨‍🌾 {consultant_name}" if consultant_name else ""
 
-        display_text = "<br>".join(filter(None, [client_line, variety_line, stage_line, consultant_line]))
+        # ✔ Monta o texto exibido no calendário
+        display_text = "<br>".join(filter(None, [
+            client_line,
+            variety_line,
+            stage_line,
+            consultant_line
+        ]))
 
         return {
             'id': self.id,
@@ -192,11 +207,13 @@ class Visit(db.Model):
             'status': self.status,
             'culture': self.culture,
             'variety': self.variety,
+            'fenologia_real': self.fenologia_real,
             'latitude': self.latitude,
             'longitude': self.longitude,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'display_text': display_text,
         }
+
 
 
 # ============================================================
