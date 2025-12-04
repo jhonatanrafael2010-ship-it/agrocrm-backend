@@ -175,15 +175,20 @@ def get_visits():
             culture = v.culture or (v.planting.culture if v.planting else "—")
             variety = v.variety or (v.planting.variety if v.planting else "—")
 
-            result.append({
-                **v.to_dict(),
-                "client_name": client.name if client else f"Cliente {v.client_id}",
-                "consultant_name": consultant_name or "—",
-                "culture": culture,
-                "variety": variety,
-                "photos": photos,
-                "fenologia_real": v.fenologia_real or "",
-            })
+            d = v.to_dict()
+
+            # 🔥 Sobrescreve SEMPRE com o valor real, mesmo se vazio
+            d["fenologia_real"] = v.fenologia_real or ""
+
+            # Ajustes finais
+            d["client_name"] = client.name if client else f"Cliente {v.client_id}"
+            d["consultant_name"] = consultant_name or "—"
+            d["culture"] = culture
+            d["variety"] = variety
+            d["photos"] = photos
+
+            result.append(d)
+
 
         return jsonify(result), 200
 
