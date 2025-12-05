@@ -180,6 +180,9 @@ def get_visits():
             # 🔥 Sobrescreve SEMPRE com o valor real, mesmo se vazio
             d["fenologia_real"] = v.fenologia_real or ""
 
+            # 🔥 ADICIONAR LISTA DE PRODUTOS DA VISITA
+            d["products"] = [p.to_dict() for p in v.products]
+
             # Ajustes finais
             d["client_name"] = client.name if client else f"Cliente {v.client_id}"
             d["consultant_name"] = consultant_name or "—"
@@ -1338,6 +1341,53 @@ def public_visit_view(visit_id):
         lat=lat,
         lon=lon
     )
+
+
+@bp.route("/visits/<int:visit_id>/products", methods=["POST"])
+def add_visit_product(visit_id):
+    data = request.get_json()
+
+    product = VisitProduct(
+        visit_id=visit_id,
+        product_name=data.get("product_name", "").strip(),
+        dose=data.get("dose", "").strip(),
+        unit=data.get("unit", "").strip(),
+        application_date=datetime.strptime(data.get("application_date"), "%Y-%m-%d") if data.get("application_date") else None,
+    )
+
+    db.session.add(product)
+    db.session.commit()
+
+    return jsonify({"success": True, "product": product.to_dict()}), 201
+
+
+
+@bp.route("/products/<int:product_id>", methods=["PUT"])
+def update_visit_product(product_id):
+    data = request.get_json()
+    product = VisitProduct.query.get_or_404(product_id)
+
+    product.product_name = data.get("product_name", product.product_name)
+    product.dose = data.get("dose", product.dose)
+    product.unit = data.get("unit", product.unit)
+    product.application_date = (
+        datetime.strptime(data["application_date"], "%Y-%m-%d")
+        if data.get("application_date")
+        else product.application_date
+    )
+
+    db.session.commit()
+    return jsonify({"success": True, "product": product.to_dict()})
+
+
+
+@bp.route("/products/<int:product_id>", methods=["DELETE"])
+def delete_visit_product(product_id):
+    product = VisitProduct.query.get_or_404(product_id)
+    db.session.delete(product)
+    db.session.commit()
+    return jsonify({"success": True})
+
 
 
 

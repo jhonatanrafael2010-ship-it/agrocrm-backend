@@ -162,6 +162,9 @@ class Visit(db.Model):
     longitude = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
+    products = db.relationship("VisitProduct", backref="visit", lazy=True, cascade="all, delete-orphan")
+
+
     def to_dict(self):
         consultant_name = None
         if self.consultant_id:
@@ -213,6 +216,28 @@ class Visit(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'display_text': display_text,
         }
+
+
+class VisitProduct(db.Model):
+    __tablename__ = 'visit_products'
+
+    id = db.Column(db.Integer, primary_key=True)
+    visit_id = db.Column(db.Integer, db.ForeignKey('visits.id', ondelete='CASCADE'))
+    product_name = db.Column(db.String(200), nullable=False)
+    dose = db.Column(db.String(50), nullable=True)
+    unit = db.Column(db.String(50), nullable=True)
+    application_date = db.Column(db.Date, nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "visit_id": self.visit_id,
+            "product_name": self.product_name,
+            "dose": self.dose,
+            "unit": self.unit,
+            "application_date": self.application_date.isoformat() if self.application_date else None,
+        }
+
 
 
 
