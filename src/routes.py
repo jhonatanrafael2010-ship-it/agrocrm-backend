@@ -715,7 +715,7 @@ def export_visit_pdf(visit_id):
     for idx, v in enumerate(visits_to_include, start=1):
         # Título da visita
         titulo_visita = v.recommendation or "Sem título"
-        story.append(Paragraph(f"🟢 VISITA {idx} — {titulo_visita}", styles["SectionTitle"]))
+        story.append(Paragraph(f"<b>VISITA {idx}</b> — {titulo_visita}", styles["SectionTitle"]))
 
         # Metadados da visita
         meta_lines = []
@@ -727,10 +727,6 @@ def export_visit_pdf(visit_id):
             if isinstance(v.date, str):
                 meta_lines.append(f"📅 {v.date}")
 
-        # Status (somente se tiver)
-        if v.status:
-            status_fmt = v.status.capitalize()
-            meta_lines.append(f"✔ Status: {status_fmt}")
 
         # Localização (somente se tiver)
         if getattr(v, "latitude", None) is not None and getattr(v, "longitude", None) is not None:
@@ -754,7 +750,10 @@ def export_visit_pdf(visit_id):
             story.append(Paragraph("<b>Recomendações Técnicas</b>", styles["SectionSubTitle"]))
             story.append(Paragraph(v.recommendation, styles["VisitBody"]))
 
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("<hr width='85%' color='#333333'/>", styles["SmallHint"]))
+        story.append(Spacer(1, 8))
+
 
         # ============================
         # 📸 FOTOS DA VISITA
@@ -824,6 +823,7 @@ def export_visit_pdf(visit_id):
                             hAlign="CENTER",
                             style=TableStyle([
                                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                ("BOX", (0,0), (-1,-1), 0.1, colors.Color(1,1,1,0.08)),
                             ])
                         )
                     )
