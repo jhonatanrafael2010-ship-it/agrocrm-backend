@@ -636,9 +636,24 @@ def export_visit_pdf(visit_id):
 
                 img_obj = Image(buf, width=max_width, height=max_width * aspect)
 
-                caption = photo.caption or ""
-                if photo.latitude:
-                    caption += f"<br/><small>📍 {photo.latitude:.5f}, {photo.longitude:.5f}</small>"
+                # legenda
+                base_caption = getattr(photo, "caption", "") or ""
+
+                # latitude/longitude podem não existir em fotos antigas → evitar crash
+                lat = getattr(photo, "latitude", None)
+                lon = getattr(photo, "longitude", None)
+
+                gps_caption = ""
+                if lat is not None and lon is not None:
+                    gps_caption = f"📍 {lat:.5f}, {lon:.5f}"
+
+                full_caption = base_caption
+                if gps_caption:
+                    if full_caption:
+                        full_caption += "<br/><small>" + gps_caption + "</small>"
+                    else:
+                        full_caption = "<small>" + gps_caption + "</small>"
+
 
                 cell = [img_obj, Paragraph(caption, styles["Caption"])]
 
