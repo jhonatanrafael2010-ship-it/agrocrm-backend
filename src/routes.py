@@ -385,12 +385,16 @@ def create_visit():
 @cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
 def export_visit_pdf(visit_id):
     """
-    📄 Gera um PDF cumulativo com visual moderno:
-    - Capa visual (logo, cliente, cultura, variedade, período)
-    - Todas as visitas do mesmo plantio (ordenadas até a visita atual)
-    - Layout dark premium, sem tabelas para texto
+    📄 Gera um PDF cumulativo:
+    - Capa moderna
+    - Visitas do ciclo
+    - Fotos otimizadas
+    - Layout dark premium
     """
 
+    # =====================================================
+    # 🔎 BUSCA DADOS PRINCIPAIS
+    # =====================================================
     visit = Visit.query.get_or_404(visit_id)
     client = Client.query.get(visit.client_id)
     property_ = Property.query.get(visit.property_id) if visit.property_id else None
@@ -401,302 +405,161 @@ def export_visit_pdf(visit_id):
         f"Consultor {visit.consultant_id}" if visit.consultant_id else ""
     )
 
-    # ============================
-    # 🔍 BUSCA VISITAS DO CICLO
-    # ============================
+    # =====================================================
+    # 🔎 BUSCA TODAS AS VISITAS DO CICLO
+    # =====================================================
     if visit.planting_id:
         visits_to_include = (
-            Visit.query
-            .filter(Visit.planting_id == visit.planting_id)
-            .order_by(Visit.date.asc())
-            .all()
+            Visit.query.filter(Visit.planting_id == visit.planting_id)
+            .order_by(Visit.date.asc()).all()
         )
     else:
         visits_to_include = (
-            Visit.query
-            .filter(
+            Visit.query.filter(
                 Visit.client_id == visit.client_id,
                 Visit.property_id == visit.property_id,
                 Visit.plot_id == visit.plot_id,
                 Visit.culture == visit.culture,
             )
-            .order_by(Visit.date.asc())
-            .all()
+            .order_by(Visit.date.asc()).all()
         )
 
-    # ============================
-    # 🔎 FILTRA VISITAS COM FOTOS
-    # ============================
+    # =====================================================
+    # 🔎 FILTRO DE VISITAS COM FOTOS
+    # =====================================================
     uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
-    visits_with_photos = []
+    filtered = []
 
     for v in visits_to_include:
-        valid_photos = []
+        valid = []
         for p in getattr(v, "photos", []):
             file_name = os.path.basename(p.url)
-            photo_path = os.path.join(uploads_dir, file_name)
-            if os.path.exists(photo_path):
-                valid_photos.append(p)
+            p_path = os.path.join(uploads_dir, file_name)
+            if os.path.exists(p_path):
+                valid.append(p)
 
-        if valid_photos:
-            v._valid_photos = valid_photos
-            visits_with_photos.append(v)
+        if valid:
+            v._valid_photos = valid
+            filtered.append(v)
 
-    visits_to_include = visits_with_photos
+    visits_to_include = filtered
 
-    # ============================
-    # 📄 PDF DARK MODE PREMIUM
-    # ============================
+    # =====================================================
+    # 📝 PREPARAÇÃO DO PDF
+    # =====================================================
     buffer = BytesIO()
 
-    # Fundo genérico (páginas internas)
     def draw_dark_background(canvas, doc):
         canvas.saveState()
         canvas.setFillColor(colors.HexColor("#101010"))
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
         canvas.restoreState()
 
-    # Capa com faixa lateral (versão PRO LEVE sem marca d'água)
     def draw_cover_background(canvas, doc):
         canvas.saveState()
-
-        # ============================================
-        # 1) Fundo principal (super leve)
-        # ============================================
         canvas.setFillColor(colors.HexColor("#0E0E0E"))
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
 
-        # ============================================
-        # 2) Faixa verde lateral
-        # ============================================
+        # faixa verde
         canvas.setFillColor(colors.HexColor("#00E676"))
         canvas.rect(0, 0, 28, A4[1], fill=True, stroke=False)
 
-        # ============================================
-        # 3) Degradê leve (apenas 4 faixas)
-        # ============================================
-        grad_colors = [
-            colors.Color(0, 1, 0.65, 0.10),
-            colors.Color(0, 1, 0.65, 0.07),
-            colors.Color(0, 1, 0.65, 0.04),
-            colors.Color(0, 1, 0.65, 0.02),
-        ]
-
-        offset = 28
-        width = 60  # largura de cada faixa
-
-        for c in grad_colors:
-            canvas.setFillColor(c)
-            canvas.rect(offset, 0, width, A4[1], fill=True, stroke=False)
-            offset += width
-
-        # ============================================
-        # 4) Textura minimalista (30 pontos)
-        # ============================================
-        canvas.setFillColor(colors.Color(1, 1, 1, 0.02))
-        import random
-        for _ in range(30):
-            x = random.randint(40, int(A4[0]) - 40)
-            y = random.randint(40, int(A4[1]) - 40)
-            canvas.circle(x, y, 1.3, fill=True, stroke=False)
-
-        # ============================================
-        # 5) Borda neon leve
-        # ============================================
-        neon = colors.Color(0, 1, 0.6, 0.08)
-        canvas.setStrokeColor(neon)
-        canvas.setLineWidth(5)
-        canvas.rect(15, 15, A4[0] - 30, A4[1] - 30, stroke=True, fill=False)
-
         canvas.restoreState()
-
-
-
-
 
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
-        rightMargin=40, leftMargin=50,
+        leftMargin=50, rightMargin=40,
         topMargin=60, bottomMargin=40
     )
 
     styles = getSampleStyleSheet()
 
-    # Estilos personalizados
+    # =====================================================
+    # 🎨 ESTILOS PERSONALIZADOS
+    # =====================================================
     styles.add(ParagraphStyle(
-        name="CoverTitle",
-        fontSize=22,
-        leading=26,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#E0F2F1"),
-        spaceAfter=6,
-        spaceBefore=6
-    ))
-    styles.add(ParagraphStyle(
-        name="CoverSubtitle",
-        fontSize=13,
-        leading=16,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#80CBC4"),
-        spaceAfter=20
-    ))
-    styles.add(ParagraphStyle(
-        name="CoverInfo",
-        fontSize=11,
-        leading=15,
-        alignment=0,  # left
-        textColor=colors.HexColor("#E0E0E0"),
-        spaceAfter=4
-    ))
-    styles.add(ParagraphStyle(
-        name="CoverInfoLabel",
-        fontSize=11,
-        leading=15,
-        alignment=0,
-        textColor=colors.HexColor("#A5D6A7"),
-        spaceAfter=2
-    ))
-    styles.add(ParagraphStyle(
-        name="SmallHint",
-        fontSize=9,
-        leading=12,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#BDBDBD"),
-        spaceBefore=12
-    ))
-    styles.add(ParagraphStyle(
-        name="SectionTitle",
-        fontSize=16,
-        leading=20,
-        textColor=colors.HexColor("#BBF7D0"),
-        spaceAfter=6
-    ))
-    styles.add(ParagraphStyle(
-        name="SectionSubTitle",
-        fontSize=11,
-        leading=15,
-        textColor=colors.HexColor("#E0E0E0"),
-        spaceAfter=4
-    ))
-    styles.add(ParagraphStyle(
-        name="VisitMeta",
-        fontSize=10,
+        name="VisitTitleSmall",
+        fontSize=12,
         leading=14,
-        textColor=colors.HexColor("#EEEEEE"),
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#BBF7D0"),
         spaceAfter=8
     ))
     styles.add(ParagraphStyle(
-        name="VisitBody",
-        fontSize=10,
+        name="VisitStageBig",
+        fontSize=22,
+        leading=26,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#FFFFFF"),
+        spaceAfter=14
+    ))
+    styles.add(ParagraphStyle(
+        name="VisitDateCenter",
+        fontSize=12,
         leading=14,
+        alignment=TA_CENTER,
         textColor=colors.HexColor("#E0E0E0"),
-        spaceAfter=10
+        spaceAfter=14
     ))
     styles.add(ParagraphStyle(
-        name="Caption",
+        name="VisitSectionLabel",
+        fontSize=14,
+        leading=16,
         alignment=TA_CENTER,
-        fontSize=9,
-        textColor=colors.HexColor("#BDBDBD"),
-        spaceBefore=4,
-        spaceAfter=10
+        textColor=colors.HexColor("#A5D6A7"),
+        spaceBefore=10,
+        spaceAfter=4
     ))
     styles.add(ParagraphStyle(
-        name="Footer",
-        fontSize=9,
-        leading=12,
+        name="VisitSectionValue",
+        fontSize=16,
+        leading=20,
         alignment=TA_CENTER,
-        textColor=colors.HexColor("#9E9E9E"),
-        spaceBefore=12
+        textColor=colors.HexColor("#FFFFFF"),
+        spaceAfter=14
+    ))
+    styles.add(ParagraphStyle(
+        name="HrLine",
+        alignment=TA_CENTER,
+        fontSize=10,
+        textColor=colors.HexColor("#333333"),
+        spaceBefore=10,
+        spaceAfter=16
     ))
 
+    # =====================================================
+    # 📘 CAPA
+    # =====================================================
     story = []
+    story.append(Spacer(1, 80))
+    story.append(Paragraph("RELATÓRIO TÉCNICO DE ACOMPANHAMENTO", styles["Title"]))
+    story.append(Spacer(1, 20))
 
-    # ============================
-    # 📘 CAPA MODERNA (texto antes da logo)
-    # ============================
-    story.append(Spacer(1, 60))
-
-    story.append(Paragraph("RELATÓRIO TÉCNICO DE ACOMPANHAMENTO", styles["CoverTitle"]))
-    story.append(Paragraph("Ciclo Fenológico", styles["CoverSubtitle"]))
-
-    # Nome grande do cliente
-    if client and client.name:
-        styles.add(ParagraphStyle(
-            name="ClientNameBig",
-            fontSize=22,
-            leading=28,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor("#FFFFFF"),
-            spaceBefore=10,
-            spaceAfter=35
-        ))
-        story.append(Paragraph(client.name.strip(), styles["ClientNameBig"]))
-
-
-    # Agora a logo vem DEPOIS do texto
+    # Logo
     try:
         static_dir = os.path.join(os.path.dirname(__file__), "static")
         logo_path = os.path.join(static_dir, "nutricrm_logo.png")
         if os.path.exists(logo_path):
-            img_obj = PILImage.open(logo_path)
-            aspect = img_obj.height / float(img_obj.width)
-            logo_width = 160
-            logo = Image(logo_path, width=logo_width, height=logo_width * aspect)
-            logo.hAlign = "CENTER"
-            story.append(logo)
-            story.append(Spacer(1, 25))
-    except Exception:
+            img = PILImage.open(logo_path)
+            aspect = img.height / float(img.width)
+            width = 160
+            story.append(Image(logo_path, width=width, height=width * aspect))
+            story.append(Spacer(1, 20))
+    except:
         pass
-
-
-    # Período
-    if visits_to_include:
-        start_date = visits_to_include[0].date.strftime("%d/%m/%Y")
-        last_date = visits_to_include[-1].date.strftime("%d/%m/%Y")
-    else:
-        start_date = last_date = visit.date.strftime("%d/%m/%Y")
-
-    # Bloco de informações
-    story.append(Spacer(1, 10))
-
-    def add_cover_line(label: str, value: str | None):
-        value = (value or "").strip()
-        if not value:
-            return
-        story.append(Paragraph(label, styles["CoverInfoLabel"]))
-        story.append(Paragraph(value, styles["CoverInfo"]))
-
-    add_cover_line("Propriedade:", property_.name if property_ else "")
-    add_cover_line("Talhão:", plot.name if plot else "")
-    add_cover_line("Cultura:", visit.culture or "")
-    add_cover_line("Variedade:", visit.variety or "")
-    add_cover_line("Consultor:", consultant_name or "")
-
-    period_text = f"{start_date} → {last_date}"
-    add_cover_line("Período de acompanhamento:", period_text)
-
-    story.append(Spacer(1, 25))
-    story.append(Paragraph(
-        "<i>Relatório cumulativo de visitas técnicas realizadas neste ciclo fenológico.</i>",
-        styles["SmallHint"]
-    ))
 
     story.append(PageBreak())
 
-
-    # ============================
-    # 🔧 COMPRESSÃO DE IMAGENS
-    # ============================
+    # =====================================================
+    # 🔧 FUNÇÃO DE COMPRESSÃO
+    # =====================================================
     def smart_params(total):
-        if total <= 4:
-            return (1600, 85)
-        if total <= 8:
-            return (1400, 78)
-        if total <= 16:
-            return (1200, 70)
+        if total <= 4: return (1600, 85)
+        if total <= 8: return (1400, 78)
+        if total <= 16: return (1200, 70)
         return (1000, 60)
 
-    def compress_image(path, total):
+    def compress(path, total):
         try:
             img = PILImage.open(path)
             max_px, quality = smart_params(total)
@@ -705,173 +568,111 @@ def export_visit_pdf(visit_id):
             img.save(buf, "JPEG", optimize=True, quality=quality)
             buf.seek(0)
             return buf
-        except Exception:
-            # fallback
+        except:
             return open(path, "rb")
 
-    # ============================
-    # 📄 VISITAS (LAYOUT MODERNO)
-    # ============================
-    styles.add(ParagraphStyle(
-    name="VisitTitleSmall",
-    fontSize=12,
-    leading=14,
-    alignment=TA_CENTER,
-    textColor=colors.HexColor("#BBF7D0"),
-    spaceAfter=4
-    ))
+    # =====================================================
+    # 🟢 VISITAS — BLOCO FINAL AJUSTADO
+    # =====================================================
+    for idx, v in enumerate(visits_to_include, start=1):
 
-    styles.add(ParagraphStyle(
-        name="VisitStageBig",
-        fontSize=18,
-        leading=22,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#FFFFFF"),
-        spaceAfter=10
-    ))
+        # título VISITA 1
+        story.append(Paragraph(f"VISITA {idx}", styles["VisitTitleSmall"]))
 
-    styles.add(ParagraphStyle(
-        name="VisitSectionLabel",
-        fontSize=14,
-        leading=18,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#A5D6A7"),
-        spaceBefore=16,
-        spaceAfter=4
-    ))
+        # fase / recomendação grande
+        story.append(Paragraph(v.recommendation or "—", styles["VisitStageBig"]))
 
-    styles.add(ParagraphStyle(
-        name="VisitSectionValue",
-        fontSize=16,
-        leading=20,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#FFFFFF"),
-        spaceAfter=12
-    ))
+        # data
+        try:
+            dtext = v.date.strftime("%d/%m/%Y")
+        except:
+            dtext = str(v.date)
+        story.append(Paragraph(dtext, styles["VisitDateCenter"]))
 
-   
+        # fenologia observada
+        if v.fenologia_real:
+            story.append(Paragraph("Fenologia Observada", styles["VisitSectionLabel"]))
+            story.append(Paragraph(v.fenologia_real, styles["VisitSectionValue"]))
 
-        # ============================
-        # 📸 FOTOS DA VISITA
-        # ============================
+        # Diagnóstico
+        if v.diagnosis:
+            story.append(Paragraph("Diagnóstico", styles["VisitSectionLabel"]))
+            story.append(Paragraph(v.diagnosis, styles["VisitSectionValue"]))
+
+        # Recomendações grandes e centralizadas
+        if v.recommendation:
+            story.append(Paragraph("Recomendações Técnicas", styles["VisitSectionLabel"]))
+            story.append(Paragraph(v.recommendation, styles["VisitSectionValue"]))
+
+        story.append(Paragraph("<hr/>", styles["HrLine"]))
+
+        # ---------------------
+        # FOTOS
+        # ---------------------
         if hasattr(v, "_valid_photos") and v._valid_photos:
-            story.append(Paragraph("📸 Fotos da visita", styles["SectionSubTitle"]))
-            story.append(Spacer(1, 4))
-
             photos = v._valid_photos
             total = len(photos)
 
-            # layout dinâmico
-            if total <= 3:
-                cols = 1
-            elif total <= 6:
-                cols = 2
-            else:
-                cols = 3
+            if total <= 3: cols = 1
+            elif total <= 6: cols = 2
+            else: cols = 3
 
-            col_width = (A4[0] - 100) / cols  # margem aproximada
-            max_width = 220 if cols == 1 else (180 if cols == 2 else 150)
+            max_width = 220 if cols == 1 else 160
+            col_width = (A4[0] - 100) / cols
 
-            row_cells = []
-            count_in_row = 0
+            row = []
+            count = 0
 
             for i, photo in enumerate(photos, 1):
-                file_name = os.path.basename(photo.url)
-                photo_path = os.path.join(uploads_dir, file_name)
-                if not os.path.exists(photo_path):
+                f = os.path.basename(photo.url)
+                p = os.path.join(uploads_dir, f)
+                if not os.path.exists(p):
                     continue
 
-                compressed = compress_image(photo_path, total)
+                buf = compress(p, total)
+                img = PILImage.open(buf)
+                buf.seek(0)
+                aspect = img.height / img.width
 
-                # pegar aspect ratio
-                img_obj = PILImage.open(compressed)
-                compressed.seek(0)
-                aspect = img_obj.height / float(img_obj.width)
+                img_obj = Image(buf, width=max_width, height=max_width * aspect)
 
-                img = Image(compressed, width=max_width, height=max_width * aspect)
+                caption = photo.caption or ""
+                if photo.latitude:
+                    caption += f"<br/><small>📍 {photo.latitude:.5f}, {photo.longitude:.5f}</small>"
 
-                # legenda
-                base_caption = getattr(photo, "caption", "") or ""
-                gps_caption = ""
-                if getattr(photo, "latitude", None) is not None and getattr(photo, "longitude", None) is not None:
-                    gps_caption = f"📍 {photo.latitude:.5f}, {photo.longitude:.5f}"
+                cell = [img_obj, Paragraph(caption, styles["Caption"])]
 
-                full_caption = base_caption
-                if gps_caption:
-                    if full_caption:
-                        full_caption += "<br/><small>" + gps_caption + "</small>"
-                    else:
-                        full_caption = "<small>" + gps_caption + "</small>"
+                row.append(cell)
+                count += 1
 
-                caption_par = Paragraph(f"<i>{full_caption}</i>" if full_caption else "", styles["Caption"])
-
-                cell = [img, caption_par]
-                row_cells.append(cell)
-                count_in_row += 1
-
-                # Se completou a linha ou é a última foto, cria a tabela
-                if count_in_row == cols or i == total:
-                    # Table espera uma lista de linhas, cada linha lista de células
-                    story.append(
-                        Table(
-                            [row_cells],
-                            colWidths=[col_width] * len(row_cells),
-                            hAlign="CENTER",
-                            style=TableStyle([
-                                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                                ("BOX", (0,0), (-1,-1), 0.1, colors.Color(1,1,1,0.08)),
-                            ])
-                        )
-                    )
+                if count == cols or i == total:
+                    story.append(Table(
+                        [row],
+                        colWidths=[col_width] * len(row),
+                        hAlign="CENTER",
+                        style=TableStyle([
+                            ("VALIGN", (0,0), (-1,-1), "MIDDLE")
+                        ])
+                    ))
                     story.append(Spacer(1, 14))
-                    row_cells = []
-                    count_in_row = 0
+                    row = []
+                    count = 0
 
-        else:
-            story.append(Paragraph("<i>Sem fotos anexadas para esta visita.</i>", styles["VisitBody"]))
-
-        # PageBreak entre visitas, menos na última
         if idx < len(visits_to_include):
             story.append(PageBreak())
 
-    # ============================
-    # 🏁 RODAPÉ
-    # ============================
-    story.append(Spacer(1, 20))
-    story.append(Paragraph(
-        "<b>NutriCRM</b>",
-        styles["Footer"]
-    ))
-    story.append(Paragraph(
-        "Relatório técnico cumulativo de acompanhamento — ciclo fenológico completo.",
-        styles["Footer"]
-    ))
+    # =====================================================
+    # 🏁 Rodapé
+    # =====================================================
+    story.append(Paragraph("<b>NutriCRM</b>", styles["Footer"]))
+    story.append(Paragraph("Relatório cumulativo — ciclo fenológico", styles["Footer"]))
 
-    # ============================
-    # FINALIZA PDF
-    # ============================
-    doc.build(
-        story,
-        onFirstPage=draw_cover_background,
-        onLaterPages=draw_dark_background
-    )
-
+    doc.build(story, onFirstPage=draw_cover_background, onLaterPages=draw_dark_background)
     buffer.seek(0)
 
-    client_name_safe = client.name if client else "Cliente"
-    variety_safe = visit.variety or ""
-    rec_safe = visit.recommendation or "Visita"
+    filename = f"{client.name if client else 'Cliente'} - {visit.variety or ''} - Relatório.pdf"
 
-    filename = f"{client_name_safe} - {variety_safe or 'Variedade'} - {rec_safe}.pdf"
-
-    return send_file(
-        buffer,
-        mimetype="application/pdf",
-        as_attachment=True,
-        download_name=filename
-    )
-
-
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 
 
