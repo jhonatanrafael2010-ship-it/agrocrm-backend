@@ -352,6 +352,28 @@ def create_visit():
             v.culture = planting.culture
             v.variety = planting.variety
 
+    
+    # ===========================================
+    # 🌿 SALVAR PRODUTOS NA CRIAÇÃO DA VISITA
+    # ===========================================
+    products = data.get("products", [])
+    from models import VisitProduct
+
+    for p in products:
+        vp = VisitProduct(
+            visit_id=v.id,
+            product_name=p.get("product_name", ""),
+            dose=p.get("dose", ""),
+            unit=p.get("unit", ""),
+            application_date=(
+                datetime.strptime(p["application_date"], "%Y-%m-%d")
+                if p.get("application_date")
+                else None
+            ),
+        )
+        db.session.add(vp)
+
+
     db.session.add(v)
     db.session.commit()
     return jsonify(message="visita criada", visit=v.to_dict()), 201
@@ -973,6 +995,31 @@ def update_visit(vid: int):
         v.status = data['status'].strip().lower()
 
     print("🧠 Atualizando visita", vid, "com dados:", data)
+
+    # =====================================================
+    # 🌿 ATUALIZAÇÃO DE PRODUTOS NA EDIÇÃO / CONCLUSÃO
+    # =====================================================
+    if "products" in data:
+        from models import VisitProduct
+
+        # Apagar produtos antigos
+        VisitProduct.query.filter_by(visit_id=vid).delete()
+
+        # Inserir lista nova
+        for p in data["products"]:
+            vp = VisitProduct(
+                visit_id=vid,
+                product_name=p.get("product_name", ""),
+                dose=p.get("dose", ""),
+                unit=p.get("unit", ""),
+                application_date=(
+                    datetime.strptime(p["application_date"], "%Y-%m-%d")
+                    if p.get("application_date")
+                    else None
+                ),
+            )
+            db.session.add(vp)
+
     db.session.commit()
     return jsonify(message='visit updated', visit=v.to_dict() | {"status": v.status}), 200
 
