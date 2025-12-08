@@ -712,48 +712,44 @@ def export_visit_pdf(visit_id):
     # ============================
     # 📄 VISITAS (LAYOUT MODERNO)
     # ============================
-    for idx, v in enumerate(visits_to_include, start=1):
-        # Título da visita
-        titulo_visita = v.recommendation or "Sem título"
-        story.append(Paragraph(f"<b>VISITA {idx}</b> — {titulo_visita}", styles["SectionTitle"]))
+    styles.add(ParagraphStyle(
+    name="VisitTitleSmall",
+    fontSize=12,
+    leading=14,
+    alignment=TA_CENTER,
+    textColor=colors.HexColor("#BBF7D0"),
+    spaceAfter=4
+    ))
 
-        # Metadados da visita
-        meta_lines = []
+    styles.add(ParagraphStyle(
+        name="VisitStageBig",
+        fontSize=18,
+        leading=22,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#FFFFFF"),
+        spaceAfter=10
+    ))
 
-        # Data
-        try:
-            meta_lines.append(f"📅 {v.date.strftime('%d/%m/%Y')}")
-        except Exception:
-            if isinstance(v.date, str):
-                meta_lines.append(f"📅 {v.date}")
+    styles.add(ParagraphStyle(
+        name="VisitSectionLabel",
+        fontSize=14,
+        leading=18,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#A5D6A7"),
+        spaceBefore=16,
+        spaceAfter=4
+    ))
 
+    styles.add(ParagraphStyle(
+        name="VisitSectionValue",
+        fontSize=16,
+        leading=20,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#FFFFFF"),
+        spaceAfter=12
+    ))
 
-        # Localização (somente se tiver)
-        if getattr(v, "latitude", None) is not None and getattr(v, "longitude", None) is not None:
-            meta_lines.append(f"📍 Localização: {v.latitude:.5f}, {v.longitude:.5f}")
-
-        if v.fenologia_real:
-            meta_lines.append(f"🌱 Fenologia observada: {v.fenologia_real}")
-
-
-        if meta_lines:
-            story.append(Paragraph("<br/>".join(meta_lines), styles["VisitMeta"]))
-
-        # Diagnóstico (se existir)
-        diagnosis = getattr(v, "diagnosis", None)
-        if diagnosis:
-            story.append(Paragraph("<b>Diagnóstico</b>", styles["SectionSubTitle"]))
-            story.append(Paragraph(diagnosis, styles["VisitBody"]))
-
-        # Recomendações (se existir)
-        if v.recommendation:
-            story.append(Paragraph("<b>Recomendações Técnicas</b>", styles["SectionSubTitle"]))
-            story.append(Paragraph(v.recommendation, styles["VisitBody"]))
-
-        story.append(Spacer(1, 8))
-        story.append(Paragraph("<hr width='85%' color='#333333'/>", styles["SmallHint"]))
-        story.append(Spacer(1, 8))
-
+   
 
         # ============================
         # 📸 FOTOS DA VISITA
