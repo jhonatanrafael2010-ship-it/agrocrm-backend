@@ -385,11 +385,11 @@ def create_visit():
 @cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
 def export_visit_pdf(visit_id):
     """
-    📄 Gera um PDF cumulativo:
-    - Capa moderna
+    📄 Gera um PDF cumulativo moderno:
+    - Capa estilizada
     - Visitas do ciclo
-    - Fotos otimizadas
-    - Layout dark premium
+    - Layout centralizado
+    - Fotos com compressão inteligente
     """
 
     # =====================================================
@@ -460,10 +460,9 @@ def export_visit_pdf(visit_id):
         canvas.setFillColor(colors.HexColor("#0E0E0E"))
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
 
-        # faixa verde
+        # faixa verde lateral
         canvas.setFillColor(colors.HexColor("#00E676"))
         canvas.rect(0, 0, 28, A4[1], fill=True, stroke=False)
-
         canvas.restoreState()
 
     doc = SimpleDocTemplate(
@@ -526,6 +525,21 @@ def export_visit_pdf(visit_id):
         spaceBefore=10,
         spaceAfter=16
     ))
+    styles.add(ParagraphStyle(
+        name="Caption",
+        alignment=TA_CENTER,
+        fontSize=9,
+        textColor=colors.HexColor("#BDBDBD"),
+        spaceBefore=4,
+        spaceAfter=10
+    ))
+    styles.add(ParagraphStyle(
+        name="Footer",
+        alignment=TA_CENTER,
+        fontSize=9,
+        textColor=colors.HexColor("#9E9E9E"),
+        spaceBefore=20
+    ))
 
     # =====================================================
     # 📘 CAPA
@@ -572,24 +586,21 @@ def export_visit_pdf(visit_id):
             return open(path, "rb")
 
     # =====================================================
-    # 🟢 VISITAS — BLOCO FINAL AJUSTADO
+    # 🟢 VISITAS
     # =====================================================
     for idx, v in enumerate(visits_to_include, start=1):
 
-        # título VISITA 1
         story.append(Paragraph(f"VISITA {idx}", styles["VisitTitleSmall"]))
-
-        # fase / recomendação grande
         story.append(Paragraph(v.recommendation or "—", styles["VisitStageBig"]))
 
-        # data
+        # Data
         try:
             dtext = v.date.strftime("%d/%m/%Y")
         except:
             dtext = str(v.date)
         story.append(Paragraph(dtext, styles["VisitDateCenter"]))
 
-        # fenologia observada
+        # Fenologia
         if v.fenologia_real:
             story.append(Paragraph("Fenologia Observada", styles["VisitSectionLabel"]))
             story.append(Paragraph(v.fenologia_real, styles["VisitSectionValue"]))
@@ -599,24 +610,22 @@ def export_visit_pdf(visit_id):
             story.append(Paragraph("Diagnóstico", styles["VisitSectionLabel"]))
             story.append(Paragraph(v.diagnosis, styles["VisitSectionValue"]))
 
-        # Recomendações grandes e centralizadas
+        # Recomendações
         if v.recommendation:
             story.append(Paragraph("Recomendações Técnicas", styles["VisitSectionLabel"]))
             story.append(Paragraph(v.recommendation, styles["VisitSectionValue"]))
 
         story.append(Paragraph("<hr/>", styles["HrLine"]))
 
-        # ---------------------
-        # FOTOS
-        # ---------------------
+        # =====================================================
+        # 📸 FOTOS
+        # =====================================================
         if hasattr(v, "_valid_photos") and v._valid_photos:
+
             photos = v._valid_photos
             total = len(photos)
 
-            if total <= 3: cols = 1
-            elif total <= 6: cols = 2
-            else: cols = 3
-
+            cols = 1 if total <= 3 else (2 if total <= 6 else 3)
             max_width = 220 if cols == 1 else 160
             col_width = (A4[0] - 100) / cols
 
@@ -624,8 +633,9 @@ def export_visit_pdf(visit_id):
             count = 0
 
             for i, photo in enumerate(photos, 1):
-                f = os.path.basename(photo.url)
-                p = os.path.join(uploads_dir, f)
+
+                file_name = os.path.basename(photo.url)
+                p = os.path.join(uploads_dir, file_name)
                 if not os.path.exists(p):
                     continue
 
@@ -639,7 +649,6 @@ def export_visit_pdf(visit_id):
                 # legenda
                 base_caption = getattr(photo, "caption", "") or ""
 
-                # latitude/longitude podem não existir em fotos antigas → evitar crash
                 lat = getattr(photo, "latitude", None)
                 lon = getattr(photo, "longitude", None)
 
@@ -647,28 +656,24 @@ def export_visit_pdf(visit_id):
                 if lat is not None and lon is not None:
                     gps_caption = f"📍 {lat:.5f}, {lon:.5f}"
 
-                full_caption = base_caption
+                final_caption = base_caption
                 if gps_caption:
-                    if full_caption:
-                        full_caption += "<br/><small>" + gps_caption + "</small>"
-                    else:
-                        full_caption = "<small>" + gps_caption + "</small>"
+                    final_caption += f"<br/><small>{gps_caption}</small>"
 
+                caption_par = Paragraph(final_caption, styles["Caption"])
 
-                cell = [img_obj, Paragraph(caption, styles["Caption"])]
-
-                row.append(cell)
+                row.append([img_obj, caption_par])
                 count += 1
 
                 if count == cols or i == total:
-                    story.append(Table(
-                        [row],
-                        colWidths=[col_width] * len(row),
-                        hAlign="CENTER",
-                        style=TableStyle([
-                            ("VALIGN", (0,0), (-1,-1), "MIDDLE")
-                        ])
-                    ))
+                    story.append(
+                        Table(
+                            [row],
+                            colWidths=[col_width] * len(row),
+                            hAlign="CENTER",
+                            style=TableStyle([("VALIGN", (0,0), (-1,-1), "MIDDLE")])
+                        )
+                    )
                     story.append(Spacer(1, 14))
                     row = []
                     count = 0
@@ -688,6 +693,7 @@ def export_visit_pdf(visit_id):
     filename = f"{client.name if client else 'Cliente'} - {visit.variety or ''} - Relatório.pdf"
 
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
 
 
 
