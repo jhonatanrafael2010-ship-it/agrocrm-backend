@@ -542,14 +542,45 @@ def export_visit_pdf(visit_id):
     ))
 
     # =====================================================
-    # 📘 CAPA
+    # 📘 CAPA COMPLETA
     # =====================================================
     story = []
     story.append(Spacer(1, 80))
-    story.append(Paragraph("RELATÓRIO TÉCNICO DE ACOMPANHAMENTO", styles["Title"]))
-    story.append(Spacer(1, 20))
 
-    # Logo
+    # Título principal
+    title_style = ParagraphStyle(
+        name="CoverTitle",
+        fontSize=22,
+        leading=26,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#E0F2F1"),
+        spaceAfter=6,
+    )
+    subtitle_style = ParagraphStyle(
+        name="CoverSubtitle",
+        fontSize=14,
+        leading=18,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#80CBC4"),
+        spaceAfter=25,
+    )
+
+    story.append(Paragraph("RELATÓRIO TÉCNICO DE", title_style))
+    story.append(Paragraph("ACOMPANHAMENTO", title_style))
+    story.append(Paragraph("Ciclo Fenológico", subtitle_style))
+
+    # Nome grande do cliente
+    client_style = ParagraphStyle(
+        name="ClientBig",
+        fontSize=22,
+        leading=28,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#FFFFFF"),
+        spaceAfter=35,
+    )
+    story.append(Paragraph(client.name.strip(), client_style))
+
+    # Logo abaixo do título e nome
     try:
         static_dir = os.path.join(os.path.dirname(__file__), "static")
         logo_path = os.path.join(static_dir, "nutricrm_logo.png")
@@ -562,7 +593,44 @@ def export_visit_pdf(visit_id):
     except:
         pass
 
+    # Informações detalhadas (cultura, variedade etc.)
+    info_label = ParagraphStyle(
+        name="InfoLabel",
+        fontSize=12,
+        alignment=TA_LEFT,
+        textColor=colors.HexColor("#A5D6A7"),
+    )
+    info_value = ParagraphStyle(
+        name="InfoValue",
+        fontSize=12,
+        alignment=TA_LEFT,
+        textColor=colors.HexColor("#E0E0E0"),
+        spaceAfter=6
+    )
+
+    def add_info(label, value):
+        if value:
+            story.append(Paragraph(label, info_label))
+            story.append(Paragraph(value, info_value))
+
+    add_info("Propriedade:", property_.name if property_ else "")
+    add_info("Talhão:", plot.name if plot else "")
+    add_info("Cultura:", visit.culture or "")
+    add_info("Variedade:", visit.variety or "")
+    add_info("Consultor:", consultant_name or "")
+
+    # Período do ciclo
+    if visits_to_include:
+        start_date = visits_to_include[0].date.strftime("%d/%m/%Y")
+        end_date = visits_to_include[-1].date.strftime("%d/%m/%Y")
+    else:
+        start_date = end_date = visit.date.strftime("%d/%m/%Y")
+
+    add_info("Período de acompanhamento:", f"{start_date} → {end_date}")
+
+    story.append(Spacer(1, 40))
     story.append(PageBreak())
+
 
     # =====================================================
     # 🔧 FUNÇÃO DE COMPRESSÃO
