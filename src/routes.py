@@ -23,6 +23,8 @@ from PIL import Image as PILImage
 from flask_cors import cross_origin
 from reportlab.platypus import PageBreak
 from flask import render_template_string
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+
 
 
 
