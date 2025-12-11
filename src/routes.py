@@ -657,36 +657,33 @@ def export_visit_pdf(visit_id):
             return open(path, "rb")
 
     # =====================================================
-    # 🟢 VISITAS
+    # 🟢 VISITAS (ORDEM AJUSTADA)
     # =====================================================
     for idx, v in enumerate(visits_to_include, start=1):
 
+        # VISITA + número
         story.append(Paragraph(f"VISITA {idx}", styles["VisitTitleSmall"]))
-        story.append(Paragraph(v.recommendation or "—", styles["VisitStageBig"]))
 
-        # Data
+        # 1) Fenologia REAL como título grande
+        story.append(Paragraph(v.fenologia_real or "—", styles["VisitStageBig"]))
+
+        # 2) Data
         try:
             dtext = v.date.strftime("%d/%m/%Y")
         except:
             dtext = str(v.date)
         story.append(Paragraph(dtext, styles["VisitDateCenter"]))
 
-        # Fenologia
-        if v.fenologia_real:
-            story.append(Paragraph("Fenologia Observada", styles["VisitSectionLabel"]))
-            story.append(Paragraph(v.fenologia_real, styles["VisitSectionValue"]))
+        # Espaço entre o título e o conteúdo
+        story.append(Spacer(1, 20))
 
-        # Diagnóstico
-        if v.diagnosis:
-            story.append(Paragraph("Diagnóstico", styles["VisitSectionLabel"]))
-            story.append(Paragraph(v.diagnosis, styles["VisitSectionValue"]))
-
-        # Recomendações
+        # 3) Recomendações Técnicas (SOMENTE AQUI)
         if v.recommendation:
             story.append(Paragraph("Recomendações Técnicas", styles["VisitSectionLabel"]))
             story.append(Paragraph(v.recommendation, styles["VisitSectionValue"]))
 
         story.append(Paragraph("<hr/>", styles["HrLine"]))
+
 
         # =====================================================
         # 📸 FOTOS
