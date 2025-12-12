@@ -586,7 +586,7 @@ def export_visit_pdf(visit_id):
     # Logo abaixo do título e nome
     try:
         static_dir = os.path.join(os.path.dirname(__file__), "static")
-        logo_path = os.path.join(static_dir, "nutricrm_logo.png")
+        logo_path = os.path.join(static_dir, "nutricrm_logo_pdf.png")
         if os.path.exists(logo_path):
             img = PILImage.open(logo_path)
             aspect = img.height / float(img.width)
