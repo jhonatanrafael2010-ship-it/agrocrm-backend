@@ -26,6 +26,8 @@ from flask import render_template_string
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
 from xml.sax.saxutils import escape
 import re
+import unicodedata
+from flask import send_file
 
 
 
@@ -398,7 +400,7 @@ def export_visit_pdf(visit_id):
     - Fotos com compressão inteligente
     """
 
-    # =====================================================
+        # =====================================================
     # 🔎 BUSCA DADOS PRINCIPAIS
     # =====================================================
     visit = Visit.query.get_or_404(visit_id)
@@ -451,6 +453,68 @@ def export_visit_pdf(visit_id):
     visits_to_include = filtered
 
     # =====================================================
+    # ✅ PRESERVAR QUEBRA DE LINHA NAS OBSERVAÇÕES
+    # =====================================================
+    def nl2br(text: str) -> str:
+        if not text:
+            return ""
+        t = text.replace("\r\n", "\n").replace("\r", "\n")
+        t = escape(t)  # evita quebrar markup no Paragraph
+        return t.replace("\n", "<br/>")
+
+    # =====================================================
+    # 🖼️ LOGOS (rodapé em todas as páginas)
+    # =====================================================
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+
+    nutriverde_logo_path = os.path.join(static_dir, "nutriverde_logo_pdf.png")
+
+    def slugify_variety(name: str) -> str:
+        if not name:
+            return ""
+        s = unicodedata.normalize("NFD", name)
+        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")  # remove acento
+        s = s.strip().lower()
+        s = re.sub(r"\s+", "_", s)          # espaços -> _
+        s = re.sub(r"[^a-z0-9_]+", "", s)   # limpa resto
+        return s
+
+    variety_slug = slugify_variety(visit.variety or "")
+    variety_logo_path = os.path.join(static_dir, "variety_logos", f"{variety_slug}.png")
+
+    def draw_footer(canvas, doc):
+        canvas.saveState()
+
+        y = 18
+        pad = 50
+
+        # Logo Variedade (esquerda) — menor
+        if variety_slug and os.path.exists(variety_logo_path):
+            try:
+                img = PILImage.open(variety_logo_path)
+                aspect = img.height / float(img.width)
+                w = 55
+                h = w * aspect
+                x = pad
+                canvas.drawImage(variety_logo_path, x, y, width=w, height=h, mask="auto")
+            except:
+                pass
+
+        # Logo Nutriverde (direita) — maior
+        if os.path.exists(nutriverde_logo_path):
+            try:
+                img = PILImage.open(nutriverde_logo_path)
+                aspect = img.height / float(img.width)
+                w = 70
+                h = w * aspect
+                x = A4[0] - pad - w
+                canvas.drawImage(nutriverde_logo_path, x, y, width=w, height=h, mask="auto")
+            except:
+                pass
+
+        canvas.restoreState()
+
+    # =====================================================
     # 📝 PREPARAÇÃO DO PDF
     # =====================================================
     buffer = BytesIO()
@@ -460,16 +524,17 @@ def export_visit_pdf(visit_id):
         canvas.setFillColor(colors.HexColor("#101010"))
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
         canvas.restoreState()
+        draw_footer(canvas, doc)
 
     def draw_cover_background(canvas, doc):
         canvas.saveState()
         canvas.setFillColor(colors.HexColor("#0E0E0E"))
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
 
-        # faixa verde lateral
         canvas.setFillColor(colors.HexColor("#00E676"))
         canvas.rect(0, 0, 28, A4[1], fill=True, stroke=False)
         canvas.restoreState()
+        draw_footer(canvas, doc)
 
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
@@ -484,80 +549,47 @@ def export_visit_pdf(visit_id):
     # =====================================================
     styles.add(ParagraphStyle(
         name="VisitTitleSmall",
-        fontSize=12,
-        leading=14,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#BBF7D0"),
-        spaceAfter=8
+        fontSize=12, leading=14, alignment=TA_CENTER,
+        textColor=colors.HexColor("#BBF7D0"), spaceAfter=8
     ))
     styles.add(ParagraphStyle(
         name="VisitStageBig",
-        fontSize=22,
-        leading=26,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#FFFFFF"),
-        spaceAfter=14
+        fontSize=22, leading=26, alignment=TA_CENTER,
+        textColor=colors.HexColor("#FFFFFF"), spaceAfter=14
     ))
     styles.add(ParagraphStyle(
         name="VisitDateCenter",
-        fontSize=12,
-        leading=14,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#E0E0E0"),
-        spaceAfter=14
+        fontSize=12, leading=14, alignment=TA_CENTER,
+        textColor=colors.HexColor("#E0E0E0"), spaceAfter=14
     ))
     styles.add(ParagraphStyle(
         name="VisitSectionLabel",
-        fontSize=14,
-        leading=16,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#A5D6A7"),
-        spaceBefore=10,
-        spaceAfter=4
+        fontSize=14, leading=16, alignment=TA_CENTER,
+        textColor=colors.HexColor("#A5D6A7"), spaceBefore=10, spaceAfter=4
     ))
     styles.add(ParagraphStyle(
         name="VisitSectionValue",
-        fontSize=16,
-        leading=20,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#FFFFFF"),
-        spaceAfter=14
+        fontSize=16, leading=20, alignment=TA_CENTER,
+        textColor=colors.HexColor("#FFFFFF"), spaceAfter=14
     ))
     styles.add(ParagraphStyle(
         name="HrLine",
-        alignment=TA_CENTER,
-        fontSize=10,
+        alignment=TA_CENTER, fontSize=10,
         textColor=colors.HexColor("#333333"),
-        spaceBefore=10,
-        spaceAfter=16
+        spaceBefore=10, spaceAfter=16
     ))
     styles.add(ParagraphStyle(
         name="Caption",
-        alignment=TA_CENTER,
-        fontSize=9,
+        alignment=TA_CENTER, fontSize=9,
         textColor=colors.HexColor("#BDBDBD"),
-        spaceBefore=4,
-        spaceAfter=10
+        spaceBefore=4, spaceAfter=10
     ))
     styles.add(ParagraphStyle(
         name="Footer",
-        alignment=TA_CENTER,
-        fontSize=9,
+        alignment=TA_CENTER, fontSize=9,
         textColor=colors.HexColor("#9E9E9E"),
         spaceBefore=20
     ))
-
-    # =====================================================
-    # ✅ PRESERVAR QUEBRA DE LINHA NAS OBSERVAÇÕES
-    # =====================================================
-    from xml.sax.saxutils import escape
-
-    def nl2br(text: str) -> str:
-        if not text:
-            return ""
-        t = text.replace("\r\n", "\n").replace("\r", "\n")
-        t = escape(t)  # evita quebrar markup no Paragraph
-        return t.replace("\n", "<br/>")
 
     # =====================================================
     # 📘 CAPA COMPLETA
@@ -565,42 +597,30 @@ def export_visit_pdf(visit_id):
     story = []
     story.append(Spacer(1, 80))
 
-    # Título principal
     title_style = ParagraphStyle(
         name="CoverTitle",
-        fontSize=22,
-        leading=26,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#E0F2F1"),
-        spaceAfter=6,
+        fontSize=22, leading=26, alignment=TA_CENTER,
+        textColor=colors.HexColor("#E0F2F1"), spaceAfter=6
     )
     subtitle_style = ParagraphStyle(
         name="CoverSubtitle",
-        fontSize=14,
-        leading=18,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#80CBC4"),
-        spaceAfter=25,
+        fontSize=14, leading=18, alignment=TA_CENTER,
+        textColor=colors.HexColor("#80CBC4"), spaceAfter=25
     )
 
     story.append(Paragraph("RELATÓRIO TÉCNICO DE", title_style))
     story.append(Paragraph("ACOMPANHAMENTO", title_style))
     story.append(Paragraph("Ciclo Fenológico", subtitle_style))
 
-    # Nome grande do cliente
     client_style = ParagraphStyle(
         name="ClientBig",
-        fontSize=22,
-        leading=28,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#FFFFFF"),
-        spaceAfter=35,
+        fontSize=22, leading=28, alignment=TA_CENTER,
+        textColor=colors.HexColor("#FFFFFF"), spaceAfter=35
     )
-    story.append(Paragraph(client.name.strip(), client_style))
+    story.append(Paragraph((client.name or "Cliente").strip(), client_style))
 
-    # Logo abaixo do título e nome
+    # Logo do PDF (NutriCRM)
     try:
-        static_dir = os.path.join(os.path.dirname(__file__), "static")
         logo_path = os.path.join(static_dir, "nutricrm_logo_pdf.png")
         if os.path.exists(logo_path):
             img = PILImage.open(logo_path)
@@ -611,25 +631,19 @@ def export_visit_pdf(visit_id):
     except:
         pass
 
-    # Informações detalhadas (cultura, variedade etc.)
     info_label = ParagraphStyle(
-        name="InfoLabel",
-        fontSize=12,
-        alignment=TA_LEFT,
-        textColor=colors.HexColor("#A5D6A7"),
+        name="InfoLabel", fontSize=12, alignment=TA_LEFT,
+        textColor=colors.HexColor("#A5D6A7")
     )
     info_value = ParagraphStyle(
-        name="InfoValue",
-        fontSize=12,
-        alignment=TA_LEFT,
-        textColor=colors.HexColor("#E0E0E0"),
-        spaceAfter=6
+        name="InfoValue", fontSize=12, alignment=TA_LEFT,
+        textColor=colors.HexColor("#E0E0E0"), spaceAfter=6
     )
 
     def add_info(label, value):
         if value:
             story.append(Paragraph(label, info_label))
-            story.append(Paragraph(value, info_value))
+            story.append(Paragraph(str(value), info_value))
 
     add_info("Propriedade:", property_.name if property_ else "")
     add_info("Talhão:", plot.name if plot else "")
@@ -637,7 +651,6 @@ def export_visit_pdf(visit_id):
     add_info("Variedade:", visit.variety or "")
     add_info("Consultor:", consultant_name or "")
 
-    # Período do ciclo
     if visits_to_include:
         start_date = visits_to_include[0].date.strftime("%d/%m/%Y")
         end_date = visits_to_include[-1].date.strftime("%d/%m/%Y")
@@ -650,7 +663,7 @@ def export_visit_pdf(visit_id):
     story.append(PageBreak())
 
     # =====================================================
-    # 🔧 FUNÇÃO DE COMPRESSÃO
+    # 🔧 COMPRESSÃO
     # =====================================================
     def smart_params(total):
         if total <= 4: return (1600, 85)
@@ -675,32 +688,24 @@ def export_visit_pdf(visit_id):
     # =====================================================
     for idx, v in enumerate(visits_to_include, start=1):
 
-        # VISITA + número
         story.append(Paragraph(f"VISITA {idx}", styles["VisitTitleSmall"]))
-
-        # 1) Fenologia REAL como título grande
         story.append(Paragraph(v.fenologia_real or "—", styles["VisitStageBig"]))
 
-        # 2) Data
         try:
             dtext = v.date.strftime("%d/%m/%Y")
         except:
             dtext = str(v.date)
         story.append(Paragraph(dtext, styles["VisitDateCenter"]))
 
-        # Espaço entre o título e o conteúdo
         story.append(Spacer(1, 20))
 
-        # 3) Observações (com quebra de linha preservada)
         if v.recommendation:
             story.append(Paragraph("Observações", styles["VisitSectionLabel"]))
             story.append(Paragraph(nl2br(v.recommendation), styles["VisitSectionValue"]))
 
         story.append(Paragraph("<hr/>", styles["HrLine"]))
 
-        # =====================================================
-        # 📸 FOTOS
-        # =====================================================
+        # Fotos
         if hasattr(v, "_valid_photos") and v._valid_photos:
 
             photos = v._valid_photos
@@ -727,7 +732,6 @@ def export_visit_pdf(visit_id):
 
                 img_obj = Image(buf, width=max_width, height=max_width * aspect)
 
-                # legenda
                 base_caption = getattr(photo, "caption", "") or ""
 
                 lat = getattr(photo, "latitude", None)
@@ -737,9 +741,9 @@ def export_visit_pdf(visit_id):
                 if lat is not None and lon is not None:
                     gps_caption = f"📍 {lat:.5f}, {lon:.5f}"
 
-                final_caption = base_caption
+                final_caption = escape(base_caption)
                 if gps_caption:
-                    final_caption += f"<br/><small>{gps_caption}</small>"
+                    final_caption += f"<br/><small>{escape(gps_caption)}</small>"
 
                 caption_par = Paragraph(final_caption, styles["Caption"])
 
@@ -752,7 +756,7 @@ def export_visit_pdf(visit_id):
                             [row],
                             colWidths=[col_width] * len(row),
                             hAlign="CENTER",
-                            style=TableStyle([("VALIGN", (0,0), (-1,-1), "MIDDLE")])
+                            style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")])
                         )
                     )
                     story.append(Spacer(1, 14))
@@ -762,9 +766,7 @@ def export_visit_pdf(visit_id):
         if idx < len(visits_to_include):
             story.append(PageBreak())
 
-    # =====================================================
-    # 🏁 Rodapé
-    # =====================================================
+    # Rodapé texto final
     story.append(Paragraph("<b>NutriCRM</b>", styles["Footer"]))
     story.append(Paragraph("Relatório cumulativo — ciclo fenológico", styles["Footer"]))
 
@@ -772,7 +774,6 @@ def export_visit_pdf(visit_id):
     buffer.seek(0)
 
     filename = f"{client.name if client else 'Cliente'} - {visit.variety or ''} - Relatório.pdf"
-
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 
