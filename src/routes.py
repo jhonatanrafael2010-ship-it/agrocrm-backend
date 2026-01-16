@@ -24,6 +24,9 @@ from flask_cors import cross_origin
 from reportlab.platypus import PageBreak
 from flask import render_template_string
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
+from xml.sax.saxutils import escape
+import re
+
 
 
 
@@ -545,6 +548,18 @@ def export_visit_pdf(visit_id):
     ))
 
     # =====================================================
+    # ✅ PRESERVAR QUEBRA DE LINHA NAS OBSERVAÇÕES
+    # =====================================================
+    from xml.sax.saxutils import escape
+
+    def nl2br(text: str) -> str:
+        if not text:
+            return ""
+        t = text.replace("\r\n", "\n").replace("\r", "\n")
+        t = escape(t)  # evita quebrar markup no Paragraph
+        return t.replace("\n", "<br/>")
+
+    # =====================================================
     # 📘 CAPA COMPLETA
     # =====================================================
     story = []
@@ -634,7 +649,6 @@ def export_visit_pdf(visit_id):
     story.append(Spacer(1, 40))
     story.append(PageBreak())
 
-
     # =====================================================
     # 🔧 FUNÇÃO DE COMPRESSÃO
     # =====================================================
@@ -677,13 +691,12 @@ def export_visit_pdf(visit_id):
         # Espaço entre o título e o conteúdo
         story.append(Spacer(1, 20))
 
-        # 3) Recomendações Técnicas (SOMENTE AQUI)
+        # 3) Observações (com quebra de linha preservada)
         if v.recommendation:
-            story.append(Paragraph("Recomendações Técnicas", styles["VisitSectionLabel"]))
-            story.append(Paragraph(v.recommendation, styles["VisitSectionValue"]))
+            story.append(Paragraph("Observações", styles["VisitSectionLabel"]))
+            story.append(Paragraph(nl2br(v.recommendation), styles["VisitSectionValue"]))
 
         story.append(Paragraph("<hr/>", styles["HrLine"]))
-
 
         # =====================================================
         # 📸 FOTOS
@@ -761,6 +774,7 @@ def export_visit_pdf(visit_id):
     filename = f"{client.name if client else 'Cliente'} - {visit.variety or ''} - Relatório.pdf"
 
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
+
 
 
 
