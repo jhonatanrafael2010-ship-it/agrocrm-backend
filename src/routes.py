@@ -28,6 +28,8 @@ from xml.sax.saxutils import escape
 import re
 import unicodedata
 from flask import send_file
+from flask import jsonify, request
+from models import Variety, Culture
 
 
 
@@ -53,23 +55,30 @@ def list_cultures():
     return jsonify(CULTURES), 200
 
 
+
 @bp.route('/varieties', methods=['GET'])
 def list_varieties():
-    VARIETIES = [
-        {"id": 1, "culture": "Soja", "name": "AS 3800 12X"},
-        {"id": 2, "culture": "Soja", "name": "AS 3840 12X"},
-        {"id": 3, "culture": "Soja", "name": "AS 3790 12X"},
-        {"id": 4, "culture": "Soja", "name": "AS 3815 12X"},
-        {"id": 5, "culture": "Soja", "name": "AS 3707 12X"},
-        {"id": 6, "culture": "Soja", "name": "AS 3700 XTD"},
-        {"id": 7, "culture": "Soja", "name": "AS 3640 12X"},
-        {"id": 8, "culture": "Soja", "name": "AS 3715 12X"},
-        {"id": 9, "culture": "Milho", "name": "AS 1820 PRO4"},
-        {"id": 10, "culture": "Milho", "name": "AS 1868 PRO4"},
-        {"id": 11, "culture": "Milho", "name": "AS 1877 PRO4"},
-        {"id": 12, "culture": "Algodão", "name": "TMG 41"}
-    ]
-    return jsonify(VARIETIES), 200
+    # opcional: filtrar por culture_id (mais seguro e rápido)
+    culture_id = request.args.get("culture_id", type=int)
+
+    q = Variety.query
+    if culture_id:
+        q = q.filter(Variety.culture_id == culture_id)
+
+    rows = q.order_by(Variety.id.asc()).all()
+
+    # devolve também o nome da cultura (útil no front)
+    culture_map = {c.id: c.name for c in Culture.query.all()}
+
+    return jsonify([
+        {
+            "id": v.id,
+            "culture_id": v.culture_id,
+            "culture": culture_map.get(v.culture_id, ""),
+            "name": v.name,
+        }
+        for v in rows
+    ]), 200
 
 
 # ============================================================
