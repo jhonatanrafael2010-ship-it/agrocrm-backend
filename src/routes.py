@@ -30,6 +30,8 @@ import unicodedata
 from flask import send_file
 from flask import jsonify, request
 from models import Variety, Culture
+from utils.r2_client import get_r2_client
+from flask import request, jsonify
 
 
 
@@ -1007,11 +1009,8 @@ def delete_visit(visit_id):
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['POST'])
 def upload_photos(visit_id):
-    """Upload de múltiplas fotos com legendas (captions)."""
+    """Upload de múltiplas fotos com legendas (captions) — agora no Cloudflare R2."""
     visit = Visit.query.get_or_404(visit_id)
-
-    # garante que /uploads existe
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
 
     files = request.files.getlist('photos')
     captions = request.form.getlist('captions')
@@ -1019,23 +1018,46 @@ def upload_photos(visit_id):
     if not files:
         return jsonify({"error": "Nenhum arquivo enviado"}), 400
 
+    # ✅ R2 envs
+    bucket = os.environ.get("R2_BUCKET")
+    public_base = (os.environ.get("R2_PUBLIC_BASE_URL") or "").rstrip("/")
+
+    if not bucket or not public_base:
+        return jsonify({"error": "R2 não configurado: faltam variáveis de ambiente"}), 500
+
+    r2 = get_r2_client()
+
     saved = []
 
     for i, file in enumerate(files):
-        # 🔥 nome único 100% seguro
+        # 🔥 nome único
         unique = uuid.uuid4().hex
-        original = secure_filename(file.filename)
-        filename = f"{unique}_{original}"
+        original = secure_filename(file.filename or "foto.jpg")
 
-        save_path = os.path.join(UPLOAD_DIR, filename)
-        file.save(save_path)
+        # (opcional) força extensão .jpg se vier sem
+        if "." not in original:
+            original = f"{original}.jpg"
 
-        # legenda correspondente
-        caption = captions[i] if i < len(captions) else None
+        key = f"visits/{visit_id}/{unique}_{original}"
+
+        # ✅ upload direto pro R2 (sem usar disco do Render)
+        r2.upload_fileobj(
+            Fileobj=file,
+            Bucket=bucket,
+            Key=key,
+            ExtraArgs={
+                "ContentType": file.mimetype or "image/jpeg",
+                # Se quiser cache agressivo depois, dá pra adicionar CacheControl aqui
+            },
+        )
+
+        caption = captions[i] if i < len(captions) else ""
+
+        url = f"{public_base}/{key}"
 
         photo = Photo(
             visit_id=visit_id,
-            url=f"/uploads/{filename}",
+            url=url,
             caption=caption
         )
         db.session.add(photo)
@@ -1043,7 +1065,7 @@ def upload_photos(visit_id):
 
         saved.append({
             "id": photo.id,
-            "url": f"/uploads/{filename}",
+            "url": url,
             "caption": caption or ""
         })
 
