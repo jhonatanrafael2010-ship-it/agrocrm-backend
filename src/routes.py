@@ -1447,7 +1447,7 @@ def get_phenology_schedule():
         return jsonify({"error": "invalid planting_date format"}), 400
 
     # ✅ Agora busca diretamente da tabela correta
-    stages = db.session.execute(
+    stages = db.session.run(
         text("SELECT code, name, days FROM phenology_stage WHERE culture = :culture ORDER BY days"),
         {"culture": culture}
     ).fetchall()
@@ -1805,7 +1805,7 @@ def create_planting():
         from sqlalchemy import text
 
         # busca do banco conforme cultura
-        stages = db.session.execute(
+        stages = db.session.run(
             text("SELECT code, name, days FROM phenology_stage WHERE culture = :culture ORDER BY days"),
             {"culture": culture}
         ).fetchall()
@@ -1980,7 +1980,7 @@ def db_test():
         # run a trivial select to verify connection
         result = None
         with db.engine.connect() as conn:
-            row = conn.execute(text('SELECT 1')).fetchone()
+            row = conn.run(text('SELECT 1')).fetchone()
             result = row[0] if row is not None else None
 
         # also give a user count
