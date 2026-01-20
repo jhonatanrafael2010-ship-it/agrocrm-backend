@@ -1170,7 +1170,63 @@ def delete_all_photos_of_visit(visit_id):
         print(f"⚠️ Erro ao excluir fotos da visita: {e}")
         return jsonify({"error": str(e)}), 500
 
+# ============================================================
+# 🔗 Resolver URL pública da foto (R2 / legado)
+# ============================================================
+def resolve_photo_url(u: str) -> str:
+    if not u:
+        return ""
 
+    # 1️⃣ Já é URL pública (R2 / CDN)
+    if u.startswith("http://") or u.startswith("https://"):
+        return u
+
+    # 2️⃣ Legado: /uploads/arquivo.jpg
+    if u.startswith("/uploads/"):
+        # URL pública do bucket R2 (configurada no Render)
+        base = os.getenv("R2_PUBLIC_BASE_URL", "").rstrip("/")
+
+        if base:
+            filename = u.replace("/uploads/", "")
+            return f"{base}/{filename}"
+
+        # fallback (caso variável não exista)
+        return u
+
+    # 3️⃣ Qualquer outro caso
+    return u
+
+
+
+@bp.route("/visits/<int:visit_id>", methods=["GET"])
+def get_visit(visit_id):
+    v = Visit.query.get_or_404(visit_id)
+
+    photos = []
+    for p in (v.photos or []):
+        photos.append({
+            "id": p.id,
+            "url": resolve_photo_url(p.url),
+            "caption": p.caption or ""
+        })
+    except Exception:
+        pass
+
+    return jsonify({
+        "id": v.id,
+        "client_id": v.client_id,
+        "property_id": v.property_id,
+        "plot_id": v.plot_id,
+        "consultant_id": v.consultant_id,
+        "date": v.date.isoformat() if getattr(v, "date", None) else None,
+        "recommendation": v.recommendation or "",
+        "status": v.status or "planned",
+        "fenologia_real": getattr(v, "fenologia_real", None),
+        "latitude": getattr(v, "latitude", None),
+        "longitude": getattr(v, "longitude", None),
+        "products": getattr(v, "products", []) or [],
+        "photos": photos
+    })
 
 
 
