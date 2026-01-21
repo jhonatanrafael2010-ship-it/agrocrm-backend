@@ -1203,14 +1203,16 @@ def get_visit(visit_id):
     v = Visit.query.get_or_404(visit_id)
 
     photos = []
-    for p in (v.photos or []):
-        photos.append({
-            "id": p.id,
-            "url": resolve_photo_url(p.url),
-            "caption": p.caption or ""
-        })
+    try:
+        for p in (v.photos or []):
+            photos.append({
+                "id": p.id,
+                "url": resolve_photo_url(p.url),
+                "caption": p.caption or ""
+            })
     except Exception:
-        pass
+        # se der algum problema com relação/registro, não quebra a rota
+        photos = []
 
     return jsonify({
         "id": v.id,
@@ -1227,6 +1229,7 @@ def get_visit(visit_id):
         "products": getattr(v, "products", []) or [],
         "photos": photos
     })
+
 
 
 
