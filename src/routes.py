@@ -495,7 +495,7 @@ def export_visit_pdf(visit_id):
     def draw_footer(canvas, doc):
         canvas.saveState()
 
-        y = 18
+        y = 22
         pad = 50
 
         # Logo Variedade (esquerda) — menor
@@ -503,7 +503,7 @@ def export_visit_pdf(visit_id):
             try:
                 img = PILImage.open(variety_logo_path)
                 aspect = img.height / float(img.width)
-                w = 55
+                w = 110
                 h = w * aspect
                 x = pad
                 canvas.drawImage(variety_logo_path, x, y, width=w, height=h, mask="auto")
@@ -957,7 +957,7 @@ def update_visit(visit_id: int):
 def delete_visit(visit_id):
     """
     Exclui uma visita. Se for a visita de plantio, remove também o plantio e TODAS
-    as visitas geradas automaticamente (fenológicas) do mesmo talhão e plantio.
+    as visitas geradas automaticamente (fenológicas) vinculadas ao mesmo plantio_id.
     """
     try:
         visit = Visit.query.get(visit_id)
@@ -967,42 +967,52 @@ def delete_visit(visit_id):
 
         print(f"🗑 Solicitada exclusão da visita {visit_id}: {visit.recommendation}")
 
-        # Detecta se é uma visita de plantio
-        is_plantio = bool(visit.recommendation and 'plantio' in visit.recommendation.lower())
+        # ✅ Detecção mais robusta de plantio
+        rec = (visit.recommendation or "").lower()
+        is_plantio = ("plantio" in rec) or (visit.planting_id is not None)
 
         if is_plantio:
-            # 1️⃣ Identifica o plantio associado
             planting = Planting.query.get(visit.planting_id) if visit.planting_id else None
 
-            # 2️⃣ Busca visitas futuras vinculadas ao mesmo plantio_id
+            # 1) Se tiver planting_id, apaga todas as visitas vinculadas (SEM filtro de data)
             if planting:
-                future_visits = Visit.query.filter(
+                linked_visits = Visit.query.filter(
                     Visit.planting_id == planting.id,
-                    Visit.date > visit.date
-                ).all()
-            else:
-                # fallback: se não houver planting_id, usa combinação básica
-                future_visits = Visit.query.filter(
-                    Visit.client_id == visit.client_id,
-                    Visit.property_id == visit.property_id,
-                    Visit.culture == visit.culture,
-                    Visit.date > visit.date
+                    Visit.id != visit.id
                 ).all()
 
-            for fv in future_visits:
-                print(f"   → Removendo visita futura {fv.id} ({fv.recommendation})")
-                db.session.delete(fv)
+                for lv in linked_visits:
+                    print(f"   → Removendo visita vinculada {lv.id} ({lv.recommendation})")
+                    db.session.delete(lv)
 
-            # 3️⃣ Remove também o plantio, se existir
-            if planting:
                 print(f"🌾 Removendo plantio {planting.id} vinculado.")
                 db.session.delete(planting)
 
-            # 4️⃣ Por fim, remove a visita de plantio
+            else:
+                # 2) Fallback: sem planting_id, apaga "todas do mesmo contexto"
+                #    (se você tiver plot_id, USE ELE! É o melhor vínculo do talhão)
+                q = Visit.query.filter(
+                    Visit.id != visit.id,
+                    Visit.client_id == visit.client_id,
+                    Visit.property_id == visit.property_id,
+                    Visit.culture == visit.culture
+                )
+
+                # Se existir plot_id no seu model, habilite essa linha (recomendado):
+                if getattr(visit, "plot_id", None):
+                    q = q.filter(Visit.plot_id == visit.plot_id)
+
+                linked_visits = q.all()
+
+                for lv in linked_visits:
+                    print(f"   → Removendo visita relacionada {lv.id} ({lv.recommendation})")
+                    db.session.delete(lv)
+
+            # 3) Por fim, remove a visita de plantio
             db.session.delete(visit)
             db.session.commit()
-            print(f"✅ Plantio e visitas futuras excluídos com sucesso.")
-            return jsonify({'message': 'Plantio e visitas futuras excluídos com sucesso'}), 200
+            print("✅ Plantio e visitas vinculadas excluídos com sucesso.")
+            return jsonify({'message': 'Plantio e visitas vinculadas excluídos com sucesso'}), 200
 
         # Caso comum (visita isolada)
         print(f"🧾 Excluindo visita isolada {visit_id}")
@@ -1015,6 +1025,7 @@ def delete_visit(visit_id):
         print(f"❌ Erro interno ao excluir visita {visit_id}: {e}")
         db.session.rollback()
         return jsonify({'error': f'Erro interno ao excluir visita: {str(e)}'}), 500
+
 
 
 
