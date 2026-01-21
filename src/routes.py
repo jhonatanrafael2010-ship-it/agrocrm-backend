@@ -450,16 +450,13 @@ def export_visit_pdf(visit_id):
     uploads_dir = ...
     filtered = []
     for v in visits_to_include:
-        valid = []
-        for p in getattr(v, "photos", []):
-            file_name = os.path.basename(p.url)
-            p_path = os.path.join(uploads_dir, file_name)
-            if os.path.exists(p_path):
-                valid.append(p)
+        valid = [p for p in getattr(v, "photos", []) if getattr(p, "url", None)]
         if valid:
             v._valid_photos = valid
             filtered.append(v)
+
     visits_to_include = filtered
+
 
 
     # =====================================================
@@ -882,7 +879,6 @@ def update_visit(visit_id: int):
 
     data = request.get_json(silent=True) or {}
 
-
     print("📩 PAYLOAD RECEBIDO NO PUT:", data)
 
     # Campos simples
@@ -938,7 +934,7 @@ def update_visit(visit_id: int):
     if 'status' in data and data['status']:
         v.status = data['status'].strip().lower()
 
-    print("🧠 Atualizando visita", vid, "com dados:", data)
+    print("🧠 Atualizando visita", visit_id, "com dados:", data)
 
     # =====================================================
     # 🌿 ATUALIZAÇÃO DE PRODUTOS NA EDIÇÃO / CONCLUSÃO
@@ -1118,11 +1114,12 @@ def list_photos(visit_id):
     for p in (visit.photos or []):
         photos.append({
             "id": p.id,
-            "url": resolve_photo_url(p.url),
+            "url": resolve_photo_url(p.url),  # ✅ devolve R2 se já for R2
             "caption": p.caption or ""
         })
 
     return jsonify(photos), 200
+
 
 
 
@@ -1274,13 +1271,13 @@ def public_visit_view(visit_id):
     lon = getattr(plot, "longitude", None)
 
     photos = []
-    for p in visit.photos:
-        file_name = os.path.basename(p.url)
+    for p in (visit.photos or []):
         photos.append({
             "id": p.id,
-            "url": f"{backend_url}/uploads/{file_name}",  # agora funciona
+            "url": resolve_photo_url(p.url),
             "caption": p.caption or ""
         })
+
 
     html_template = """
     <!DOCTYPE html>
