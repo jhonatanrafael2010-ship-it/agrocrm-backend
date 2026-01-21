@@ -33,6 +33,9 @@ from models import Variety, Culture
 from utils.r2_client import get_r2_client
 from flask import request, jsonify
 import requests
+from urllib.request import urlopen, Request
+from html import escape
+
 
 
 
@@ -188,7 +191,7 @@ def get_visits():
                 file_name = os.path.basename(p.url)
                 photos.append({
                     "id": p.id,
-                    "url": f"{backend_url}/uploads/{file_name}",
+                    "url": resolve_photo_url(p.url),
                     "caption": p.caption or ""
                 })
 
@@ -526,6 +529,14 @@ def export_visit_pdf(visit_id):
     # =====================================================
     buffer = BytesIO()
 
+    def open_image_bytes(url: str):
+        try:
+            req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urlopen(req, timeout=20) as r:
+                return BytesIO(r.read())
+        except Exception:
+            return None
+
     def draw_dark_background(canvas, doc):
         canvas.saveState()
         canvas.setFillColor(colors.HexColor("#101010"))
@@ -672,17 +683,6 @@ def export_visit_pdf(visit_id):
 
 
 
-    def fetch_image_bytes(url: str) -> BytesIO | None:
-        """Baixa a imagem (R2 ou legado) e devolve um buffer em memória."""
-        try:
-            r = requests.get(url, timeout=15)
-            if r.status_code != 200:
-                return None
-            return BytesIO(r.content)
-        except Exception:
-            return None
-
-
     def compress_bytes(buf: BytesIO, total: int) -> BytesIO:
         """Comprime a imagem em memória (mantém seu esquema smart_params)."""
         try:
@@ -754,12 +754,12 @@ def export_visit_pdf(visit_id):
             count = 0
 
             for i, photo in enumerate(photos, 1):
-                # URL (R2 ou legado /uploads resolvido)
-                url = resolve_photo_url(getattr(photo, "url", "") or "")
-                if not url:
+                photo_url = resolve_photo_url(photo.url)
+
+                if not photo_url:
                     continue
 
-                raw = fetch_image_bytes(url)
+                raw = open_image_bytes(photo_url)
                 if not raw:
                     continue
 
@@ -770,6 +770,7 @@ def export_visit_pdf(visit_id):
                 aspect = img.height / img.width
 
                 img_obj = Image(buf, width=max_width, height=max_width * aspect)
+
 
                 base_caption = getattr(photo, "caption", "") or ""
 
@@ -878,7 +879,6 @@ def update_visit(visit_id: int):
         return jsonify(message='visit not found'), 404
 
     data = request.get_json(silent=True) or {}
-
     print("📩 PAYLOAD RECEBIDO NO PUT:", data)
 
     # Campos simples
@@ -886,27 +886,24 @@ def update_visit(visit_id: int):
         if tf in data:
             setattr(v, tf, data[tf])
 
-    # recommendation só atualiza se vier texto != vazio
     if "recommendation" in data:
         rec = data.get("recommendation")
         if rec not in (None, "", " "):
             v.recommendation = rec.strip()
 
-    
-    # 🛡️ Proteção: nunca deixar o backend sobrescrever a recomendação original
-    # das visitas automáticas geradas pela fenologia.
-    if v.planting_id and data.get("recommendation") is None:
-        pass  # não substituir recommendation automaticamente
-
-
     if 'client_id' in data and data['client_id']:
-        if not Client.query.get(data['client_id']): return jsonify(message='client not found'), 404
+        if not Client.query.get(data['client_id']): 
+            return jsonify(message='client not found'), 404
         v.client_id = data['client_id']
+
     if 'property_id' in data and data['property_id']:
-        if not Property.query.get(data['property_id']): return jsonify(message='property not found'), 404
+        if not Property.query.get(data['property_id']): 
+            return jsonify(message='property not found'), 404
         v.property_id = data['property_id']
+
     if 'plot_id' in data and data['plot_id']:
-        if not Plot.query.get(data['plot_id']): return jsonify(message='plot not found'), 404
+        if not Plot.query.get(data['plot_id']): 
+            return jsonify(message='plot not found'), 404
         v.plot_id = data['plot_id']
 
     if 'consultant_id' in data:
@@ -915,10 +912,8 @@ def update_visit(visit_id: int):
             return jsonify(message='consultant not found'), 404
         v.consultant_id = cid
 
-    # 🔒 NÃO alterar a data quando preserve_date=true
     if data.get("preserve_date"):
         data["date"] = v.date.isoformat() if v.date else None
-
 
     if 'date' in data:
         if not data['date']:
@@ -930,38 +925,32 @@ def update_visit(visit_id: int):
             except Exception:
                 return jsonify(message='invalid date, expected YYYY-MM-DD'), 400
 
-    # ✅ Atualiza status da visita (feito via botão “Concluir”)
     if 'status' in data and data['status']:
         v.status = data['status'].strip().lower()
 
     print("🧠 Atualizando visita", visit_id, "com dados:", data)
 
-    # =====================================================
-    # 🌿 ATUALIZAÇÃO DE PRODUTOS NA EDIÇÃO / CONCLUSÃO
-    # =====================================================
+    # ✅ PRODUTOS
     if "products" in data:
         from models import VisitProduct
-
-        # Apagar produtos antigos
-        VisitProduct.query.filter_by(visit_id=vid).delete()
-
-        # Inserir lista nova
+        VisitProduct.query.filter_by(visit_id=visit_id).delete()
         for p in data["products"]:
             vp = VisitProduct(
-                visit_id=vid,
+                visit_id=visit_id,
                 product_name=p.get("product_name", ""),
                 dose=p.get("dose", ""),
                 unit=p.get("unit", ""),
                 application_date=(
                     datetime.strptime(p["application_date"], "%Y-%m-%d")
-                    if p.get("application_date")
-                    else None
+                    if p.get("application_date") else None
                 ),
             )
             db.session.add(vp)
 
     db.session.commit()
     return jsonify(message='visit updated', visit=v.to_dict() | {"status": v.status}), 200
+
+
 
 
 @bp.route('/visits/<int:visit_id>', methods=['DELETE'])
