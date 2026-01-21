@@ -32,6 +32,7 @@ from flask import jsonify, request
 from models import Variety, Culture
 from utils.r2_client import get_r2_client
 from flask import request, jsonify
+import requests
 
 
 
@@ -446,9 +447,8 @@ def export_visit_pdf(visit_id):
     # =====================================================
     # 🔎 FILTRO DE VISITAS COM FOTOS
     # =====================================================
-    uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
+    uploads_dir = ...
     filtered = []
-
     for v in visits_to_include:
         valid = []
         for p in getattr(v, "photos", []):
@@ -456,12 +456,11 @@ def export_visit_pdf(visit_id):
             p_path = os.path.join(uploads_dir, file_name)
             if os.path.exists(p_path):
                 valid.append(p)
-
         if valid:
             v._valid_photos = valid
             filtered.append(v)
-
     visits_to_include = filtered
+
 
     # =====================================================
     # ✅ PRESERVAR QUEBRA DE LINHA NAS OBSERVAÇÕES
@@ -673,6 +672,35 @@ def export_visit_pdf(visit_id):
     story.append(Spacer(1, 40))
     story.append(PageBreak())
 
+
+
+
+    def fetch_image_bytes(url: str) -> BytesIO | None:
+        """Baixa a imagem (R2 ou legado) e devolve um buffer em memória."""
+        try:
+            r = requests.get(url, timeout=15)
+            if r.status_code != 200:
+                return None
+            return BytesIO(r.content)
+        except Exception:
+            return None
+
+
+    def compress_bytes(buf: BytesIO, total: int) -> BytesIO:
+        """Comprime a imagem em memória (mantém seu esquema smart_params)."""
+        try:
+            img = PILImage.open(buf)
+            max_px, quality = smart_params(total)
+            img.thumbnail((max_px, max_px), PILImage.LANCZOS)
+            out = BytesIO()
+            img.convert("RGB").save(out, "JPEG", optimize=True, quality=quality)
+            out.seek(0)
+            return out
+        except Exception:
+            buf.seek(0)
+            return buf
+
+
     # =====================================================
     # 🔧 COMPRESSÃO
     # =====================================================
@@ -716,10 +744,9 @@ def export_visit_pdf(visit_id):
 
         story.append(Paragraph("<hr/>", styles["HrLine"]))
 
-        # Fotos
-        if hasattr(v, "_valid_photos") and v._valid_photos:
-
-            photos = v._valid_photos
+        # Fotos (R2 / URLs públicas)
+        photos = list(getattr(v, "photos", []) or [])
+        if photos:
             total = len(photos)
 
             cols = 1 if total <= 3 else (2 if total <= 6 else 3)
@@ -730,13 +757,17 @@ def export_visit_pdf(visit_id):
             count = 0
 
             for i, photo in enumerate(photos, 1):
-
-                file_name = os.path.basename(photo.url)
-                p = os.path.join(uploads_dir, file_name)
-                if not os.path.exists(p):
+                # URL (R2 ou legado /uploads resolvido)
+                url = resolve_photo_url(getattr(photo, "url", "") or "")
+                if not url:
                     continue
 
-                buf = compress(p, total)
+                raw = fetch_image_bytes(url)
+                if not raw:
+                    continue
+
+                buf = compress_bytes(raw, total)
+
                 img = PILImage.open(buf)
                 buf.seek(0)
                 aspect = img.height / img.width
@@ -776,6 +807,7 @@ def export_visit_pdf(visit_id):
 
         if idx < len(visits_to_include):
             story.append(PageBreak())
+
 
     # Rodapé texto final
     story.append(Paragraph("<b>NutriCRM</b>", styles["Footer"]))
@@ -842,9 +874,9 @@ def create_visits_bulk():
 
 
 
-@bp.route('/visits/<int:vid>', methods=['PUT'])
-def update_visit(vid: int):
-    v = Visit.query.get(vid)
+@bp.route('/visits/<int:visit_id>', methods=['PUT'])
+def update_visit(visit_id: int):
+    v = Visit.query.get(visit_id)
     if not v:
         return jsonify(message='visit not found'), 404
 
@@ -1080,22 +1112,18 @@ def upload_photos(visit_id):
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['GET'])
 def list_photos(visit_id):
-    """Lista todas as fotos de uma visita (com legendas incluídas)."""
     visit = Visit.query.get_or_404(visit_id)
-    backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
-    photos = []
 
-    for p in visit.photos:
-        file_name = os.path.basename(p.url)
-        full_url = f"{backend_url}/uploads/{file_name}"
+    photos = []
+    for p in (visit.photos or []):
         photos.append({
             "id": p.id,
-            "url": f"{backend_url}/uploads/{file_name}",
+            "url": resolve_photo_url(p.url),
             "caption": p.caption or ""
         })
 
-
     return jsonify(photos), 200
+
 
 
 @bp.route('/photos/<int:photo_id>', methods=['PUT'])
@@ -1177,24 +1205,17 @@ def resolve_photo_url(u: str) -> str:
     if not u:
         return ""
 
-    # 1️⃣ Já é URL pública (R2 / CDN)
+    # já é pública (R2/CDN)
     if u.startswith("http://") or u.startswith("https://"):
         return u
 
-    # 2️⃣ Legado: /uploads/arquivo.jpg
+    # legado /uploads/... -> aponta pro backend
     if u.startswith("/uploads/"):
-        # URL pública do bucket R2 (configurada no Render)
-        base = os.getenv("R2_PUBLIC_BASE_URL", "").rstrip("/")
+        backend_url = (os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com").rstrip("/")
+        return f"{backend_url}{u}"
 
-        if base:
-            filename = u.replace("/uploads/", "")
-            return f"{base}/{filename}"
-
-        # fallback (caso variável não exista)
-        return u
-
-    # 3️⃣ Qualquer outro caso
     return u
+
 
 
 
@@ -1211,7 +1232,6 @@ def get_visit(visit_id):
                 "caption": p.caption or ""
             })
     except Exception:
-        # se der algum problema com relação/registro, não quebra a rota
         photos = []
 
     return jsonify({
@@ -1229,6 +1249,7 @@ def get_visit(visit_id):
         "products": getattr(v, "products", []) or [],
         "photos": photos
     })
+
 
 
 
