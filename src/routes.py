@@ -1035,7 +1035,8 @@ def delete_visit(visit_id):
 # 📸 FOTOS — upload, legenda, exclusão (REVISADO)
 # ==============================
 
-@bp.route('/visits/<int:visit_id>/photos', methods=['POST'])
+@bp.route('/visits/<int:visit_id>/photos', methods=['POST', 'OPTIONS'])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
 def upload_photos(visit_id):
     """Upload de múltiplas fotos com legendas (captions) — agora no Cloudflare R2."""
     visit = Visit.query.get_or_404(visit_id)
@@ -1123,7 +1124,8 @@ def list_photos(visit_id):
 
 
 
-@bp.route('/photos/<int:photo_id>', methods=['PUT'])
+@bp.route('/photos/<int:photo_id>', methods=['PUT', 'OPTIONS'])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
 def update_photo_caption(photo_id):
     """
     Atualiza a legenda de uma foto específica.
@@ -1150,7 +1152,8 @@ def update_photo_caption(photo_id):
 
 
 
-@bp.route('/photos/<int:photo_id>', methods=['DELETE'])
+@bp.route('/photos/<int:photo_id>', methods=['DELETE', 'OPTIONS'])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
 def delete_single_photo(photo_id):
     """Exclui uma foto específica do banco e do disco."""
     photo = Photo.query.get_or_404(photo_id)
