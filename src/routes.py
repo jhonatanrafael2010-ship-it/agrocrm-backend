@@ -35,6 +35,9 @@ from flask import request, jsonify
 import requests
 from urllib.request import urlopen, Request
 from html import escape
+from PIL import ImageFile
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
 
 
 
@@ -755,21 +758,33 @@ def export_visit_pdf(visit_id):
 
             for i, photo in enumerate(photos, 1):
                 photo_url = resolve_photo_url(photo.url)
+                print(f"🖼️ PDF: processando foto id={getattr(photo,'id',None)} url={photo_url}")
+
 
                 if not photo_url:
                     continue
 
                 raw = open_image_bytes(photo_url)
                 if not raw:
+                    print(f"⚠️ PDF: falha ao baixar foto id={getattr(photo,'id',None)} url={photo_url}")
                     continue
 
-                buf = compress_bytes(raw, total)
+                try:
+                    buf = compress_bytes(raw, total)
 
-                img = PILImage.open(buf)
-                buf.seek(0)
-                aspect = img.height / img.width
+                    # 🔥 valida/abre com PIL (aqui que estoura "truncado")
+                    img = PILImage.open(buf)
+                    img.load()  # força carregar agora (captura erro aqui)
+                    buf.seek(0)
 
-                img_obj = Image(buf, width=max_width, height=max_width * aspect)
+                    aspect = img.height / img.width if img.width else 1
+
+                    img_obj = Image(buf, width=max_width, height=max_width * aspect)
+
+                except Exception as e:
+                    print(f"⚠️ PDF: pulando imagem inválida id={getattr(photo,'id',None)} url={photo_url} erro={e}")
+                    continue
+
 
 
                 base_caption = getattr(photo, "caption", "") or ""
