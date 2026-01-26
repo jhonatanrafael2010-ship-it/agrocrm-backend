@@ -33,6 +33,7 @@ from models import Variety, Culture
 from utils.r2_client import get_r2_client
 from flask import request, jsonify
 import requests
+from PIL import ImageOps
 from urllib.request import urlopen, Request
 from html import escape
 from PIL import ImageFile
@@ -690,6 +691,7 @@ def export_visit_pdf(visit_id):
         """Comprime a imagem em memória (mantém seu esquema smart_params)."""
         try:
             img = PILImage.open(buf)
+            img = ImageOps.exif_transpose(img)
             max_px, quality = smart_params(total)
             img.thumbnail((max_px, max_px), PILImage.LANCZOS)
             out = BytesIO()
@@ -713,6 +715,7 @@ def export_visit_pdf(visit_id):
     def compress(path, total):
         try:
             img = PILImage.open(path)
+            img = ImageOps.exif_transpose(img)
             max_px, quality = smart_params(total)
             img.thumbnail((max_px, max_px), PILImage.LANCZOS)
             buf = BytesIO()
