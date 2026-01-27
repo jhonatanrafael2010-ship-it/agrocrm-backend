@@ -438,7 +438,7 @@ def export_visit_pdf(visit_id):
     if visit.planting_id:
         visits_to_include = (
             Visit.query.filter(Visit.planting_id == visit.planting_id)
-            .order_by(Visit.date.asc()).all()
+            .order_by(Visit.date.desc()).all()
         )
     else:
         visits_to_include = (
@@ -448,7 +448,7 @@ def export_visit_pdf(visit_id):
                 Visit.plot_id == visit.plot_id,
                 Visit.culture == visit.culture,
             )
-            .order_by(Visit.date.asc()).all()
+            .order_by(Visit.date.desc()).all()
         )
 
     # =====================================================
@@ -674,10 +674,11 @@ def export_visit_pdf(visit_id):
     add_info("Consultor:", consultant_name or "")
 
     if visits_to_include:
-        start_date = visits_to_include[0].date.strftime("%d/%m/%Y")
-        end_date = visits_to_include[-1].date.strftime("%d/%m/%Y")
+        start_date = visits_to_include[-1].date.strftime("%d/%m/%Y")  # mais antigo
+        end_date   = visits_to_include[0].date.strftime("%d/%m/%Y")   # mais recente
     else:
         start_date = end_date = visit.date.strftime("%d/%m/%Y")
+
 
     add_info("Período de acompanhamento:", f"{start_date} → {end_date}")
 
@@ -728,7 +729,10 @@ def export_visit_pdf(visit_id):
     # =====================================================
     # 🟢 VISITAS (ORDEM AJUSTADA)
     # =====================================================
-    for idx, v in enumerate(visits_to_include, start=1):
+    total_visits = len(visits_to_include)
+    for pos, v in enumerate(visits_to_include):  # pos começa em 0
+        idx = total_visits - pos                 # 4,3,2,1 (ou 5,4,3,2,1)
+
 
         story.append(Paragraph(f"VISITA {idx}", styles["VisitTitleSmall"]))
         story.append(Paragraph(v.fenologia_real or "—", styles["VisitStageBig"]))
