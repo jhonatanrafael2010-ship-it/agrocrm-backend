@@ -42,6 +42,11 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 
+# =====================================================
+# 🔒 LIMITES DE SEGURANÇA (EVITA ESTOURO DE MEMÓRIA)
+# =====================================================
+MAX_VISITS = 12        # máximo de visitas no PDF cumulativo
+MAX_PHOTOS_V = 6       # máximo de fotos por visita
 
 
 
@@ -750,29 +755,6 @@ def export_visit_pdf(visit_id):
 
 
 
-
-    # =====================================================
-    # 🔧 COMPRESSÃO
-    # =====================================================
-    def smart_params(total):
-        if total <= 4: return (1600, 85)
-        if total <= 8: return (1400, 78)
-        if total <= 16: return (1200, 70)
-        return (1000, 60)
-
-    def compress(path, total):
-        try:
-            img = PILImage.open(path)
-            img = ImageOps.exif_transpose(img)
-            max_px, quality = smart_params(total)
-            img.thumbnail((max_px, max_px), PILImage.LANCZOS)
-            buf = BytesIO()
-            img.save(buf, "JPEG", optimize=True, quality=quality)
-            buf.seek(0)
-            return buf
-        except:
-            return open(path, "rb")
-
     # =====================================================
     # 🟢 VISITAS (ORDEM AJUSTADA)
     # =====================================================
@@ -798,39 +780,33 @@ def export_visit_pdf(visit_id):
 
         story.append(Paragraph("<hr/>", styles["HrLine"]))
 
-        # Fotos (R2 / URLs públicas)
         photos = list(getattr(v, "photos", []) or [])
         if photos:
+            # 🔻 limita fotos por visita (economia RAM)
+            photos = photos[:MAX_PHOTOS_V]
             total = len(photos)
 
             cols = 1 if total <= 3 else (2 if total <= 6 else 3)
             max_width = 220 if cols == 1 else 160
             col_width = (A4[0] - 100) / cols
 
+            # total global (para decidir compressão)
+            total_all = sum(
+                min(len(getattr(x, "photos", []) or []), MAX_PHOTOS_V)
+                for x in visits_to_include
+            )
+            max_px, quality = smart_params(total_all)
+
             row = []
             count = 0
 
             for i, photo in enumerate(photos, 1):
                 photo_url = resolve_photo_url(photo.url)
-                print(f"🖼️ PDF: processando foto id={getattr(photo,'id',None)} url={photo_url}")
-
-
                 if not photo_url:
                     continue
 
-                # 🔻 limita fotos por visita (principal economia de RAM)
-                photos = photos[:MAX_PHOTOS_V]
-
-                # total para smart_params (usa total real que será processado)
-                total_all = sum(min(len(getattr(x, "photos", []) or []), MAX_PHOTOS_V) for x in visits_to_include)
-                max_px, quality = smart_params(total_all)
-
-                for i, photo in enumerate(photos, 1):
-                    photo_url = resolve_photo_url(photo.url)
-                    if not photo_url:
-                        continue
-
-                    # 1) baixa pra temp (sem BytesIO gigante)
+                try:
+                    # 1) baixa pra temp
                     src_path = download_to_temp(photo_url, timeout=20, max_bytes=8_000_000)
                     if not src_path:
                         print(f"⚠️ PDF: download bloqueado/maior que limite url={photo_url}")
@@ -842,28 +818,21 @@ def export_visit_pdf(visit_id):
                         print(f"⚠️ PDF: falha compress url={photo_url}")
                         continue
 
-                    # 3) abre só pra pegar aspect (sem img.load())
+                    # 3) pegar aspect
+                    probe = PILImage.open(jpg_path)
+                    w, h = probe.size
                     try:
-                        probe = PILImage.open(jpg_path)
-                        w, h = probe.size
-                        aspect = (h / w) if w else 1
-                        try:
-                            probe.close()
-                        except:
-                            pass
-                    except Exception:
-                        try:
-                            os.remove(jpg_path)
-                        except:
-                            pass
-                        continue
+                        probe.close()
+                    except:
+                        pass
 
-                    # 4) passa PATH pro ReportLab (muito mais leve que BytesIO)
+                    aspect = (h / w) if w else 1
+
+                    # 4) passa PATH pro ReportLab
                     img_obj = Image(jpg_path, width=max_width, height=max_width * aspect)
 
-                    # ... caption (seu código atual pode ficar igual)
+                    # caption
                     base_caption = getattr(photo, "caption", "") or ""
-
                     lat = getattr(photo, "latitude", None)
                     lon = getattr(photo, "longitude", None)
 
@@ -880,7 +849,7 @@ def export_visit_pdf(visit_id):
                     row.append([img_obj, caption_par])
                     count += 1
 
-                    if count == cols or i == len(photos):
+                    if count == cols or i == total:
                         story.append(
                             Table(
                                 [row],
@@ -893,10 +862,10 @@ def export_visit_pdf(visit_id):
                         row = []
                         count = 0
 
-
                 except Exception as e:
-                    print(f"⚠️ PDF: pulando imagem inválida id={getattr(photo,'id',None)} url={photo_url} erro={e}")
+                    print(f"⚠️ PDF: erro processando url={photo_url} erro={e}")
                     continue
+
 
 
 
