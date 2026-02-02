@@ -543,6 +543,10 @@ def export_visit_pdf(visit_id):
     # =====================================================
     buffer = BytesIO()
 
+    # ✅ rastrear arquivos temporários para apagar no final
+    temp_jpgs = []
+
+
     def smart_params(total_photos_all: int):
         # Mais agressivo pra não matar o worker
         if total_photos_all <= 4:  return (1280, 75)
@@ -818,6 +822,9 @@ def export_visit_pdf(visit_id):
                         print(f"⚠️ PDF: falha compress url={photo_url}")
                         continue
 
+                    temp_jpgs.append(jpg_path)
+
+
                     # 3) pegar aspect
                     probe = PILImage.open(jpg_path)
                     w, h = probe.size
@@ -862,47 +869,15 @@ def export_visit_pdf(visit_id):
                         row = []
                         count = 0
 
+
                 except Exception as e:
                     print(f"⚠️ PDF: erro processando url={photo_url} erro={e}")
                     continue
 
 
-
-
-                base_caption = getattr(photo, "caption", "") or ""
-
-                lat = getattr(photo, "latitude", None)
-                lon = getattr(photo, "longitude", None)
-
-                gps_caption = ""
-                if lat is not None and lon is not None:
-                    gps_caption = f"📍 {lat:.5f}, {lon:.5f}"
-
-                final_caption = escape(base_caption)
-                if gps_caption:
-                    final_caption += f"<br/><small>{escape(gps_caption)}</small>"
-
-                caption_par = Paragraph(final_caption, styles["Caption"])
-
-                row.append([img_obj, caption_par])
-                count += 1
-
-                if count == cols or i == total:
-                    story.append(
-                        Table(
-                            [row],
-                            colWidths=[col_width] * len(row),
-                            hAlign="CENTER",
-                            style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")])
-                        )
-                    )
-                    story.append(Spacer(1, 14))
-                    row = []
-                    count = 0
-
-        if idx < len(visits_to_include):
-            story.append(PageBreak())
-
+            # ✅ AQUI É O LUGAR CERTO (fora do for das fotos)
+            if pos < total_visits - 1:
+                story.append(PageBreak())       
 
     # Rodapé texto final
     story.append(Paragraph("<b>NutriCRM</b>", styles["Footer"]))
@@ -910,6 +885,13 @@ def export_visit_pdf(visit_id):
 
     doc.build(story, onFirstPage=draw_cover_background, onLaterPages=draw_dark_background)
     buffer.seek(0)
+
+    # ✅ limpa temporários do /tmp
+    for p in temp_jpgs:
+        try:
+            os.remove(p)
+        except:
+            pass
 
     filename = f"{client.name if client else 'Cliente'} - {visit.variety or ''} - Relatório.pdf"
     return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
