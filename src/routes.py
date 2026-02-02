@@ -31,6 +31,7 @@ from flask import send_file
 from flask import jsonify, request
 from models import Variety, Culture
 from utils.r2_client import get_r2_client
+import tempfile
 from flask import request, jsonify
 import requests
 from PIL import ImageOps
@@ -464,6 +465,10 @@ def export_visit_pdf(visit_id):
 
     visits_to_include = filtered
 
+    # ✅ corta visitas (o PDF cumulativo é o que mais pesa)
+    visits_to_include = visits_to_include[:MAX_VISITS]
+
+
 
 
     # =====================================================
@@ -533,13 +538,71 @@ def export_visit_pdf(visit_id):
     # =====================================================
     buffer = BytesIO()
 
-    def open_image_bytes(url: str):
+    def smart_params(total_photos_all: int):
+        # Mais agressivo pra não matar o worker
+        if total_photos_all <= 4:  return (1280, 75)
+        if total_photos_all <= 8:  return (1200, 70)
+        if total_photos_all <= 16: return (1100, 62)
+        return (1000, 55)
+
+    def download_to_temp(url: str, timeout=20, max_bytes=8_000_000):
+        """
+        Baixa a imagem para arquivo temporário (evita BytesIO gigante).
+        max_bytes protege contra foto enorme (8MB).
+        """
         try:
             req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urlopen(req, timeout=20) as r:
-                return BytesIO(r.read())
+            with urlopen(req, timeout=timeout) as r:
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".img")
+                total = 0
+                while True:
+                    chunk = r.read(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        tmp.close()
+                        try:
+                            os.remove(tmp.name)
+                        except:
+                            pass
+                        return None
+                    tmp.write(chunk)
+                tmp.close()
+                return tmp.name
         except Exception:
             return None
+
+    def compress_to_jpeg_temp(src_path: str, max_px: int, quality: int):
+        """
+        Converte pra JPEG comprimido em /tmp e devolve o path final.
+        """
+        try:
+            img = PILImage.open(src_path)
+            img = ImageOps.exif_transpose(img)
+
+            # thumbnail já reduz, sem explodir tanto RAM quanto load() + resize bruto
+            img.thumbnail((max_px, max_px), PILImage.LANCZOS)
+
+            out = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+            out_path = out.name
+            out.close()
+
+            img.convert("RGB").save(out_path, "JPEG", optimize=True, quality=quality)
+            try:
+                img.close()
+            except:
+                pass
+            return out_path
+        except Exception:
+            return None
+        finally:
+            # sempre remove o bruto baixado
+            try:
+                os.remove(src_path)
+            except:
+                pass
+
 
     def draw_dark_background(canvas, doc):
         canvas.saveState()
@@ -688,22 +751,6 @@ def export_visit_pdf(visit_id):
 
 
 
-    def compress_bytes(buf: BytesIO, total: int) -> BytesIO:
-        """Comprime a imagem em memória (mantém seu esquema smart_params)."""
-        try:
-            img = PILImage.open(buf)
-            img = ImageOps.exif_transpose(img)
-            max_px, quality = smart_params(total)
-            img.thumbnail((max_px, max_px), PILImage.LANCZOS)
-            out = BytesIO()
-            img.convert("RGB").save(out, "JPEG", optimize=True, quality=quality)
-            out.seek(0)
-            return out
-        except Exception:
-            buf.seek(0)
-            return buf
-
-
     # =====================================================
     # 🔧 COMPRESSÃO
     # =====================================================
@@ -771,22 +818,81 @@ def export_visit_pdf(visit_id):
                 if not photo_url:
                     continue
 
-                raw = open_image_bytes(photo_url)
-                if not raw:
-                    print(f"⚠️ PDF: falha ao baixar foto id={getattr(photo,'id',None)} url={photo_url}")
-                    continue
+                # 🔻 limita fotos por visita (principal economia de RAM)
+                photos = photos[:MAX_PHOTOS_V]
 
-                try:
-                    buf = compress_bytes(raw, total)
+                # total para smart_params (usa total real que será processado)
+                total_all = sum(min(len(getattr(x, "photos", []) or []), MAX_PHOTOS_V) for x in visits_to_include)
+                max_px, quality = smart_params(total_all)
 
-                    # 🔥 valida/abre com PIL (aqui que estoura "truncado")
-                    img = PILImage.open(buf)
-                    img.load()  # força carregar agora (captura erro aqui)
-                    buf.seek(0)
+                for i, photo in enumerate(photos, 1):
+                    photo_url = resolve_photo_url(photo.url)
+                    if not photo_url:
+                        continue
 
-                    aspect = img.height / img.width if img.width else 1
+                    # 1) baixa pra temp (sem BytesIO gigante)
+                    src_path = download_to_temp(photo_url, timeout=20, max_bytes=8_000_000)
+                    if not src_path:
+                        print(f"⚠️ PDF: download bloqueado/maior que limite url={photo_url}")
+                        continue
 
-                    img_obj = Image(buf, width=max_width, height=max_width * aspect)
+                    # 2) comprime pra jpeg em temp
+                    jpg_path = compress_to_jpeg_temp(src_path, max_px=max_px, quality=quality)
+                    if not jpg_path:
+                        print(f"⚠️ PDF: falha compress url={photo_url}")
+                        continue
+
+                    # 3) abre só pra pegar aspect (sem img.load())
+                    try:
+                        probe = PILImage.open(jpg_path)
+                        w, h = probe.size
+                        aspect = (h / w) if w else 1
+                        try:
+                            probe.close()
+                        except:
+                            pass
+                    except Exception:
+                        try:
+                            os.remove(jpg_path)
+                        except:
+                            pass
+                        continue
+
+                    # 4) passa PATH pro ReportLab (muito mais leve que BytesIO)
+                    img_obj = Image(jpg_path, width=max_width, height=max_width * aspect)
+
+                    # ... caption (seu código atual pode ficar igual)
+                    base_caption = getattr(photo, "caption", "") or ""
+
+                    lat = getattr(photo, "latitude", None)
+                    lon = getattr(photo, "longitude", None)
+
+                    gps_caption = ""
+                    if lat is not None and lon is not None:
+                        gps_caption = f"📍 {lat:.5f}, {lon:.5f}"
+
+                    final_caption = escape(base_caption)
+                    if gps_caption:
+                        final_caption += f"<br/><small>{escape(gps_caption)}</small>"
+
+                    caption_par = Paragraph(final_caption, styles["Caption"])
+
+                    row.append([img_obj, caption_par])
+                    count += 1
+
+                    if count == cols or i == len(photos):
+                        story.append(
+                            Table(
+                                [row],
+                                colWidths=[col_width] * len(row),
+                                hAlign="CENTER",
+                                style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")])
+                            )
+                        )
+                        story.append(Spacer(1, 14))
+                        row = []
+                        count = 0
+
 
                 except Exception as e:
                     print(f"⚠️ PDF: pulando imagem inválida id={getattr(photo,'id',None)} url={photo_url} erro={e}")
@@ -1062,6 +1168,15 @@ def delete_visit(visit_id):
 def upload_photos(visit_id):
     """Upload de múltiplas fotos com legendas (captions) — agora no Cloudflare R2."""
     visit = Visit.query.get_or_404(visit_id)
+
+    # ✅ Modo leve por padrão (evita SIGKILL)
+    # /pdf?mode=full -> tenta completo (ainda com limites)
+    mode = (request.args.get("mode") or "lite").lower()
+
+    # Limites seguros (você pode ajustar)
+    MAX_VISITS   = int(request.args.get("max_visits") or (8 if mode == "lite" else 20))
+    MAX_PHOTOS_V = int(request.args.get("max_photos") or (4 if mode == "lite" else 8))
+
 
     files = request.files.getlist('photos')
     captions = request.form.getlist('captions')
