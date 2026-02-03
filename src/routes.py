@@ -198,7 +198,7 @@ def report_monthly_xlsx():
         # ==========================================================
         # 5) DASHBOARD (KPIs + Gráficos)
         # ==========================================================
-        ws_dash["A1"] = "Relatório Executivo — AgroCRM"
+        ws_dash["A1"] = "Relatório completo — AgroCRM"
         ws_dash["A1"].font = Font(bold=True, size=16, color="14532D")
         ws_dash["A2"] = "Período:"
         ws_dash["A2"].font = bold_font
