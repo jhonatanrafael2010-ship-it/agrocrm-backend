@@ -159,8 +159,12 @@ def report_monthly_xlsx():
         bold_font = Font(bold=True)
 
         subheader_fill = PatternFill("solid", fgColor="E8F5E9")  # verde bem claro
-        zebra_fill = PatternFill("solid", fgColor="0B2A22")      # verde bem escuro suave (modo dark)
-        zebra_fill2 = PatternFill("solid", fgColor="0E332A")
+        zebra_fill  = PatternFill("solid", fgColor="F8FAFC")
+        zebra_fill2 = PatternFill("solid", fgColor="EEF2F7")
+        # e ajuste as fontes das linhas para preto:
+        row_font = Font(color="111827")
+
+
 
         status_planned = PatternFill("solid", fgColor="F59E0B")  # amarelo
         status_done = PatternFill("solid", fgColor="22C55E")     # verde
@@ -168,12 +172,23 @@ def report_monthly_xlsx():
         status_font_dark = Font(color="0B1F17", bold=True)
         status_font_light = Font(color="FFFFFF", bold=True)
 
+        dash_section_fill = PatternFill("solid", fgColor="E5E7EB")  # cinza claro
+        dash_header_fill  = PatternFill("solid", fgColor="D1D5DB")  # cinza um pouco mais escuro
+        dash_font = Font(bold=True, color="111827")                 # quase preto
+        dash_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+
 
         center = Alignment(horizontal="center", vertical="center", wrap_text=True)
         left = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
-        thin = Side(style="thin", color="2F3B3A")
-        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        # BORDAS MAIS SUAVES (troque o seu thin/border por estes)
+        thin_header = Side(style="thin", color="1F3A33")   # header um pouco mais visível
+        hair_data   = Side(style="hair", color="16312B")   # linhas bem discretas
+
+        border_header = Border(left=thin_header, right=thin_header, top=thin_header, bottom=thin_header)
+        border_data   = Border(bottom=hair_data)          # só linha inferior, fica limpo
+
 
         kpi_fill = PatternFill("solid", fgColor="0B3A2E")
         kpi_label_fill = PatternFill("solid", fgColor="0F5132")
@@ -186,7 +201,8 @@ def report_monthly_xlsx():
                 cell.fill = header_fill
                 cell.font = header_font
                 cell.alignment = center
-                cell.border = border
+                cell.border = border_header
+
 
         def br_date(d):
             if not d:
@@ -229,7 +245,7 @@ def report_monthly_xlsx():
             ws_dash[f"{col_start_letter}4"].fill = kpi_label_fill
             ws_dash[f"{col_start_letter}4"].font = kpi_font
             ws_dash[f"{col_start_letter}4"].alignment = center
-            ws_dash[f"{col_start_letter}4"].border = border
+            ws_dash[f"{col_start_letter}4"].border = border_header
 
             # value
             ws_dash.merge_cells(f"{col_start_letter}5:{chr(ord(col_start_letter)+2)}8")
@@ -243,7 +259,7 @@ def report_monthly_xlsx():
             for r in range(5, 9):
                 for c in range(col_start, col_start + 3):
                     ws_dash.cell(r, c).fill = kpi_fill
-                    ws_dash.cell(r, c).border = border
+                    ws_dash.cell(r, c).border = border_header
 
         make_kpi_card("A", "Total de visitas", total_visits)
         make_kpi_card("D", "Clientes atendidos", unique_clients)
@@ -328,6 +344,17 @@ def report_monthly_xlsx():
         ws_dash["K12"] = "Visitas"
         ws_dash["J12"].font = bold_font
         ws_dash["K12"].font = bold_font
+
+        # Pinta cabeçalhos das tabelas (linha 12)
+        for a1, b1 in [("A12","B12"), ("D12","E12"), ("G12","H12"), ("J12","K12")]:
+            for row in ws_dash[a1:b1]:
+                for cell in row:
+                    cell.fill = dash_header_fill
+                    cell.font = dash_font
+                    cell.alignment = dash_center
+                    cell.border = border_header
+
+
 
         top5 = client_counts.most_common(5)
 
@@ -417,7 +444,7 @@ def report_monthly_xlsx():
         for r in range(1, 5):
             for c in range(1, 3):  # A..B
                 cell = ws.cell(r, c)
-                cell.border = border
+                cell.border = border_data
                 if r == 1:
                     cell.fill = subheader_fill
                     cell.font = Font(bold=True, size=14, color="14532D")
@@ -441,7 +468,7 @@ def report_monthly_xlsx():
             ws.cell(row=header_row, column=i).value = h
 
         style_header(ws, header_row, len(headers))
-        ws.freeze_panes = ws["A7"]
+        ws.freeze_panes = "A7"
 
         row_idx = header_row
         for v in visits:
@@ -481,7 +508,7 @@ def report_monthly_xlsx():
 
             for col in range(1, len(headers) + 1):
                 cell = ws.cell(row=row_idx, column=col)
-                cell.border = border
+                cell.border = border_data
                 cell.fill = row_fill
                 cell.alignment = left if col in (2, 3, 4, 10) else center
 
@@ -518,11 +545,12 @@ def report_monthly_xlsx():
         prod_headers = ["Data visita", "Cliente", "Produto", "Dose", "Unidade", "Data aplicação"]
         ws2_header_row = 4
 
+
         for i, h in enumerate(prod_headers, start=1):
             ws2.cell(row=ws2_header_row, column=i).value = h
 
         style_header(ws2, ws2_header_row, len(prod_headers))
-        ws2.freeze_panes = ws2["A5"]
+        ws2.freeze_panes = "A5"
 
         prod_row = ws2_header_row
         for v in visits:
@@ -545,7 +573,7 @@ def report_monthly_xlsx():
 
                 for col in range(1, len(prod_headers) + 1):
                     cell = ws2.cell(row=prod_row, column=col)
-                    cell.border = border
+                    cell.border = border_data
                     cell.fill = row_fill
                     cell.alignment = left if col in (2, 3) else center
 
