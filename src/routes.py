@@ -32,13 +32,19 @@ from flask import jsonify, request
 from models import Variety, Culture
 from utils.r2_client import get_r2_client
 import tempfile
-from flask import request, jsonify
+from flask import request, send_file, jsonify
 import requests
 from PIL import ImageOps
 from urllib.request import urlopen, Request
 from html import escape
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+from datetime import date as _date, datetime as _dt
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.utils import get_column_letter
+
+
 
 
 
@@ -69,6 +75,285 @@ def list_cultures():
         {"id": 3, "name": "Algodão"},
     ]
     return jsonify(CULTURES), 200
+
+
+@bp.route("/reports/monthly.xlsx", methods=["GET"])
+def report_monthly_xlsx():
+    """
+    Relatório XLSX formatado.
+    Aceita:
+      - ?month=YYYY-MM   (ex: 2026-02)
+    ou
+      - ?start=YYYY-MM-DD&end=YYYY-MM-DD  (end inclusive)
+    """
+
+    try:
+        month = request.args.get("month")
+        start = request.args.get("start")
+        end = request.args.get("end")
+
+        # =========================
+        # 1) Define intervalo
+        # =========================
+        if month:
+            # month = "2026-02"
+            y, m = [int(x) for x in month.split("-")]
+            start_date = _date(y, m, 1)
+
+            # calcula último dia do mês
+            if m == 12:
+                next_month = _date(y + 1, 1, 1)
+            else:
+                next_month = _date(y, m + 1, 1)
+            end_date = next_month - _dt.resolution  # não funciona p/ date
+            # corrigindo: end_date como date
+            end_date = (next_month - _dt.timedelta(days=1))
+        else:
+            if not start or not end:
+                return jsonify(message="Informe ?month=YYYY-MM ou ?start=YYYY-MM-DD&end=YYYY-MM-DD"), 400
+            start_date = _date.fromisoformat(start)
+            end_date = _date.fromisoformat(end)
+
+        # =========================
+        # 2) Busca visitas
+        # =========================
+        visits = (
+            Visit.query
+            .filter(Visit.date >= start_date)
+            .filter(Visit.date <= end_date)
+            .order_by(Visit.date.asc().nullslast())
+            .all()
+        )
+
+        # mapas (evita N+1 simples)
+        client_ids = sorted({v.client_id for v in visits if v.client_id})
+        prop_ids   = sorted({v.property_id for v in visits if v.property_id})
+        plot_ids   = sorted({v.plot_id for v in visits if v.plot_id})
+
+        clients_map = {c.id: c.name for c in Client.query.filter(Client.id.in_(client_ids)).all()} if client_ids else {}
+        props_map   = {p.id: p.name for p in Property.query.filter(Property.id.in_(prop_ids)).all()} if prop_ids else {}
+        plots_map   = {pl.id: pl.name for pl in Plot.query.filter(Plot.id.in_(plot_ids)).all()} if plot_ids else {}
+
+        # =========================
+        # 3) Cria workbook
+        # =========================
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Visitas"
+
+        ws2 = wb.create_sheet("Produtos")
+
+        # =========================
+        # 4) Estilos
+        # =========================
+        header_fill = PatternFill("solid", fgColor="14532D")  # verde escuro
+        header_font = Font(color="FFFFFF", bold=True)
+        title_font = Font(bold=True, size=14, color="14532D")
+        bold_font = Font(bold=True)
+
+        center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        left = Alignment(horizontal="left", vertical="top", wrap_text=True)
+
+        thin = Side(style="thin", color="2F3B3A")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        def style_header(row_idx, max_col):
+            for col in range(1, max_col + 1):
+                cell = ws.cell(row=row_idx, column=col)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = center
+                cell.border = border
+
+        def style_header_ws2(row_idx, max_col):
+            for col in range(1, max_col + 1):
+                cell = ws2.cell(row=row_idx, column=col)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = center
+                cell.border = border
+
+        # =========================
+        # 5) Topo (resumo)
+        # =========================
+        period_label = f"{start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"
+        ws["A1"] = "Relatório Mensal — Visitas Técnicas"
+        ws["A1"].font = title_font
+
+        ws["A2"] = "Período:"
+        ws["A2"].font = bold_font
+        ws["B2"] = period_label
+
+        ws["A3"] = "Total de visitas:"
+        ws["A3"].font = bold_font
+        ws["B3"] = len(visits)
+
+        ws["A5"] = "Detalhamento de visitas"
+        ws["A5"].font = bold_font
+
+        # =========================
+        # 6) Cabeçalho Visitas
+        # =========================
+        headers = [
+            "Data",
+            "Cliente",
+            "Propriedade",
+            "Talhão",
+            "Consultor",
+            "Cultura",
+            "Variedade",
+            "Fenologia (observada)",
+            "Status",
+            "Observações"
+        ]
+        header_row = 6
+        ws.append([""] * len(headers))  # garante linha 6 existir
+        for i, h in enumerate(headers, start=1):
+            ws.cell(row=header_row, column=i).value = h
+
+        style_header(header_row, len(headers))
+        ws.freeze_panes = ws["A7"]  # trava topo + header
+
+        # =========================
+        # 7) Linhas Visitas
+        # =========================
+        def br_date(d):
+            if not d:
+                return ""
+            if isinstance(d, str):
+                # "YYYY-MM-DD..." → pega só data
+                try:
+                    d2 = _date.fromisoformat(d[:10])
+                    return d2.strftime("%d/%m/%Y")
+                except:
+                    return d[:10]
+            try:
+                return d.strftime("%d/%m/%Y")
+            except:
+                return str(d)
+
+        row_idx = header_row
+        for v in visits:
+            row_idx += 1
+
+            client_name = clients_map.get(v.client_id, f"Cliente {v.client_id}")
+            prop_name   = props_map.get(v.property_id, "") if v.property_id else ""
+            plot_name   = plots_map.get(v.plot_id, "") if v.plot_id else ""
+
+            # seus campos
+            culture = v.culture or (v.planting.culture if getattr(v, "planting", None) else "")
+            variety = v.variety or (v.planting.variety if getattr(v, "planting", None) else "")
+            consultant_name = ""
+            try:
+                consultant_name = next((c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id), "")  # se tiver CONSULTANTS no escopo
+            except:
+                consultant_name = ""
+
+            fenologia_obs = v.fenologia_real or ""
+            status = (v.status or "").strip()
+            obs = (v.recommendation or "").strip()
+
+            ws.append([
+                br_date(v.date),
+                client_name,
+                prop_name,
+                plot_name,
+                consultant_name,
+                culture or "",
+                variety or "",
+                fenologia_obs,
+                status,
+                obs,
+            ])
+
+            # estilo da linha
+            for col in range(1, len(headers) + 1):
+                c = ws.cell(row=row_idx, column=col)
+                c.alignment = left if col in (2, 3, 4, 10) else center
+                c.border = border
+
+        # =========================
+        # 8) Aba Produtos
+        # =========================
+        ws2["A1"] = "Produtos aplicados nas visitas"
+        ws2["A1"].font = title_font
+        ws2["A2"] = "Período:"
+        ws2["A2"].font = bold_font
+        ws2["B2"] = period_label
+
+        prod_headers = [
+            "Data visita",
+            "Cliente",
+            "Produto",
+            "Dose",
+            "Unidade",
+            "Data aplicação"
+        ]
+        ws2_header_row = 4
+        ws2.append([""] * len(prod_headers))
+        for i, h in enumerate(prod_headers, start=1):
+            ws2.cell(row=ws2_header_row, column=i).value = h
+        style_header_ws2(ws2_header_row, len(prod_headers))
+        ws2.freeze_panes = ws2["A5"]
+
+        prod_row = ws2_header_row
+        for v in visits:
+            client_name = clients_map.get(v.client_id, f"Cliente {v.client_id}")
+            v_date = br_date(v.date)
+
+            # v.products (sua relação)
+            prods = getattr(v, "products", []) or []
+            for p in prods:
+                prod_row += 1
+                ws2.append([
+                    v_date,
+                    client_name,
+                    getattr(p, "product_name", "") or "",
+                    getattr(p, "dose", "") or "",
+                    getattr(p, "unit", "") or "",
+                    br_date(getattr(p, "application_date", None)),
+                ])
+
+                for col in range(1, len(prod_headers) + 1):
+                    c = ws2.cell(row=prod_row, column=col)
+                    c.alignment = left if col in (2, 3) else center
+                    c.border = border
+
+        # =========================
+        # 9) Ajusta largura colunas
+        # =========================
+        def autosize(sheet, max_col, min_w=12, max_w=44):
+            for col in range(1, max_col + 1):
+                letter = get_column_letter(col)
+                max_len = 0
+                for cell in sheet[letter]:
+                    val = "" if cell.value is None else str(cell.value)
+                    if len(val) > max_len:
+                        max_len = len(val)
+                w = max(min_w, min(max_w, max_len + 2))
+                sheet.column_dimensions[letter].width = w
+
+        autosize(ws, len(headers))
+        autosize(ws2, len(prod_headers))
+
+        # =========================
+        # 10) Exporta arquivo
+        # =========================
+        bio = BytesIO()
+        wb.save(bio)
+        bio.seek(0)
+
+        filename = f"relatorio_visitas_{start_date.isoformat()}_a_{end_date.isoformat()}.xlsx"
+        return send_file(
+            bio,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        print("⚠️ erro report_monthly_xlsx:", e)
+        return jsonify(error=str(e)), 500
 
 
 
