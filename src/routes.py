@@ -86,7 +86,6 @@ def report_monthly_xlsx():
     ou
       - ?start=YYYY-MM-DD&end=YYYY-MM-DD  (end inclusive)
     """
-
     try:
         from io import BytesIO
         from datetime import date as _date
@@ -132,7 +131,6 @@ def report_monthly_xlsx():
             .all()
         )
 
-        # mapas (evita N+1 simples)
         client_ids = sorted({v.client_id for v in visits if v.client_id})
         prop_ids   = sorted({v.property_id for v in visits if v.property_id})
         plot_ids   = sorted({v.plot_id for v in visits if v.plot_id})
@@ -155,10 +153,21 @@ def report_monthly_xlsx():
         # =========================
         # 4) Estilos
         # =========================
-        header_fill = PatternFill("solid", fgColor="14532D")  # verde escuro
+        header_fill = PatternFill("solid", fgColor="14532D")
         header_font = Font(color="FFFFFF", bold=True)
         title_font = Font(bold=True, size=14, color="14532D")
         bold_font = Font(bold=True)
+
+        subheader_fill = PatternFill("solid", fgColor="E8F5E9")  # verde bem claro
+        zebra_fill = PatternFill("solid", fgColor="0B2A22")      # verde bem escuro suave (modo dark)
+        zebra_fill2 = PatternFill("solid", fgColor="0E332A")
+
+        status_planned = PatternFill("solid", fgColor="F59E0B")  # amarelo
+        status_done = PatternFill("solid", fgColor="22C55E")     # verde
+        status_canceled = PatternFill("solid", fgColor="EF4444") # vermelho
+        status_font_dark = Font(color="0B1F17", bold=True)
+        status_font_light = Font(color="FFFFFF", bold=True)
+
 
         center = Alignment(horizontal="center", vertical="center", wrap_text=True)
         left = Alignment(horizontal="left", vertical="top", wrap_text=True)
@@ -166,8 +175,8 @@ def report_monthly_xlsx():
         thin = Side(style="thin", color="2F3B3A")
         border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-        kpi_fill = PatternFill("solid", fgColor="0B3A2E")     # verde escuro
-        kpi_label_fill = PatternFill("solid", fgColor="0F5132")  # verde
+        kpi_fill = PatternFill("solid", fgColor="0B3A2E")
+        kpi_label_fill = PatternFill("solid", fgColor="0F5132")
         kpi_font = Font(color="FFFFFF", bold=True, size=12)
         kpi_value_font = Font(color="FFFFFF", bold=True, size=18)
 
@@ -206,92 +215,44 @@ def report_monthly_xlsx():
 
         total_visits = len(visits)
         unique_clients = len({v.client_id for v in visits if v.client_id})
-        total_clients = Client.query.count()  # cobertura da carteira
+        total_clients = Client.query.count()
         coverage = (unique_clients / total_clients) if total_clients else 0
 
-        # consultores ativos
         unique_consultants = len({v.consultant_id for v in visits if v.consultant_id})
         avg_visits_per_consultant = (total_visits / unique_consultants) if unique_consultants else 0
 
-        # KPIs em “cards” (linha 4–8)
-        # Card 1: Total de visitas
-        ws_dash.merge_cells("A4:C4")
-        ws_dash["A4"] = "Total de visitas"
-        ws_dash["A4"].fill = kpi_label_fill
-        ws_dash["A4"].font = kpi_font
-        ws_dash["A4"].alignment = center
-        ws_dash["A4"].border = border
+        # Cards KPI
+        def make_kpi_card(col_start_letter, title, value):
+            # header
+            ws_dash.merge_cells(f"{col_start_letter}4:{chr(ord(col_start_letter)+2)}4")
+            ws_dash[f"{col_start_letter}4"] = title
+            ws_dash[f"{col_start_letter}4"].fill = kpi_label_fill
+            ws_dash[f"{col_start_letter}4"].font = kpi_font
+            ws_dash[f"{col_start_letter}4"].alignment = center
+            ws_dash[f"{col_start_letter}4"].border = border
 
-        ws_dash.merge_cells("A5:C8")
-        ws_dash["A5"] = total_visits
-        ws_dash["A5"].fill = kpi_fill
-        ws_dash["A5"].font = kpi_value_font
-        ws_dash["A5"].alignment = Alignment(horizontal="center", vertical="center")
-        for r in range(5, 9):
-            for c in range(1, 4):
-                ws_dash.cell(r, c).fill = kpi_fill
-                ws_dash.cell(r, c).border = border
+            # value
+            ws_dash.merge_cells(f"{col_start_letter}5:{chr(ord(col_start_letter)+2)}8")
+            ws_dash[f"{col_start_letter}5"] = value
+            ws_dash[f"{col_start_letter}5"].fill = kpi_fill
+            ws_dash[f"{col_start_letter}5"].font = kpi_value_font
+            ws_dash[f"{col_start_letter}5"].alignment = Alignment(horizontal="center", vertical="center")
 
-        # Card 2: Clientes atendidos
-        ws_dash.merge_cells("D4:F4")
-        ws_dash["D4"] = "Clientes atendidos"
-        ws_dash["D4"].fill = kpi_label_fill
-        ws_dash["D4"].font = kpi_font
-        ws_dash["D4"].alignment = center
-        ws_dash["D4"].border = border
+            # fill + border for all cells
+            col_start = ord(col_start_letter) - ord("A") + 1
+            for r in range(5, 9):
+                for c in range(col_start, col_start + 3):
+                    ws_dash.cell(r, c).fill = kpi_fill
+                    ws_dash.cell(r, c).border = border
 
-        ws_dash.merge_cells("D5:F8")
-        ws_dash["D5"] = unique_clients
-        ws_dash["D5"].fill = kpi_fill
-        ws_dash["D5"].font = kpi_value_font
-        ws_dash["D5"].alignment = Alignment(horizontal="center", vertical="center")
-        for r in range(5, 9):
-            for c in range(4, 7):
-                ws_dash.cell(r, c).fill = kpi_fill
-                ws_dash.cell(r, c).border = border
+        make_kpi_card("A", "Total de visitas", total_visits)
+        make_kpi_card("D", "Clientes atendidos", unique_clients)
+        make_kpi_card("G", "Cobertura da carteira", f"{coverage*100:.1f}%")
+        make_kpi_card("J", "Média visitas/consultor", round(avg_visits_per_consultant, 1))
 
-        # Card 3: Cobertura da carteira (extra forte p/ diretoria)
-        ws_dash.merge_cells("G4:I4")
-        ws_dash["G4"] = "Cobertura da carteira"
-        ws_dash["G4"].fill = kpi_label_fill
-        ws_dash["G4"].font = kpi_font
-        ws_dash["G4"].alignment = center
-        ws_dash["G4"].border = border
-
-        ws_dash.merge_cells("G5:I8")
-        ws_dash["G5"] = f"{coverage*100:.1f}%"
-        ws_dash["G5"].fill = kpi_fill
-        ws_dash["G5"].font = kpi_value_font
-        ws_dash["G5"].alignment = Alignment(horizontal="center", vertical="center")
-        for r in range(5, 9):
-            for c in range(7, 10):
-                ws_dash.cell(r, c).fill = kpi_fill
-                ws_dash.cell(r, c).border = border
-
-        # Card 4: Média visitas/consultor (gestão de equipe)
-        ws_dash.merge_cells("J4:L4")
-        ws_dash["J4"] = "Média visitas/consultor"
-        ws_dash["J4"].fill = kpi_label_fill
-        ws_dash["J4"].font = kpi_font
-        ws_dash["J4"].alignment = center
-        ws_dash["J4"].border = border
-
-        ws_dash.merge_cells("J5:L8")
-        ws_dash["J5"] = round(avg_visits_per_consultant, 1)
-        ws_dash["J5"].fill = kpi_fill
-        ws_dash["J5"].font = kpi_value_font
-        ws_dash["J5"].alignment = Alignment(horizontal="center", vertical="center")
-        for r in range(5, 9):
-            for c in range(10, 13):
-                ws_dash.cell(r, c).fill = kpi_fill
-                ws_dash.cell(r, c).border = border
-
-        # --------------------------
-        # Tabelas auxiliares (base dos gráficos) — começando na linha 12
-        # --------------------------
         base_row = 12
 
-        # 1) Visitas por dia
+        # Visitas por dia
         ws_dash["A10"] = "Visitas por dia"
         ws_dash["A10"].font = bold_font
 
@@ -300,7 +261,6 @@ def report_monthly_xlsx():
             if v.date:
                 day_counts[v.date] += 1
 
-        # ordena datas
         days_sorted = sorted(day_counts.keys())
         ws_dash["A12"] = "Data"
         ws_dash["B12"] = "Visitas"
@@ -314,12 +274,10 @@ def report_monthly_xlsx():
             r += 1
         end_row_days = r - 1
 
-        # 2) Visitas por consultor
+        # Visitas por consultor
         ws_dash["D10"] = "Visitas por consultor"
         ws_dash["D10"].font = bold_font
 
-        # map id->nome consultor
-        consultants_map = {}
         try:
             consultants_map = {c["id"]: c["name"] for c in CONSULTANTS}
         except:
@@ -338,7 +296,7 @@ def report_monthly_xlsx():
             r2 += 1
         end_row_cons = r2 - 1
 
-        # 3) Visitas por cultura
+        # Visitas por cultura
         ws_dash["G10"] = "Visitas por cultura"
         ws_dash["G10"].font = bold_font
 
@@ -360,8 +318,7 @@ def report_monthly_xlsx():
             r3 += 1
         end_row_cult = r3 - 1
 
-
-                # 4) Top 5 clientes por visitas
+        # Top 5 clientes por visitas
         ws_dash["J10"] = "Top 5 clientes por visitas"
         ws_dash["J10"].font = bold_font
 
@@ -374,24 +331,21 @@ def report_monthly_xlsx():
 
         top5 = client_counts.most_common(5)
 
-        r4 = base_row + 1  # começa na linha 13
+        r4 = base_row + 1
         for cid, cnt in top5:
             ws_dash[f"J{r4}"] = clients_map.get(cid, f"Cliente {cid}")
             ws_dash[f"K{r4}"] = cnt
             r4 += 1
-        end_row_top5 = r4 - 1
-
+        end_row_top5 = r4 - 1  # ✅ NÃO ZERAR!
 
         # --------------------------
         # Gráficos
         # --------------------------
-        # Linha: Visitas por dia
         if end_row_days >= base_row + 1:
             line = LineChart()
             line.title = "Visitas por dia"
             line.y_axis.title = "Visitas"
             line.x_axis.title = "Data"
-
             data = Reference(ws_dash, min_col=2, min_row=12, max_row=end_row_days)
             cats = Reference(ws_dash, min_col=1, min_row=13, max_row=end_row_days)
             line.add_data(data, titles_from_data=True)
@@ -400,12 +354,10 @@ def report_monthly_xlsx():
             line.width = 18
             ws_dash.add_chart(line, "A18")
 
-        # Barras: Visitas por consultor
         if end_row_cons >= base_row + 1:
             bar = BarChart()
             bar.title = "Visitas por consultor"
             bar.y_axis.title = "Visitas"
-
             data = Reference(ws_dash, min_col=5, min_row=12, max_row=end_row_cons)
             cats = Reference(ws_dash, min_col=4, min_row=13, max_row=end_row_cons)
             bar.add_data(data, titles_from_data=True)
@@ -414,11 +366,9 @@ def report_monthly_xlsx():
             bar.width = 18
             ws_dash.add_chart(bar, "G18")
 
-        # Pizza: Visitas por cultura
         if end_row_cult >= base_row + 1:
             pie = PieChart()
             pie.title = "Mix de visitas por cultura"
-
             data = Reference(ws_dash, min_col=8, min_row=12, max_row=end_row_cult)
             labels = Reference(ws_dash, min_col=7, min_row=13, max_row=end_row_cult)
             pie.add_data(data, titles_from_data=True)
@@ -427,36 +377,25 @@ def report_monthly_xlsx():
             pie.width = 14
             ws_dash.add_chart(pie, "M18")
 
-
-        end_row_top5 = base_row  # fallback
-
-
-                # Barras: Top 5 clientes por visitas
         if end_row_top5 >= base_row + 1:
             bar_top = BarChart()
             bar_top.title = "Top 5 clientes por visitas"
             bar_top.y_axis.title = "Visitas"
-
-            data = Reference(ws_dash, min_col=11, min_row=12, max_row=end_row_top5)  # K
+            data = Reference(ws_dash, min_col=11, min_row=12, max_row=end_row_top5)   # K
             cats = Reference(ws_dash, min_col=10, min_row=13, max_row=end_row_top5)  # J
             bar_top.add_data(data, titles_from_data=True)
             bar_top.set_categories(cats)
-
             bar_top.height = 8
             bar_top.width = 18
-
-            # posição do gráfico (ajuste se quiser)
             ws_dash.add_chart(bar_top, "M32")
 
-
-        # ajustes leves largura
         for col in range(1, 14):
             ws_dash.column_dimensions[get_column_letter(col)].width = 16
 
         ws_dash.freeze_panes = "A10"
 
         # ==========================================================
-        # 6) ABA VISITAS (igual seu modelo, com pequenos ajustes)
+        # 6) ABA VISITAS
         # ==========================================================
         ws["A1"] = "Relatório Mensal — Visitas Técnicas"
         ws["A1"].font = title_font
@@ -467,34 +406,42 @@ def report_monthly_xlsx():
 
         ws["A3"] = "Total de visitas:"
         ws["A3"].font = bold_font
-        ws["B3"] = len(visits)
+        ws["B3"] = total_visits
 
         ws["A4"] = "Clientes atendidos:"
         ws["A4"].font = bold_font
         ws["B4"] = unique_clients
 
+
+        # 🎨 Destaque do resumo (A1:B4)
+        for r in range(1, 5):
+            for c in range(1, 3):  # A..B
+                cell = ws.cell(r, c)
+                cell.border = border
+                if r == 1:
+                    cell.fill = subheader_fill
+                    cell.font = Font(bold=True, size=14, color="14532D")
+                else:
+                    cell.fill = subheader_fill
+                    if c == 1:
+                        cell.font = bold_font
+                    cell.alignment = left
+
+
         ws["A6"] = "Detalhamento de visitas"
         ws["A6"].font = bold_font
 
         headers = [
-            "Data",
-            "Cliente",
-            "Propriedade",
-            "Talhão",
-            "Consultor",
-            "Cultura",
-            "Variedade",
-            "Fenologia (observada)",
-            "Status",
-            "Observações"
+            "Data","Cliente","Propriedade","Talhão","Consultor",
+            "Cultura","Variedade","Fenologia (observada)","Status","Observações"
         ]
-        header_row = 7
-        ws.append([""] * len(headers))
+        header_row = 6
+
         for i, h in enumerate(headers, start=1):
             ws.cell(row=header_row, column=i).value = h
 
         style_header(ws, header_row, len(headers))
-        ws.freeze_panes = ws["A8"]
+        ws.freeze_panes = ws["A7"]
 
         row_idx = header_row
         for v in visits:
@@ -507,7 +454,6 @@ def report_monthly_xlsx():
             culture = v.culture or (v.planting.culture if getattr(v, "planting", None) else "")
             variety = v.variety or (v.planting.variety if getattr(v, "planting", None) else "")
 
-            consultant_name = ""
             try:
                 consultant_name = next((c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id), "")
             except:
@@ -530,13 +476,38 @@ def report_monthly_xlsx():
                 obs,
             ])
 
+            # 🎨 Zebra (alternando fundo)
+            row_fill = zebra_fill if (row_idx % 2 == 0) else zebra_fill2
+
             for col in range(1, len(headers) + 1):
-                c = ws.cell(row=row_idx, column=col)
-                c.alignment = left if col in (2, 3, 4, 10) else center
-                c.border = border
+                cell = ws.cell(row=row_idx, column=col)
+                cell.border = border
+                cell.fill = row_fill
+                cell.alignment = left if col in (2, 3, 4, 10) else center
+
+            # 🎨 Status com cor (coluna 9)
+            st = (status or "").lower().strip()
+            status_cell = ws.cell(row=row_idx, column=9)
+
+            if st in ("planned", "planejada", "pendente"):
+                status_cell.fill = status_planned
+                status_cell.font = status_font_dark
+            elif st in ("done", "realizada", "concluida", "concluída"):
+                status_cell.fill = status_done
+                status_cell.font = status_font_dark
+            elif st in ("canceled", "cancelada", "cancelado"):
+                status_cell.fill = status_canceled
+                status_cell.font = status_font_light
+            else:
+                status_cell.font = Font(color="FFFFFF", bold=True)
+
+
+        # ✅ filtro cobrindo até a última linha de dados
+        last_row_visits = ws.max_row
+        ws.auto_filter.ref = f"A{header_row}:{get_column_letter(len(headers))}{last_row_visits}"
 
         # ==========================================================
-        # 8) ABA PRODUTOS
+        # 7) ABA PRODUTOS
         # ==========================================================
         ws2["A1"] = "Produtos aplicados nas visitas"
         ws2["A1"].font = title_font
@@ -546,9 +517,10 @@ def report_monthly_xlsx():
 
         prod_headers = ["Data visita", "Cliente", "Produto", "Dose", "Unidade", "Data aplicação"]
         ws2_header_row = 4
-        ws2.append([""] * len(prod_headers))
+
         for i, h in enumerate(prod_headers, start=1):
             ws2.cell(row=ws2_header_row, column=i).value = h
+
         style_header(ws2, ws2_header_row, len(prod_headers))
         ws2.freeze_panes = ws2["A5"]
 
@@ -569,13 +541,21 @@ def report_monthly_xlsx():
                     br_date(getattr(p, "application_date", None)),
                 ])
 
+                row_fill = zebra_fill if (prod_row % 2 == 0) else zebra_fill2
+
                 for col in range(1, len(prod_headers) + 1):
-                    c = ws2.cell(row=prod_row, column=col)
-                    c.alignment = left if col in (2, 3) else center
-                    c.border = border
+                    cell = ws2.cell(row=prod_row, column=col)
+                    cell.border = border
+                    cell.fill = row_fill
+                    cell.alignment = left if col in (2, 3) else center
+
+
+        # ✅ filtro cobrindo até a última linha de dados
+        last_row_prod = ws2.max_row
+        ws2.auto_filter.ref = f"A{ws2_header_row}:{get_column_letter(len(prod_headers))}{last_row_prod}"
 
         # ==========================================================
-        # 9) Ajusta largura colunas
+        # 8) Ajusta largura colunas
         # ==========================================================
         def autosize(sheet, max_col, min_w=12, max_w=44):
             for col in range(1, max_col + 1):
@@ -583,16 +563,14 @@ def report_monthly_xlsx():
                 max_len = 0
                 for cell in sheet[letter]:
                     val = "" if cell.value is None else str(cell.value)
-                    if len(val) > max_len:
-                        max_len = len(val)
-                w = max(min_w, min(max_w, max_len + 2))
-                sheet.column_dimensions[letter].width = w
+                    max_len = max(max_len, len(val))
+                sheet.column_dimensions[letter].width = max(min_w, min(max_w, max_len + 2))
 
         autosize(ws, len(headers))
         autosize(ws2, len(prod_headers))
 
         # ==========================================================
-        # 10) Exporta arquivo
+        # 9) Exporta arquivo
         # ==========================================================
         bio = BytesIO()
         wb.save(bio)
@@ -609,6 +587,7 @@ def report_monthly_xlsx():
     except Exception as e:
         print("⚠️ erro report_monthly_xlsx:", e)
         return jsonify(error=str(e)), 500
+
 
 
 
