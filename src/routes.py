@@ -1102,16 +1102,28 @@ def export_visit_pdf(visit_id):
         if total_photos_all <= 16: return (1100, 62)
         return (1000, 55)
 
-    def download_to_temp(url: str, timeout=20, max_bytes=8_000_000):
+    def download_to_temp(url: str, timeout=20, max_bytes=12_000_000):
         """
-        Baixa a imagem para arquivo temporário (evita BytesIO gigante).
-        max_bytes protege contra foto enorme (8MB).
+        Baixa a imagem para arquivo temporário com limite em bytes (MB).
+        - Primeiro tenta validar pelo Content-Length (quando existe)
+        - Se não tiver, conta bytes no stream.
         """
+        tmp = None
         try:
             req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urlopen(req, timeout=timeout) as r:
+                # ✅ 1) Se o servidor enviar Content-Length, valida antes
+                try:
+                    cl = r.headers.get("Content-Length")
+                    if cl and int(cl) > max_bytes:
+                        return None
+                except:
+                    pass
+
+                # ✅ 2) Baixa contando bytes (vale para Content-Length ausente)
                 tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".img")
                 total = 0
+
                 while True:
                     chunk = r.read(64 * 1024)
                     if not chunk:
@@ -1125,9 +1137,18 @@ def export_visit_pdf(visit_id):
                             pass
                         return None
                     tmp.write(chunk)
+
                 tmp.close()
                 return tmp.name
+
         except Exception:
+            # garante limpeza se algo falhar no meio
+            try:
+                if tmp and tmp.name:
+                    tmp.close()
+                    os.remove(tmp.name)
+            except:
+                pass
             return None
 
     def compress_to_jpeg_temp(src_path: str, max_px: int, quality: int):
@@ -1359,7 +1380,7 @@ def export_visit_pdf(visit_id):
 
                 try:
                     # 1) baixa pra temp
-                    src_path = download_to_temp(photo_url, timeout=20, max_bytes=8_000_000)
+                    src_path = download_to_temp(photo_url, timeout=20, max_bytes=12_000_000)
                     if not src_path:
                         print(f"⚠️ PDF: download bloqueado/maior que limite url={photo_url}")
                         continue
