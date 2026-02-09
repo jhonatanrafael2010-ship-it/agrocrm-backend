@@ -237,6 +237,33 @@ def report_monthly_xlsx():
         unique_consultants = len({v.consultant_id for v in visits if v.consultant_id})
         avg_visits_per_consultant = (total_visits / unique_consultants) if unique_consultants else 0
 
+        # ==========================================================
+        # 🎯 META: 5 visitas por cliente (conta só visita com foto)
+        # ==========================================================
+        META_VISITAS_CLIENTE = 5
+
+        def has_valid_photo(v) -> bool:
+            photos = getattr(v, "photos", []) or []
+            # conta só se tiver url
+            return any(getattr(p, "url", None) for p in photos)
+
+        # visitas válidas (com foto) por cliente
+        photo_visits_by_client = Counter()
+        for v in visits:
+            if not v.client_id:
+                continue
+            if has_valid_photo(v):
+                photo_visits_by_client[v.client_id] += 1
+
+        # progresso da carteira: soma do que já foi cumprido (cap 5 por cliente)
+        done_units = sum(min(cnt, META_VISITAS_CLIENTE) for cnt in photo_visits_by_client.values())
+
+        # total alvo da carteira (clientes cadastrados * 5)
+        target_units = (total_clients or 0) * META_VISITAS_CLIENTE
+
+        portfolio_progress = (done_units / target_units) if target_units else 0.0
+
+
         # Cards KPI
         def make_kpi_card(col_start_letter, title, value):
             # header
@@ -265,6 +292,8 @@ def report_monthly_xlsx():
         make_kpi_card("D", "Clientes atendidos", unique_clients)
         make_kpi_card("G", "Cobertura da carteira", f"{coverage*100:.1f}%")
         make_kpi_card("J", "Média visitas/consultor", round(avg_visits_per_consultant, 1))
+        make_kpi_card("M", "Meta 5 visitas (carteira)", f"{portfolio_progress*100:.1f}%")
+
 
         base_row = 12
 
@@ -420,6 +449,43 @@ def report_monthly_xlsx():
             ws_dash.column_dimensions[get_column_letter(col)].width = 16
 
         ws_dash.freeze_panes = "A10"
+
+
+        # ==========================================================
+        # 📊 Progresso meta por cliente (visitas com foto)
+        # ==========================================================
+        ws_dash["A40"] = "Progresso da meta (5 visitas com foto por cliente)"
+        ws_dash["A40"].font = bold_font
+
+        ws_dash["A42"] = "Cliente"
+        ws_dash["B42"] = "Visitas c/ foto"
+        ws_dash["C42"] = "% da meta (5)"
+
+        for cell in ws_dash["A42:C42"][0]:
+            cell.fill = dash_header_fill
+            cell.font = dash_font
+            cell.alignment = dash_center
+            cell.border = border_header
+
+        rmeta = 43
+        # ordena: quem mais avançou primeiro
+        for cid, cnt in sorted(photo_visits_by_client.items(), key=lambda x: x[1], reverse=True):
+            ws_dash[f"A{rmeta}"] = clients_map.get(cid, f"Cliente {cid}")
+            ws_dash[f"B{rmeta}"] = cnt
+            ws_dash[f"C{rmeta}"] = round(min(cnt, META_VISITAS_CLIENTE) / META_VISITAS_CLIENTE, 3)  # 0..1
+            # estilo
+            for col in range(1, 4):
+                c = ws_dash.cell(rmeta, col)
+                c.border = border_data
+                c.alignment = left if col == 1 else dash_center
+            rmeta += 1
+
+        end_row_meta = rmeta - 1
+
+        # Formatar coluna C como percentual
+        for rr in range(43, end_row_meta + 1):
+            ws_dash[f"C{rr}"].number_format = "0%"
+
 
         # ==========================================================
         # 6) ABA VISITAS
