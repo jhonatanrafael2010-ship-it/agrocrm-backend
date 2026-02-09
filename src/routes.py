@@ -364,7 +364,7 @@ def report_monthly_xlsx():
         end_row_cult = r3 - 1
 
         # Top 5 clientes por visitas (SÓ visitas com foto)
-        ws_dash["J10"] = "Top 5 clientes por visitas (c/ fotos)"
+        ws_dash["J10"] = "Top 5 clientes por visitas"
         ws_dash["J10"].font = bold_font
 
         client_counts = Counter()
