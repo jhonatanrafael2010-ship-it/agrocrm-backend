@@ -363,11 +363,18 @@ def report_monthly_xlsx():
             r3 += 1
         end_row_cult = r3 - 1
 
-        # Top 5 clientes por visitas
-        ws_dash["J10"] = "Top 5 clientes por visitas"
+        # Top 5 clientes por visitas (SÓ visitas com foto)
+        ws_dash["J10"] = "Top 5 clientes por visitas (c/ fotos)"
         ws_dash["J10"].font = bold_font
 
-        client_counts = Counter(v.client_id for v in visits if v.client_id)
+        client_counts = Counter()
+        for v in visits:
+            if not v.client_id:
+                continue
+            photos = getattr(v, "photos", []) or []
+            if any(getattr(p, "url", None) for p in photos):
+                client_counts[v.client_id] += 1
+
 
         ws_dash["J12"] = "Cliente"
         ws_dash["K12"] = "Visitas"
@@ -458,7 +465,7 @@ def report_monthly_xlsx():
         ws_dash["A40"].font = bold_font
 
         ws_dash["A42"] = "Cliente"
-        ws_dash["B42"] = "Visitas c/ foto"
+        ws_dash["B42"] = "Visitas"
         ws_dash["C42"] = "% da meta (5)"
 
         for cell in ws_dash["A42:C42"][0]:
