@@ -43,6 +43,8 @@ from datetime import date as _date, datetime as _dt
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.chart.label import DataLabelList
+from openpyxl.formatting.rule import DataBarRule
 
 
 
@@ -221,15 +223,86 @@ def report_monthly_xlsx():
         period_label = f"{start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"
 
         # ==========================================================
-        # 5) DASHBOARD (KPIs + Gráficos)
+        # 5) DASHBOARD (KPIs + Gráficos) — Layout executivo
         # ==========================================================
-        ws_dash["A1"] = "Relatório completo — NutriCRM"
-        ws_dash["A1"].font = Font(bold=True, size=16, color="14532D")
-        ws_dash["A2"] = "Período:"
-        ws_dash["A2"].font = bold_font
-        ws_dash["B2"] = period_label
 
+        # -------------------------
+        # Setup visual geral
+        # -------------------------
+        ws_dash.sheet_view.showGridLines = False
+        ws_dash.sheet_view.zoomScale = 110
+        ws_dash.page_setup.orientation = "landscape"
+        ws_dash.page_setup.fitToWidth = 1
+        ws_dash.page_setup.fitToHeight = 0
+
+        # largura de colunas (painel usa A..N)
+        for col in range(1, 15):  # A..N
+            ws_dash.column_dimensions[get_column_letter(col)].width = 16
+
+        # alturas (melhora leitura)
+        ws_dash.row_dimensions[1].height = 30
+        ws_dash.row_dimensions[2].height = 18
+        ws_dash.row_dimensions[4].height = 18
+        ws_dash.row_dimensions[5].height = 28
+        ws_dash.row_dimensions[6].height = 28
+        ws_dash.row_dimensions[7].height = 28
+        ws_dash.row_dimensions[8].height = 28
+
+        # -------------------------
+        # Novos estilos do Dashboard
+        # -------------------------
+        dash_title_fill = PatternFill("solid", fgColor="0F5132")
+        dash_title_font = Font(color="FFFFFF", bold=True, size=16)
+        dash_sub_font = Font(color="1F2937", bold=True, size=11)
+
+        kpi_fill = PatternFill("solid", fgColor="0B3A2E")
+        kpi_label_fill = PatternFill("solid", fgColor="14532D")
+        kpi_font = Font(color="FFFFFF", bold=True, size=11)
+        kpi_value_font = Font(color="FFFFFF", bold=True, size=18)
+
+        box_border = Border(
+            left=Side(style="thin", color="1F3A33"),
+            right=Side(style="thin", color="1F3A33"),
+            top=Side(style="thin", color="1F3A33"),
+            bottom=Side(style="thin", color="1F3A33"),
+        )
+
+        muted = Font(color="6B7280")
+        num_font = Font(color="111827", bold=True)
+
+        # -------------------------
+        # Cabeçalho (banner)
+        # -------------------------
+        ws_dash.merge_cells("A1:N1")
+        ws_dash["A1"] = "Painel Gerencial — NutriCRM (Relatório de Visitas)"
+        ws_dash["A1"].fill = dash_title_fill
+        ws_dash["A1"].font = dash_title_font
+        ws_dash["A1"].alignment = Alignment(horizontal="center", vertical="center")
+        ws_dash["A1"].border = box_border
+
+        ws_dash["A2"] = "Período:"
+        ws_dash["A2"].font = dash_sub_font
+        ws_dash["B2"] = period_label
+        ws_dash["B2"].font = Font(color="111827", bold=True)
+
+        ws_dash["D2"] = "Regra:"
+        ws_dash["D2"].font = dash_sub_font
+        ws_dash.merge_cells("E2:N2")
+        ws_dash["E2"] = "Visita concluída = possui foto (URL). Meta = 5 visitas com foto por cliente."
+        ws_dash["E2"].font = muted
+
+        # -------------------------
+        # KPIs (linha de cards)
+        # -------------------------
         total_visits = len(visits)
+
+        def has_valid_photo(v) -> bool:
+            photos = getattr(v, "photos", []) or []
+            return any(getattr(p, "url", None) for p in photos)
+
+        visits_with_photo = sum(1 for v in visits if has_valid_photo(v))
+        real_completion = (visits_with_photo / total_visits) if total_visits else 0.0
+
         unique_clients = len({v.client_id for v in visits if v.client_id})
         total_clients = Client.query.count()
         coverage = (unique_clients / total_clients) if total_clients else 0
@@ -237,69 +310,86 @@ def report_monthly_xlsx():
         unique_consultants = len({v.consultant_id for v in visits if v.consultant_id})
         avg_visits_per_consultant = (total_visits / unique_consultants) if unique_consultants else 0
 
-        # ==========================================================
-        # 🎯 META: 5 visitas por cliente (conta só visita com foto)
-        # ==========================================================
         META_VISITAS_CLIENTE = 5
-
-        def has_valid_photo(v) -> bool:
-            photos = getattr(v, "photos", []) or []
-            # conta só se tiver url
-            return any(getattr(p, "url", None) for p in photos)
 
         # visitas válidas (com foto) por cliente
         photo_visits_by_client = Counter()
         for v in visits:
-            if not v.client_id:
-                continue
-            if has_valid_photo(v):
+            if v.client_id and has_valid_photo(v):
                 photo_visits_by_client[v.client_id] += 1
 
-        # progresso da carteira: soma do que já foi cumprido (cap 5 por cliente)
         done_units = sum(min(cnt, META_VISITAS_CLIENTE) for cnt in photo_visits_by_client.values())
-
-        # total alvo da carteira (clientes cadastrados * 5)
         target_units = (total_clients or 0) * META_VISITAS_CLIENTE
-
         portfolio_progress = (done_units / target_units) if target_units else 0.0
 
+        # Card helper com largura fixa de 2 colunas
+        def make_kpi_block(col1, col2, row_top, title, value, fmt=None):
+            # título
+            ws_dash.merge_cells(f"{col1}{row_top}:{col2}{row_top}")
+            tcell = ws_dash[f"{col1}{row_top}"]
+            tcell.value = title
+            tcell.fill = kpi_label_fill
+            tcell.font = kpi_font
+            tcell.alignment = Alignment(horizontal="center", vertical="center")
+            tcell.border = box_border
 
-        # Cards KPI
-        def make_kpi_card(col_start_letter, title, value):
-            # header
-            ws_dash.merge_cells(f"{col_start_letter}4:{chr(ord(col_start_letter)+2)}4")
-            ws_dash[f"{col_start_letter}4"] = title
-            ws_dash[f"{col_start_letter}4"].fill = kpi_label_fill
-            ws_dash[f"{col_start_letter}4"].font = kpi_font
-            ws_dash[f"{col_start_letter}4"].alignment = center
-            ws_dash[f"{col_start_letter}4"].border = border_header
+            # valor
+            ws_dash.merge_cells(f"{col1}{row_top+1}:{col2}{row_top+3}")
+            vcell = ws_dash[f"{col1}{row_top+1}"]
+            vcell.value = value
+            vcell.fill = kpi_fill
+            vcell.font = kpi_value_font
+            vcell.alignment = Alignment(horizontal="center", vertical="center")
+            vcell.border = box_border
 
-            # value
-            ws_dash.merge_cells(f"{col_start_letter}5:{chr(ord(col_start_letter)+2)}8")
-            ws_dash[f"{col_start_letter}5"] = value
-            ws_dash[f"{col_start_letter}5"].fill = kpi_fill
-            ws_dash[f"{col_start_letter}5"].font = kpi_value_font
-            ws_dash[f"{col_start_letter}5"].alignment = Alignment(horizontal="center", vertical="center")
+            # aplicar formato (percent / number)
+            if fmt:
+                vcell.number_format = fmt
 
-            # fill + border for all cells
-            col_start = ord(col_start_letter) - ord("A") + 1
-            for r in range(5, 9):
-                for c in range(col_start, col_start + 3):
-                    ws_dash.cell(r, c).fill = kpi_fill
-                    ws_dash.cell(r, c).border = border_header
+            # borda/fill nas células mescladas
+            c1 = ord(col1) - 64
+            c2 = ord(col2) - 64
+            for rr in range(row_top+1, row_top+4):
+                for cc in range(c1, c2+1):
+                    cell = ws_dash.cell(rr, cc)
+                    cell.fill = kpi_fill
+                    cell.border = box_border
 
-        make_kpi_card("A", "Total de visitas", total_visits)
-        make_kpi_card("D", "Clientes atendidos", unique_clients)
-        make_kpi_card("G", "Cobertura da carteira", f"{coverage*100:.1f}%")
-        make_kpi_card("J", "Média visitas/consultor", round(avg_visits_per_consultant, 1))
-        make_kpi_card("M", "Meta 5 visitas (carteira)", f"{portfolio_progress*100:.1f}%")
+        # KPIs (7 cards) — 2 colunas cada
+        # A-B / C-D / E-F / G-H / I-J / K-L / M-N
+        make_kpi_block("A","B",4,"Total de visitas (todas)", total_visits, fmt="#,##0")
+        make_kpi_block("C","D",4,"Visitas com foto (concluídas)", visits_with_photo, fmt="#,##0")
+        make_kpi_block("E","F",4,"Taxa de conclusão real", real_completion, fmt="0.0%")
+        make_kpi_block("G","H",4,"Clientes atendidos (período)", unique_clients, fmt="#,##0")
+        make_kpi_block("I","J",4,"Cobertura da carteira", coverage, fmt="0.0%")
+        make_kpi_block("K","L",4,"Média visitas/consultor", round(avg_visits_per_consultant,1), fmt="0.0")
+        make_kpi_block("M","N",4,"Meta 5 visitas (carteira)", portfolio_progress, fmt="0.0%")
 
+        # trava cabeçalho
+        ws_dash.freeze_panes = "A10"
 
-        base_row = 12
+        # -------------------------
+        # Seções (títulos)
+        # -------------------------
+        def section_title(cell_ref, text):
+            cell = ws_dash[cell_ref]
+            cell.value = text
+            cell.font = Font(bold=True, color="111827", size=12)
+            cell.fill = PatternFill("solid", fgColor="E5E7EB")
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+            cell.border = box_border
 
-        # Visitas por dia
-        ws_dash["A10"] = "Visitas por dia"
-        ws_dash["A10"].font = bold_font
+        # -------------------------
+        # Tabela: Visitas por dia (A..B)
+        # -------------------------
+        section_title("A10", "Visitas por dia")
+        ws_dash["A12"] = "Data"
+        ws_dash["B12"] = "Visitas"
+        for cell in ws_dash["A12:B12"][0]:
+            cell.fill = dash_header_fill
+            cell.font = dash_font
+            cell.alignment = dash_center
+            cell.border = border_header
 
         day_counts = defaultdict(int)
         for v in visits:
@@ -307,21 +397,27 @@ def report_monthly_xlsx():
                 day_counts[v.date] += 1
 
         days_sorted = sorted(day_counts.keys())
-        ws_dash["A12"] = "Data"
-        ws_dash["B12"] = "Visitas"
-        ws_dash["A12"].font = bold_font
-        ws_dash["B12"].font = bold_font
-
-        r = base_row + 1
+        r = 13
         for d in days_sorted:
-            ws_dash[f"A{r}"] = d.strftime("%Y-%m-%d")
+            ws_dash[f"A{r}"] = d.strftime("%d/%m/%Y")
             ws_dash[f"B{r}"] = day_counts[d]
+            ws_dash[f"A{r}"].alignment = left
+            ws_dash[f"B{r}"].alignment = dash_center
+            ws_dash[f"B{r}"].number_format = "#,##0"
             r += 1
         end_row_days = r - 1
 
-        # Visitas por consultor
-        ws_dash["D10"] = "Visitas por consultor"
-        ws_dash["D10"].font = bold_font
+        # -------------------------
+        # Tabela: Visitas por consultor (D..E)
+        # -------------------------
+        section_title("D10", "Visitas por consultor")
+        ws_dash["D12"] = "Consultor"
+        ws_dash["E12"] = "Visitas"
+        for cell in ws_dash["D12:E12"][0]:
+            cell.fill = dash_header_fill
+            cell.font = dash_font
+            cell.alignment = dash_center
+            cell.border = border_header
 
         try:
             consultants_map = {c["id"]: c["name"] for c in CONSULTANTS}
@@ -329,21 +425,27 @@ def report_monthly_xlsx():
             consultants_map = {}
 
         cons_counts = Counter(v.consultant_id for v in visits if v.consultant_id)
-        ws_dash["D12"] = "Consultor"
-        ws_dash["E12"] = "Visitas"
-        ws_dash["D12"].font = bold_font
-        ws_dash["E12"].font = bold_font
-
-        r2 = base_row + 1
+        r2 = 13
         for cid, cnt in cons_counts.most_common():
             ws_dash[f"D{r2}"] = consultants_map.get(cid, f"ID {cid}")
             ws_dash[f"E{r2}"] = cnt
+            ws_dash[f"D{r2}"].alignment = left
+            ws_dash[f"E{r2}"].alignment = dash_center
+            ws_dash[f"E{r2}"].number_format = "#,##0"
             r2 += 1
         end_row_cons = r2 - 1
 
-        # Visitas por cultura
-        ws_dash["G10"] = "Visitas por cultura"
-        ws_dash["G10"].font = bold_font
+        # -------------------------
+        # Tabela: Visitas por cultura (G..H)
+        # -------------------------
+        section_title("G10", "Visitas por cultura")
+        ws_dash["G12"] = "Cultura"
+        ws_dash["H12"] = "Visitas"
+        for cell in ws_dash["G12:H12"][0]:
+            cell.fill = dash_header_fill
+            cell.font = dash_font
+            cell.alignment = dash_center
+            cell.border = border_header
 
         cult_counts = Counter()
         for v in visits:
@@ -351,60 +453,48 @@ def report_monthly_xlsx():
             culture = (culture or "—").strip()
             cult_counts[culture] += 1
 
-        ws_dash["G12"] = "Cultura"
-        ws_dash["H12"] = "Visitas"
-        ws_dash["G12"].font = bold_font
-        ws_dash["H12"].font = bold_font
-
-        r3 = base_row + 1
+        r3 = 13
         for culture, cnt in cult_counts.most_common():
             ws_dash[f"G{r3}"] = culture
             ws_dash[f"H{r3}"] = cnt
+            ws_dash[f"G{r3}"].alignment = left
+            ws_dash[f"H{r3}"].alignment = dash_center
+            ws_dash[f"H{r3}"].number_format = "#,##0"
             r3 += 1
         end_row_cult = r3 - 1
 
-        # Top 5 clientes por visitas (SÓ visitas com foto)
-        ws_dash["J10"] = "Top 5 clientes por visitas"
-        ws_dash["J10"].font = bold_font
+        # -------------------------
+        # Tabela: Top 5 clientes (visitas com foto) (J..K)
+        # -------------------------
+        section_title("J10", "Top 5 clientes (visitas com foto)")
+        ws_dash["J12"] = "Cliente"
+        ws_dash["K12"] = "Concluídas"
+        for cell in ws_dash["J12:K12"][0]:
+            cell.fill = dash_header_fill
+            cell.font = dash_font
+            cell.alignment = dash_center
+            cell.border = border_header
 
         client_counts = Counter()
         for v in visits:
-            if not v.client_id:
-                continue
-            photos = getattr(v, "photos", []) or []
-            if any(getattr(p, "url", None) for p in photos):
+            if v.client_id and has_valid_photo(v):
                 client_counts[v.client_id] += 1
 
-
-        ws_dash["J12"] = "Cliente"
-        ws_dash["K12"] = "Visitas"
-        ws_dash["J12"].font = bold_font
-        ws_dash["K12"].font = bold_font
-
-        # Pinta cabeçalhos das tabelas (linha 12)
-        for a1, b1 in [("A12","B12"), ("D12","E12"), ("G12","H12"), ("J12","K12")]:
-            for row in ws_dash[a1:b1]:
-                for cell in row:
-                    cell.fill = dash_header_fill
-                    cell.font = dash_font
-                    cell.alignment = dash_center
-                    cell.border = border_header
-
-
-
         top5 = client_counts.most_common(5)
-
-        r4 = base_row + 1
+        r4 = 13
         for cid, cnt in top5:
             ws_dash[f"J{r4}"] = clients_map.get(cid, f"Cliente {cid}")
             ws_dash[f"K{r4}"] = cnt
+            ws_dash[f"J{r4}"].alignment = left
+            ws_dash[f"K{r4}"].alignment = dash_center
+            ws_dash[f"K{r4}"].number_format = "#,##0"
             r4 += 1
-        end_row_top5 = r4 - 1  # ✅ NÃO ZERAR!
+        end_row_top5 = r4 - 1
 
-        # --------------------------
-        # Gráficos
-        # --------------------------
-        if end_row_days >= base_row + 1:
+        # -------------------------
+        # Gráficos (com labels e visual mais claro)
+        # -------------------------
+        if end_row_days >= 13:
             line = LineChart()
             line.title = "Visitas por dia"
             line.y_axis.title = "Visitas"
@@ -415,9 +505,11 @@ def report_monthly_xlsx():
             line.set_categories(cats)
             line.height = 8
             line.width = 18
+            line.dataLabels = DataLabelList()
+            line.dataLabels.showVal = False
             ws_dash.add_chart(line, "A18")
 
-        if end_row_cons >= base_row + 1:
+        if end_row_cons >= 13:
             bar = BarChart()
             bar.title = "Visitas por consultor"
             bar.y_axis.title = "Visitas"
@@ -427,9 +519,11 @@ def report_monthly_xlsx():
             bar.set_categories(cats)
             bar.height = 8
             bar.width = 18
+            bar.dataLabels = DataLabelList()
+            bar.dataLabels.showVal = True
             ws_dash.add_chart(bar, "G18")
 
-        if end_row_cult >= base_row + 1:
+        if end_row_cult >= 13:
             pie = PieChart()
             pie.title = "Mix de visitas por cultura"
             data = Reference(ws_dash, min_col=8, min_row=12, max_row=end_row_cult)
@@ -440,58 +534,83 @@ def report_monthly_xlsx():
             pie.width = 14
             ws_dash.add_chart(pie, "M18")
 
-        if end_row_top5 >= base_row + 1:
+        if end_row_top5 >= 13:
             bar_top = BarChart()
-            bar_top.title = "Top 5 clientes por visitas"
-            bar_top.y_axis.title = "Visitas"
+            bar_top.title = "Top 5 clientes (concluídas)"
+            bar_top.y_axis.title = "Concluídas"
             data = Reference(ws_dash, min_col=11, min_row=12, max_row=end_row_top5)   # K
             cats = Reference(ws_dash, min_col=10, min_row=13, max_row=end_row_top5)  # J
             bar_top.add_data(data, titles_from_data=True)
             bar_top.set_categories(cats)
             bar_top.height = 8
             bar_top.width = 18
+            bar_top.dataLabels = DataLabelList()
+            bar_top.dataLabels.showVal = True
             ws_dash.add_chart(bar_top, "M32")
 
-        for col in range(1, 14):
-            ws_dash.column_dimensions[get_column_letter(col)].width = 16
-
-        ws_dash.freeze_panes = "A10"
-
-
         # ==========================================================
-        # 📊 Progresso meta por cliente (visitas com foto)
+        # 📊 Progresso meta por cliente (5 visitas com foto)
         # ==========================================================
-        ws_dash["A40"] = "Progresso da meta (5 visitas com foto por cliente)"
-        ws_dash["A40"].font = bold_font
+        # bloco mais "executivo": Cliente | Concluídas | % | Barra
+        start_meta_title_row = 40
+        section_title(f"A{start_meta_title_row}", "Progresso da meta por cliente (5 visitas com foto)")
+        ws_dash.merge_cells(f"A{start_meta_title_row}:N{start_meta_title_row}")
 
-        ws_dash["A42"] = "Cliente"
-        ws_dash["B42"] = "Visitas"
-        ws_dash["C42"] = "% da meta (5)"
+        ws_dash[f"A{start_meta_title_row+2}"] = "Cliente"
+        ws_dash[f"B{start_meta_title_row+2}"] = "Concluídas"
+        ws_dash[f"C{start_meta_title_row+2}"] = "% da meta"
+        ws_dash[f"D{start_meta_title_row+2}"] = "Barra"
 
-        for cell in ws_dash["A42:C42"][0]:
+        for cell in ws_dash[f"A{start_meta_title_row+2}:D{start_meta_title_row+2}"][0]:
             cell.fill = dash_header_fill
             cell.font = dash_font
             cell.alignment = dash_center
             cell.border = border_header
 
-        rmeta = 43
-        # ordena: quem mais avançou primeiro
+        # escreve dados
+        rmeta = start_meta_title_row + 3
         for cid, cnt in sorted(photo_visits_by_client.items(), key=lambda x: x[1], reverse=True):
             ws_dash[f"A{rmeta}"] = clients_map.get(cid, f"Cliente {cid}")
             ws_dash[f"B{rmeta}"] = cnt
-            ws_dash[f"C{rmeta}"] = round(min(cnt, META_VISITAS_CLIENTE) / META_VISITAS_CLIENTE, 3)  # 0..1
-            # estilo
-            for col in range(1, 4):
-                c = ws_dash.cell(rmeta, col)
-                c.border = border_data
-                c.alignment = left if col == 1 else dash_center
+            pct = min(cnt, META_VISITAS_CLIENTE) / META_VISITAS_CLIENTE
+            ws_dash[f"C{rmeta}"] = pct
+            ws_dash[f"C{rmeta}"].number_format = "0%"
+
+            # estilos
+            ws_dash[f"A{rmeta}"].alignment = left
+            ws_dash[f"B{rmeta}"].alignment = dash_center
+            ws_dash[f"C{rmeta}"].alignment = dash_center
+            ws_dash[f"B{rmeta}"].number_format = "#,##0"
+
+            for col in range(1, 5):
+                ws_dash.cell(rmeta, col).border = border_data
+
             rmeta += 1
 
         end_row_meta = rmeta - 1
 
-        # Formatar coluna C como percentual
-        for rr in range(43, end_row_meta + 1):
-            ws_dash[f"C{rr}"].number_format = "0%"
+        # barra de progresso (DataBar)
+        if end_row_meta >= (start_meta_title_row + 3):
+            rule = DataBarRule(
+                start_type="num", start_value=0,
+                end_type="num", end_value=1,
+                color="2DD36F", showValue=False
+            )
+            ws_dash.conditional_formatting.add(
+                f"D{start_meta_title_row+3}:D{end_row_meta}", rule
+            )
+
+            # coluna D recebe o mesmo pct só pra barra funcionar bem
+            for rr in range(start_meta_title_row+3, end_row_meta+1):
+                ws_dash[f"D{rr}"] = ws_dash[f"C{rr}"].value
+                ws_dash[f"D{rr}"].number_format = "0%"
+
+        # ajuste largura das colunas do bloco meta
+        ws_dash.column_dimensions["A"].width = 34
+        ws_dash.column_dimensions["B"].width = 14
+        ws_dash.column_dimensions["C"].width = 12
+        ws_dash.column_dimensions["D"].width = 22
+
 
 
         # ==========================================================
