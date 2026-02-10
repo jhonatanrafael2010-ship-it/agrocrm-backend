@@ -1,50 +1,98 @@
-from werkzeug.utils import secure_filename
+# =========================
+# Python (stdlib)
+# =========================
 import os
-from flask import current_app, request, jsonify
-import uuid
-import datetime
-from flask import Blueprint, jsonify, request, send_file
-from sqlalchemy import text
-import jwt
-from io import BytesIO
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, Flowable
-)
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
-from reportlab.graphics import renderPDF
-from reportlab.graphics.shapes import Drawing, String, Rect
-from reportlab.graphics.barcode import qr
-from reportlab.pdfgen.canvas import Canvas
-from models import db, User, Client, Property, Plot, Visit, Planting, Opportunity, Photo, PhenologyStage
-from reportlab.lib.enums import TA_CENTER
-from PIL import Image as PILImage
-from flask_cors import cross_origin
-from reportlab.platypus import PageBreak
-from flask import render_template_string
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
-from xml.sax.saxutils import escape
 import re
-import unicodedata
-from flask import send_file
-from flask import jsonify, request
-from models import Variety, Culture
-from utils.r2_client import get_r2_client
+import uuid
 import tempfile
-from flask import request, send_file, jsonify
-import requests
-from PIL import ImageOps
-from urllib.request import urlopen, Request
-from html import escape
-from PIL import ImageFile
-ImageFile.LOAD_TRUNCATED_IMAGES = True
+import unicodedata
+import datetime
+from io import BytesIO
+from urllib.request import Request, urlopen
 from datetime import date as _date, datetime as _dt
+
+# =========================
+# Third-party
+# =========================
+import jwt
+import requests
+from PIL import Image as PILImage
+from PIL import ImageFile, ImageOps
+from sqlalchemy import text
+from werkzeug.utils import secure_filename
+from flask_cors import cross_origin
+
+# PIL config
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+# =========================
+# Flask
+# =========================
+from flask import (
+    Blueprint,
+    current_app,
+    jsonify,
+    render_template_string,
+    request,
+    send_file,
+)
+
+# =========================
+# XML / HTML utils
+# =========================
+from xml.sax.saxutils import escape as xml_escape
+from html import escape as html_escape
+
+# =========================
+# ReportLab (PDF)
+# =========================
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.pdfgen.canvas import Canvas
+from reportlab.platypus import (
+    Flowable,
+    Image,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
+from reportlab.graphics import renderPDF
+from reportlab.graphics.barcode import qr
+from reportlab.graphics.shapes import Drawing, String, Rect
+
+# =========================
+# OpenPyXL (Excel)
+# =========================
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.chart.label import DataLabelList
 from openpyxl.formatting.rule import DataBarRule
+
+# =========================
+# App / Models / Utils
+# =========================
+from models import (
+    db,
+    User,
+    Client,
+    Property,
+    Plot,
+    Visit,
+    Planting,
+    Opportunity,
+    Photo,
+    PhenologyStage,
+    Variety,
+    Culture,
+)
+from utils.r2_client import get_r2_client
+
 
 
 
@@ -491,62 +539,6 @@ def report_monthly_xlsx():
             r4 += 1
         end_row_top5 = r4 - 1
 
-        # -------------------------
-        # Gráficos (com labels e visual mais claro)
-        # -------------------------
-        if end_row_days >= 13:
-            line = LineChart()
-            line.title = "Visitas por dia"
-            line.y_axis.title = "Visitas"
-            line.x_axis.title = "Data"
-            data = Reference(ws_dash, min_col=2, min_row=12, max_row=end_row_days)
-            cats = Reference(ws_dash, min_col=1, min_row=13, max_row=end_row_days)
-            line.add_data(data, titles_from_data=True)
-            line.set_categories(cats)
-            line.height = 8
-            line.width = 18
-            line.dataLabels = DataLabelList()
-            line.dataLabels.showVal = False
-            ws_dash.add_chart(line, "A18")
-
-        if end_row_cons >= 13:
-            bar = BarChart()
-            bar.title = "Visitas por consultor"
-            bar.y_axis.title = "Visitas"
-            data = Reference(ws_dash, min_col=5, min_row=12, max_row=end_row_cons)
-            cats = Reference(ws_dash, min_col=4, min_row=13, max_row=end_row_cons)
-            bar.add_data(data, titles_from_data=True)
-            bar.set_categories(cats)
-            bar.height = 8
-            bar.width = 18
-            bar.dataLabels = DataLabelList()
-            bar.dataLabels.showVal = True
-            ws_dash.add_chart(bar, "G18")
-
-        if end_row_cult >= 13:
-            pie = PieChart()
-            pie.title = "Mix de visitas por cultura"
-            data = Reference(ws_dash, min_col=8, min_row=12, max_row=end_row_cult)
-            labels = Reference(ws_dash, min_col=7, min_row=13, max_row=end_row_cult)
-            pie.add_data(data, titles_from_data=True)
-            pie.set_categories(labels)
-            pie.height = 10
-            pie.width = 14
-            ws_dash.add_chart(pie, "M18")
-
-        if end_row_top5 >= 13:
-            bar_top = BarChart()
-            bar_top.title = "Top 5 clientes (concluídas)"
-            bar_top.y_axis.title = "Concluídas"
-            data = Reference(ws_dash, min_col=11, min_row=12, max_row=end_row_top5)   # K
-            cats = Reference(ws_dash, min_col=10, min_row=13, max_row=end_row_top5)  # J
-            bar_top.add_data(data, titles_from_data=True)
-            bar_top.set_categories(cats)
-            bar_top.height = 8
-            bar_top.width = 18
-            bar_top.dataLabels = DataLabelList()
-            bar_top.dataLabels.showVal = True
-            ws_dash.add_chart(bar_top, "M32")
 
         # ==========================================================
         # 📊 Progresso meta por cliente (5 visitas com foto)
