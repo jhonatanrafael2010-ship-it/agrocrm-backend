@@ -288,7 +288,7 @@ def report_monthly_xlsx():
         ws_dash["D2"] = "Regra:"
         ws_dash["D2"].font = dash_sub_font
         ws_dash.merge_cells("E2:N2")
-        ws_dash["E2"] = "Visita concluída = possui foto (URL). Meta = 5 visitas com foto por cliente."
+        ws_dash["E2"] = "Visita concluída - Meta = 5 visitas por cliente."
         ws_dash["E2"].font = muted
 
         # -------------------------
@@ -358,7 +358,7 @@ def report_monthly_xlsx():
         # KPIs (7 cards) — 2 colunas cada
         # A-B / C-D / E-F / G-H / I-J / K-L / M-N
         make_kpi_block("A","B",4,"Total de visitas (todas)", total_visits, fmt="#,##0")
-        make_kpi_block("C","D",4,"Visitas com foto (concluídas)", visits_with_photo, fmt="#,##0")
+        make_kpi_block("C","D",4,"Visitas concluídas", visits_with_photo, fmt="#,##0")
         make_kpi_block("E","F",4,"Taxa de conclusão real", real_completion, fmt="0.0%")
         make_kpi_block("G","H",4,"Clientes atendidos (período)", unique_clients, fmt="#,##0")
         make_kpi_block("I","J",4,"Cobertura da carteira", coverage, fmt="0.0%")
