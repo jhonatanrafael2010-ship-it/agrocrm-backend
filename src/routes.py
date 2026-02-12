@@ -1157,7 +1157,7 @@ def export_visit_pdf(visit_id):
     - Fotos com compressão inteligente
     """
 
-        # =====================================================
+    # =====================================================
     # 🔎 BUSCA DADOS PRINCIPAIS
     # =====================================================
     visit = Visit.query.get_or_404(visit_id)
@@ -1215,7 +1215,7 @@ def export_visit_pdf(visit_id):
         if not text:
             return ""
         t = text.replace("\r\n", "\n").replace("\r", "\n")
-        t = escape(t)  # evita quebrar markup no Paragraph
+        t = html_escape(t)  # evita quebrar markup no Paragraph
         return t.replace("\n", "<br/>")
 
     # =====================================================
@@ -1537,7 +1537,7 @@ def export_visit_pdf(visit_id):
 
         story.append(Paragraph("<hr/>", styles["HrLine"]))
 
-        photos = list(getattr(v, "photos", []) or [])
+        photos = list(getattr(v, "_valid_photos", []) or [])
         if photos:
             # 🔻 limita fotos por visita (economia RAM)
             photos = photos[:MAX_PHOTOS_V]
@@ -1600,9 +1600,10 @@ def export_visit_pdf(visit_id):
                     if lat is not None and lon is not None:
                         gps_caption = f"📍 {lat:.5f}, {lon:.5f}"
 
-                    final_caption = escape(base_caption)
+                    final_caption = html_escape(base_caption)
                     if gps_caption:
-                        final_caption += f"<br/><small>{escape(gps_caption)}</small>"
+                        final_caption += f"<br/><small>{html_escape(gps_caption)}</small>"
+
 
                     caption_par = Paragraph(final_caption, styles["Caption"])
 
