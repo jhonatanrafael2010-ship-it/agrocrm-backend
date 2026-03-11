@@ -115,6 +115,14 @@ bp = Blueprint('api', __name__, url_prefix='/api')
 
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/opt/render/project/src/uploads")
 
+def normalize_phone_number(phone: str) -> str:
+    if not phone:
+        return ""
+    phone = re.sub(r"\D", "", phone)
+    if not phone.startswith("55"):
+        phone = f"55{phone}"
+    return phone
+
 # ============================================================
 # 🌾 CULTURAS, VARIEDADES, CONSULTOR
 # ============================================================
