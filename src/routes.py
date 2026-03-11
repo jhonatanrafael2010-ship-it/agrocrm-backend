@@ -90,6 +90,8 @@ from models import (
     PhenologyStage,
     Variety,
     Culture,
+    WhatsAppContactBinding,
+    WhatsAppInboundMessage,
 )
 from utils.r2_client import get_r2_client
 
@@ -125,6 +127,51 @@ def list_cultures():
         {"id": 3, "name": "Algodão"},
     ]
     return jsonify(CULTURES), 200
+
+
+@bp.route('/whatsapp/bindings', methods=['GET'])
+def list_whatsapp_bindings():
+    rows = WhatsAppContactBinding.query.order_by(WhatsAppContactBinding.id.asc()).all()
+    return jsonify([r.to_dict() for r in rows]), 200
+
+
+@bp.route('/whatsapp/bindings', methods=['POST'])
+def create_whatsapp_binding():
+    data = request.get_json() or {}
+
+    phone_number = normalize_phone_number((data.get("phone_number") or "").strip())
+    consultant_id = data.get("consultant_id")
+    display_name = (data.get("display_name") or "").strip() or None
+
+    if not phone_number:
+        return jsonify(message="phone_number is required"), 400
+
+    if consultant_id is None:
+        return jsonify(message="consultant_id is required"), 400
+
+    try:
+        consultant_id = int(consultant_id)
+    except (TypeError, ValueError):
+        return jsonify(message="consultant_id must be an integer"), 400
+
+    if consultant_id not in CONSULTANT_IDS:
+        return jsonify(message="consultant not found"), 404
+
+    existing = WhatsAppContactBinding.query.filter_by(phone_number=phone_number).first()
+    if existing:
+        return jsonify(message="phone_number already linked"), 409
+
+    row = WhatsAppContactBinding(
+        phone_number=phone_number,
+        consultant_id=consultant_id,
+        display_name=display_name,
+        is_active=True,
+    )
+
+    db.session.add(row)
+    db.session.commit()
+
+    return jsonify(message="binding created", binding=row.to_dict()), 201
 
 
 @bp.route("/reports/monthly.xlsx", methods=["GET"])

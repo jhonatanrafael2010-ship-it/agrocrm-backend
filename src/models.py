@@ -161,9 +161,9 @@ class Visit(db.Model):
     latitude = db.Column(db.Float, nullable=True)
     longitude = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+    source = db.Column(db.String(20), nullable=False, server_default='web', index=True)
 
     products = db.relationship("VisitProduct", backref="visit", lazy=True, cascade="all, delete-orphan")
-
 
     def to_dict(self):
         consultant_name = None
@@ -171,20 +171,14 @@ class Visit(db.Model):
             match = next((c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id), None)
             consultant_name = match or f"Consultor {self.consultant_id}"
 
-        # ✔ Nome do cliente
         client_line = f"👤 {self.client.name}" if self.client else ""
-
-        # ✔ Variedade
         variety_line = f"🌱 {self.variety}" if self.variety else ""
 
-        # ⭐ NOVO — prioridade para fenologia observada
         stage_value = self.fenologia_real or self.recommendation
         stage_line = f"📍 {stage_value}" if stage_value else ""
 
-        # ✔ Consultor
         consultant_line = f"👨‍🌾 {consultant_name}" if consultant_name else ""
 
-        # ✔ Monta o texto exibido no calendário
         display_text = "<br>".join(filter(None, [
             client_line,
             variety_line,
@@ -214,7 +208,34 @@ class Visit(db.Model):
             'latitude': self.latitude,
             'longitude': self.longitude,
             'created_at': self.created_at.isoformat() if self.created_at else None,
+            'source': self.source,
             'display_text': display_text,
+        }
+
+
+class WhatsAppContactBinding(db.Model):
+    __tablename__ = 'whatsapp_contact_bindings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    phone_number = db.Column(db.String(30), unique=True, nullable=False, index=True)
+    consultant_id = db.Column(db.Integer, nullable=False, index=True)
+    display_name = db.Column(db.String(120), nullable=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+
+    def to_dict(self):
+        consultant_name = next(
+            (c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id),
+            None
+        )
+        return {
+            "id": self.id,
+            "phone_number": self.phone_number,
+            "consultant_id": self.consultant_id,
+            "consultant_name": consultant_name,
+            "display_name": self.display_name,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
 
@@ -238,7 +259,40 @@ class VisitProduct(db.Model):
             "application_date": self.application_date.isoformat() if self.application_date else None,
         }
 
+class WhatsAppInboundMessage(db.Model):
+    __tablename__ = 'whatsapp_inbound_messages'
 
+    id = db.Column(db.Integer, primary_key=True)
+    wa_message_id = db.Column(db.String(120), unique=True, nullable=True, index=True)
+    phone_number = db.Column(db.String(30), nullable=False, index=True)
+    contact_name = db.Column(db.String(120), nullable=True)
+
+    message_type = db.Column(db.String(20), nullable=False)  # text, image, audio, button, interactive
+    text_content = db.Column(db.Text, nullable=True)
+
+    media_id = db.Column(db.String(120), nullable=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+
+    raw_payload = db.Column(db.Text, nullable=True)
+    processing_status = db.Column(db.String(30), nullable=False, default='received')  # received, parsed, awaiting_confirmation, confirmed, processed, error
+    error_message = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "wa_message_id": self.wa_message_id,
+            "phone_number": self.phone_number,
+            "contact_name": self.contact_name,
+            "message_type": self.message_type,
+            "text_content": self.text_content,
+            "media_id": self.media_id,
+            "mime_type": self.mime_type,
+            "processing_status": self.processing_status,
+            "error_message": self.error_message,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
 
 
 # ============================================================
