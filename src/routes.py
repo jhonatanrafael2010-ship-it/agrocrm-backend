@@ -182,6 +182,95 @@ def create_whatsapp_binding():
     return jsonify(message="binding created", binding=row.to_dict()), 201
 
 
+    
+
+@bp.route('/whatsapp/webhook', methods=['GET'])
+def whatsapp_webhook_verify():
+    verify_token = request.args.get("hub.verify_token")
+    challenge = request.args.get("hub.challenge")
+    mode = request.args.get("hub.mode")
+
+    expected_token = os.environ.get("WHATSAPP_VERIFY_TOKEN", "agrocrm_verify_token")
+
+    if mode == "subscribe" and verify_token == expected_token:
+        return challenge, 200
+
+    return jsonify({"error": "verification failed"}), 403
+
+
+@bp.route('/whatsapp/webhook', methods=['POST'])
+def whatsapp_webhook_receive():
+    payload = request.get_json(silent=True) or {}
+
+    try:
+        entry_list = payload.get("entry", [])
+        saved = 0
+
+        for entry in entry_list:
+            changes = entry.get("changes", [])
+            for change in changes:
+                value = change.get("value", {})
+                contacts = value.get("contacts", []) or []
+                messages = value.get("messages", []) or []
+
+                contact_name = None
+                wa_from = None
+
+                if contacts:
+                    contact_name = contacts[0].get("profile", {}).get("name")
+                    wa_from = contacts[0].get("wa_id")
+
+                for msg in messages:
+                    message_type = msg.get("type", "unknown")
+                    wa_message_id = msg.get("id")
+                    from_number = msg.get("from") or wa_from
+
+                    text_content = None
+                    media_id = None
+                    mime_type = None
+
+                    if message_type == "text":
+                        text_content = (msg.get("text") or {}).get("body")
+
+                    elif message_type == "image":
+                        image_obj = msg.get("image") or {}
+                        media_id = image_obj.get("id")
+                        mime_type = image_obj.get("mime_type")
+
+                    elif message_type == "audio":
+                        audio_obj = msg.get("audio") or {}
+                        media_id = audio_obj.get("id")
+                        mime_type = audio_obj.get("mime_type")
+
+                    existing = WhatsAppInboundMessage.query.filter_by(
+                        wa_message_id=wa_message_id
+                    ).first()
+
+                    if existing:
+                        continue
+
+                    row = WhatsAppInboundMessage(
+                        wa_message_id=wa_message_id,
+                        phone_number=from_number or "",
+                        contact_name=contact_name,
+                        message_type=message_type,
+                        text_content=text_content,
+                        media_id=media_id,
+                        mime_type=mime_type,
+                        raw_payload=str(payload),
+                        processing_status="received",
+                    )
+                    db.session.add(row)
+                    saved += 1
+
+        db.session.commit()
+        return jsonify({"status": "ok", "saved": saved}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Erro no webhook WhatsApp: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @bp.route("/reports/monthly.xlsx", methods=["GET"])
 def report_monthly_xlsx():
     """
