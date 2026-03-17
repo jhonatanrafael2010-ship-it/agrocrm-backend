@@ -1,6 +1,6 @@
 import re
 import os
-import request
+import requests
 import unicodedata
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
