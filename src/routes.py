@@ -95,6 +95,8 @@ from models import (
 )
 from utils.r2_client import get_r2_client
 
+from services.chatbot_service import ChatbotService, parse_chatbot_message
+
 
 
 
@@ -997,6 +999,47 @@ def list_consultants():
 @bp.route("/ping", methods=["GET"])
 def ping():
     return "pong", 200
+
+
+
+@bp.route('/telegram/webhook', methods=['POST'])
+def telegram_webhook():
+    """
+    Webhook inicial do Telegram.
+    Nesta etapa:
+    - recebe o payload bruto
+    - normaliza a mensagem
+    - interpreta texto/caption
+    - devolve JSON de depuração
+    Não salva nada no banco ainda.
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+
+        chatbot_service = ChatbotService()
+        chat_message = chatbot_service.normalize_telegram_update(payload)
+
+        if not chat_message:
+            return jsonify({
+                "ok": True,
+                "message": "update sem mensagem utilizável"
+            }), 200
+
+        message_text = chat_message.text or chat_message.caption or ""
+        parsed = parse_chatbot_message(message_text) if message_text else {}
+
+        return jsonify({
+            "ok": True,
+            "telegram_summary": chatbot_service.build_internal_summary(chat_message),
+            "parsed_message": parsed,
+        }), 200
+
+    except Exception as e:
+        print(f"❌ Erro em /telegram/webhook: {e}")
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
 
 
 
