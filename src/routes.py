@@ -1094,6 +1094,25 @@ def find_property_by_name(property_name: str, client_id: int = None):
 
     return exact_match or partial_match
 
+
+def find_pending_visits(client_id: int, property_id: int = None, limit: int = 5):
+    """
+    Busca visitas pendentes do cliente e, se houver, da propriedade.
+    Retorna as mais próximas por data.
+    """
+    query = Visit.query.filter(Visit.client_id == client_id)
+
+    # planned / pendente / planejad* — deixamos flexível
+    query = query.filter(Visit.status.in_(["planned", "pendente", "planejada", "planejado"]))
+
+    if property_id:
+        query = query.filter(Visit.property_id == property_id)
+
+    query = query.order_by(Visit.date.asc().nullslast())
+
+    return query.limit(limit).all()
+
+
 @bp.route('/chatbot/preview-visit', methods=['POST'])
 def chatbot_preview_visit():
     """
@@ -1155,6 +1174,94 @@ def chatbot_preview_visit():
             "error": str(e)
         }), 500
 
+
+
+@bp.route('/chatbot/suggest-pending-visits', methods=['POST'])
+def chatbot_suggest_pending_visits():
+    """
+    Recebe uma mensagem do chatbot, resolve cliente/propriedade
+    e sugere visitas pendentes compatíveis para confirmação.
+    Ainda não salva nada.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        message = (data.get("message") or "").strip()
+        consultant_id = data.get("consultant_id", 1)
+
+        if not message:
+            return jsonify({
+                "ok": False,
+                "error": "message is required"
+            }), 400
+
+        parsed = parse_chatbot_message(message)
+
+        matched_client = find_client_by_name(parsed.get("client_name"))
+        matched_property = find_property_by_name(
+            parsed.get("property_name"),
+            matched_client.id if matched_client else None
+        )
+
+        pending_visits = []
+        if matched_client:
+            pending_visits = find_pending_visits(
+                client_id=matched_client.id,
+                property_id=matched_property.id if matched_property else None,
+                limit=5
+            )
+
+        visit_preview = {
+            "client_id": matched_client.id if matched_client else None,
+            "property_id": matched_property.id if matched_property else None,
+            "plot_id": None,
+            "consultant_id": consultant_id,
+            "date": parsed.get("date"),
+            "status": parsed.get("status", "planned"),
+            "culture": parsed.get("culture") or "",
+            "variety": "",
+            "fenologia_real": parsed.get("fenologia_real"),
+            "recommendation": parsed.get("recommendation") or "",
+            "products": [],
+            "latitude": None,
+            "longitude": None,
+            "generate_schedule": False,
+            "source": parsed.get("source", "chatbot"),
+        }
+
+        suggestions = []
+        for visit in pending_visits:
+            suggestions.append({
+                "id": visit.id,
+                "date": visit.date.isoformat() if visit.date else None,
+                "status": visit.status,
+                "culture": visit.culture,
+                "variety": visit.variety,
+                "fenologia_real": visit.fenologia_real,
+                "recommendation": (visit.recommendation or "").strip(),
+                "client_id": visit.client_id,
+                "property_id": visit.property_id,
+                "plot_id": visit.plot_id,
+                "display_text": visit.to_dict().get("display_text"),
+            })
+
+        return jsonify({
+            "ok": True,
+            "parsed_message": parsed,
+            "matched_entities": {
+                "client": matched_client.to_dict() if matched_client else None,
+                "property": matched_property.to_dict() if matched_property else None,
+            },
+            "visit_preview": visit_preview,
+            "pending_visit_suggestions": suggestions,
+            "needs_confirmation": True if suggestions else False,
+        }), 200
+
+    except Exception as e:
+        print(f"❌ Erro em /chatbot/suggest-pending-visits: {e}")
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
 
 
 # ============================================================
