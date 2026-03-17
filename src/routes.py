@@ -1400,7 +1400,136 @@ def chatbot_resolve_confirmation():
             "error": str(e)
         }), 500
 
-        
+
+@bp.route('/chatbot/commit-visit', methods=['POST'])
+def chatbot_commit_visit():
+    """
+    Efetiva a visita no banco.
+    - Se action == use_existing_pending_visit: atualiza a visita pendente escolhida e marca como done
+    - Se action == create_new_visit: cria nova visita e marca como done
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+
+        action = data.get("action")
+        final_visit_payload = data.get("final_visit_payload") or {}
+        selected_pending_visit = data.get("selected_pending_visit")
+
+        if not action:
+            return jsonify({
+                "ok": False,
+                "error": "action is required"
+            }), 400
+
+        if not final_visit_payload:
+            return jsonify({
+                "ok": False,
+                "error": "final_visit_payload is required"
+            }), 400
+
+        # força status done
+        final_visit_payload["status"] = "done"
+
+        # =========================================================
+        # 1) Atualizar visita pendente existente
+        # =========================================================
+        if action == "use_existing_pending_visit":
+            pending_visit_id = final_visit_payload.get("linked_pending_visit_id")
+
+            if not pending_visit_id:
+                return jsonify({
+                    "ok": False,
+                    "error": "linked_pending_visit_id is required for use_existing_pending_visit"
+                }), 400
+
+            visit = Visit.query.get(pending_visit_id)
+            if not visit:
+                return jsonify({
+                    "ok": False,
+                    "error": "pending visit not found"
+                }), 404
+
+            # Atualizações principais
+            if final_visit_payload.get("date"):
+                visit.date = _date.fromisoformat(final_visit_payload["date"])
+
+            visit.status = "done"
+            visit.culture = final_visit_payload.get("culture") or visit.culture
+            visit.variety = final_visit_payload.get("variety") or visit.variety
+            visit.fenologia_real = final_visit_payload.get("fenologia_real")
+            visit.recommendation = final_visit_payload.get("recommendation") or visit.recommendation
+            visit.consultant_id = final_visit_payload.get("consultant_id") or visit.consultant_id
+            visit.latitude = final_visit_payload.get("latitude")
+            visit.longitude = final_visit_payload.get("longitude")
+
+            # source só se a coluna existir no banco/model
+            if hasattr(visit, "source"):
+                visit.source = final_visit_payload.get("source", "chatbot")
+
+            db.session.commit()
+
+            return jsonify({
+                "ok": True,
+                "action": action,
+                "message": "Visita pendente atualizada com sucesso.",
+                "visit": visit.to_dict()
+            }), 200
+
+        # =========================================================
+        # 2) Criar nova visita
+        # =========================================================
+        if action == "create_new_visit":
+            if not final_visit_payload.get("client_id"):
+                return jsonify({
+                    "ok": False,
+                    "error": "client_id is required to create a new visit"
+                }), 400
+
+            visit_date = None
+            if final_visit_payload.get("date"):
+                visit_date = _date.fromisoformat(final_visit_payload["date"])
+
+            new_visit = Visit(
+                client_id=final_visit_payload.get("client_id"),
+                property_id=final_visit_payload.get("property_id"),
+                plot_id=final_visit_payload.get("plot_id"),
+                consultant_id=final_visit_payload.get("consultant_id"),
+                date=visit_date,
+                recommendation=final_visit_payload.get("recommendation") or "",
+                status="done",
+                culture=final_visit_payload.get("culture") or "",
+                variety=final_visit_payload.get("variety") or "",
+                fenologia_real=final_visit_payload.get("fenologia_real"),
+                latitude=final_visit_payload.get("latitude"),
+                longitude=final_visit_payload.get("longitude"),
+            )
+
+            if hasattr(new_visit, "source"):
+                new_visit.source = final_visit_payload.get("source", "chatbot")
+
+            db.session.add(new_visit)
+            db.session.commit()
+
+            return jsonify({
+                "ok": True,
+                "action": action,
+                "message": "Nova visita criada com sucesso.",
+                "visit": new_visit.to_dict()
+            }), 201
+
+        return jsonify({
+            "ok": False,
+            "error": "invalid action"
+        }), 400
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Erro em /chatbot/commit-visit: {e}")
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
 # ============================================================
 # 🌱 VISITS ENDPOINTS
 # ============================================================
