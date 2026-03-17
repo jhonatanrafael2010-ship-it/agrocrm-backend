@@ -66,7 +66,8 @@ def add_missing_columns(app) -> List[str]:
     """
     added = []
     with app.app_context():
-        engine = db.get_engine(app)
+        with app.app_context():
+            engine = db.engine
         existing_meta = MetaData()
         existing_meta.reflect(bind=engine)
 
