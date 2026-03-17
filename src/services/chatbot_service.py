@@ -98,9 +98,8 @@ def extract_date_iso(message: str) -> Optional[str]:
 
 def extract_client_name(message: str) -> Optional[str]:
     patterns = [
-        r"cliente[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+)",
-        r"produtor[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+)",
-        r"fazenda de[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+)",
+        r"cliente[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
+        r"produtor[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
     ]
 
     for pattern in patterns:
@@ -115,10 +114,10 @@ def extract_client_name(message: str) -> Optional[str]:
 
 def extract_property_name(message: str) -> Optional[str]:
     patterns = [
-        r"fazenda[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+)",
-        r"propriedade[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+)",
-        r"sitio[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+)",
-        r"sitio\s+([A-Za-zÀ-ÿ0-9\s\-]+)",
+        r"fazenda[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
+        r"propriedade[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
+        r"sitio[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
+        r"sítio[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
     ]
 
     for pattern in patterns:
@@ -133,10 +132,10 @@ def extract_property_name(message: str) -> Optional[str]:
 
 def extract_plot_name(message: str) -> Optional[str]:
     patterns = [
-        r"talhao[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+)",
-        r"talhão[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+)",
-        r"area[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+)",
-        r"área[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+)",
+        r"talhao[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
+        r"talhão[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
+        r"area[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
+        r"área[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
     ]
 
     for pattern in patterns:
