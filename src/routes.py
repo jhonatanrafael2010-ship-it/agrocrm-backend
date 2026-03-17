@@ -1103,7 +1103,9 @@ def find_pending_visits(
 ):
     """
     Busca visitas pendentes do cliente e, se houver, da propriedade.
-    Prioriza a mesma cultura. Se não houver, pode retornar outras pendentes.
+    Retorna:
+    - visits: lista de visitas
+    - same_culture_found: se encontrou visitas da mesma cultura
     """
     base_query = Visit.query.filter(Visit.client_id == client_id)
     base_query = base_query.filter(Visit.status.in_(["planned", "pendente", "planejada", "planejado"]))
@@ -1111,7 +1113,6 @@ def find_pending_visits(
     if property_id:
         base_query = base_query.filter(Visit.property_id == property_id)
 
-    # Primeiro tenta pendências da mesma cultura
     if culture:
         same_culture = (
             base_query
@@ -1121,15 +1122,15 @@ def find_pending_visits(
             .all()
         )
         if same_culture:
-            return same_culture
+            return same_culture, True
 
-    # Se não achar, retorna pendências gerais
-    return (
+    fallback = (
         base_query
         .order_by(Visit.date.asc().nullslast())
         .limit(limit)
         .all()
     )
+    return fallback, False
 
 
 @bp.route('/chatbot/preview-visit', methods=['POST'])
@@ -1221,14 +1222,16 @@ def chatbot_suggest_pending_visits():
             matched_client.id if matched_client else None
         )
 
-        pending_visits = []
-        if matched_client:
-            pending_visits = find_pending_visits(
-                client_id=matched_client.id,
-                property_id=matched_property.id if matched_property else None,
-                culture=parsed.get("culture"),
-                limit=5
-            )
+            pending_visits = []
+            same_culture_found = False
+
+            if matched_client:
+                pending_visits, same_culture_found = find_pending_visits(
+                    client_id=matched_client.id,
+                    property_id=matched_property.id if matched_property else None,
+                    culture=parsed.get("culture"),
+                    limit=5
+                )
 
         visit_preview = {
             "client_id": matched_client.id if matched_client else None,
@@ -1274,6 +1277,8 @@ def chatbot_suggest_pending_visits():
             "visit_preview": visit_preview,
             "pending_visit_suggestions": suggestions,
             "needs_confirmation": True if suggestions else False,
+            "same_culture_found": same_culture_found,
+            "requested_culture": parsed.get("culture"),
         }), 200
 
     except Exception as e:
