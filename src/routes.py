@@ -1117,43 +1117,43 @@ def telegram_webhook():
                 "cliente NOME_CLIENTE fazenda NOME_FAZENDA cultura estágio observação"
             )
 
-            visit_preview = {
-                "client_id": matched_client.id if matched_client else None,
-                "property_id": matched_property.id if matched_property else None,
-                "plot_id": None,
-                "consultant_id": 1,
-                "date": parsed.get("date"),
-                "status": parsed.get("status", "planned"),
-                "culture": parsed.get("culture") or "",
-                "variety": "",
-                "fenologia_real": parsed.get("fenologia_real"),
-                "recommendation": parsed.get("recommendation") or "",
-                "products": [],
-                "latitude": None,
-                "longitude": None,
-                "generate_schedule": False,
-                "source": parsed.get("source", "chatbot"),
-            }
+        visit_preview = {
+            "client_id": matched_client.id if matched_client else None,
+            "property_id": matched_property.id if matched_property else None,
+            "plot_id": None,
+            "consultant_id": 1,
+            "date": parsed.get("date"),
+            "status": parsed.get("status", "planned"),
+            "culture": parsed.get("culture") or "",
+            "variety": "",
+            "fenologia_real": parsed.get("fenologia_real"),
+            "recommendation": parsed.get("recommendation") or "",
+            "products": [],
+            "latitude": None,
+            "longitude": None,
+            "generate_schedule": False,
+            "source": parsed.get("source", "chatbot"),
+        }
 
-            state = ChatbotConversationState.query.filter_by(
+        state = ChatbotConversationState.query.filter_by(
+            platform="telegram",
+            chat_id=chat_message.chat_id
+        ).first()
+
+        if not state:
+            state = ChatbotConversationState(
                 platform="telegram",
-                chat_id=chat_message.chat_id
-            ).first()
+                chat_id=chat_message.chat_id,
+            )
+            db.session.add(state)
 
-            if not state:
-                state = ChatbotConversationState(
-                    platform="telegram",
-                    chat_id=chat_message.chat_id,
-                )
-                db.session.add(state)
+        state.last_message = message_text
+        state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
+        state.visit_preview_json = json.dumps(visit_preview, ensure_ascii=False)
+        state.confirmation_text = confirmation_text
+        state.status = "awaiting_confirmation"
 
-            state.last_message = message_text
-            state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
-            state.visit_preview_json = json.dumps(visit_preview, ensure_ascii=False)
-            state.confirmation_text = confirmation_text
-            state.status = "awaiting_confirmation"
-
-            db.session.commit()   
+        db.session.commit()   
 
         send_result = send_telegram_message(
             chat_id=chat_message.chat_id,
