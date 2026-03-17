@@ -1194,7 +1194,41 @@ def chatbot_preview_visit():
             "error": str(e)
         }), 500
 
+def build_pending_visits_confirmation_text(
+    client_name: str,
+    requested_culture: str,
+    suggestions: list,
+    same_culture_found: bool
+) -> str:
+    if not suggestions:
+        return (
+            f"Não encontrei visitas pendentes para {client_name or 'este cliente'}.\n\n"
+            f"Responda com NOVA para criar uma nova visita."
+        )
 
+    lines = []
+
+    if requested_culture and not same_culture_found:
+        lines.append(
+            f"Não encontrei visitas pendentes de {requested_culture} para {client_name or 'este cliente'}."
+        )
+        lines.append("")
+        lines.append("Encontrei outras visitas pendentes deste cliente:")
+    else:
+        lines.append(f"Encontrei visitas pendentes para {client_name or 'este cliente'}:")
+
+    for idx, item in enumerate(suggestions, start=1):
+        culture = item.get("culture") or "—"
+        recommendation = item.get("recommendation") or "—"
+        date_value = item.get("date") or "sem data"
+        lines.append(f"{idx}. {culture} - {recommendation} - {date_value}")
+
+    lines.append("")
+    lines.append("Responda com:")
+    lines.append("- o número da visita que deseja realizar")
+    lines.append("- ou NOVA para criar uma nova visita")
+
+    return "\n".join(lines)
 
 @bp.route('/chatbot/suggest-pending-visits', methods=['POST'])
 def chatbot_suggest_pending_visits():
@@ -1267,6 +1301,13 @@ def chatbot_suggest_pending_visits():
                 "display_text": visit.to_dict().get("display_text"),
             })
 
+                confirmation_text = build_pending_visits_confirmation_text(
+                    client_name=matched_client.name if matched_client else parsed.get("client_name"),
+                    requested_culture=parsed.get("culture"),
+                    suggestions=suggestions,
+                    same_culture_found=same_culture_found
+                )
+
         return jsonify({
             "ok": True,
             "parsed_message": parsed,
@@ -1279,6 +1320,7 @@ def chatbot_suggest_pending_visits():
             "needs_confirmation": True if suggestions else False,
             "same_culture_found": same_culture_found,
             "requested_culture": parsed.get("culture"),
+            "confirmation_text": confirmation_text,
         }), 200
 
     except Exception as e:
