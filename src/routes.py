@@ -1095,22 +1095,41 @@ def find_property_by_name(property_name: str, client_id: int = None):
     return exact_match or partial_match
 
 
-def find_pending_visits(client_id: int, property_id: int = None, limit: int = 5):
+def find_pending_visits(
+    client_id: int,
+    property_id: int = None,
+    culture: str = None,
+    limit: int = 5
+):
     """
     Busca visitas pendentes do cliente e, se houver, da propriedade.
-    Retorna as mais próximas por data.
+    Prioriza a mesma cultura. Se não houver, pode retornar outras pendentes.
     """
-    query = Visit.query.filter(Visit.client_id == client_id)
-
-    # planned / pendente / planejad* — deixamos flexível
-    query = query.filter(Visit.status.in_(["planned", "pendente", "planejada", "planejado"]))
+    base_query = Visit.query.filter(Visit.client_id == client_id)
+    base_query = base_query.filter(Visit.status.in_(["planned", "pendente", "planejada", "planejado"]))
 
     if property_id:
-        query = query.filter(Visit.property_id == property_id)
+        base_query = base_query.filter(Visit.property_id == property_id)
 
-    query = query.order_by(Visit.date.asc().nullslast())
+    # Primeiro tenta pendências da mesma cultura
+    if culture:
+        same_culture = (
+            base_query
+            .filter(Visit.culture == culture)
+            .order_by(Visit.date.asc().nullslast())
+            .limit(limit)
+            .all()
+        )
+        if same_culture:
+            return same_culture
 
-    return query.limit(limit).all()
+    # Se não achar, retorna pendências gerais
+    return (
+        base_query
+        .order_by(Visit.date.asc().nullslast())
+        .limit(limit)
+        .all()
+    )
 
 
 @bp.route('/chatbot/preview-visit', methods=['POST'])
@@ -1207,6 +1226,7 @@ def chatbot_suggest_pending_visits():
             pending_visits = find_pending_visits(
                 client_id=matched_client.id,
                 property_id=matched_property.id if matched_property else None,
+                culture=parsed.get("culture"),
                 limit=5
             )
 
