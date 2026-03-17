@@ -1330,7 +1330,77 @@ def chatbot_suggest_pending_visits():
             "error": str(e)
         }), 500
 
+@bp.route('/chatbot/resolve-confirmation', methods=['POST'])
+def chatbot_resolve_confirmation():
+    """
+    Recebe a resposta do usuário após a sugestão de visitas pendentes.
+    Ainda não salva nada no banco.
+    Apenas decide se:
+    - usa uma visita pendente existente
+    - ou cria uma nova visita
+    """
+    try:
+        data = request.get_json(silent=True) or {}
 
+        user_reply = (data.get("user_reply") or "").strip().upper()
+        pending_visit_suggestions = data.get("pending_visit_suggestions") or []
+        visit_preview = data.get("visit_preview") or {}
+
+        if not user_reply:
+            return jsonify({
+                "ok": False,
+                "error": "user_reply is required"
+            }), 400
+
+        if user_reply == "NOVA":
+            return jsonify({
+                "ok": True,
+                "action": "create_new_visit",
+                "selected_pending_visit": None,
+                "final_visit_payload": visit_preview,
+                "message": "Usuário optou por criar uma nova visita."
+            }), 200
+
+        if user_reply.isdigit():
+            idx = int(user_reply) - 1
+
+            if idx < 0 or idx >= len(pending_visit_suggestions):
+                return jsonify({
+                    "ok": False,
+                    "error": "opção inválida"
+                }), 400
+
+            selected = pending_visit_suggestions[idx]
+
+            merged_payload = {
+                **visit_preview,
+                "client_id": selected.get("client_id") or visit_preview.get("client_id"),
+                "property_id": selected.get("property_id") or visit_preview.get("property_id"),
+                "plot_id": selected.get("plot_id") or visit_preview.get("plot_id"),
+                "linked_pending_visit_id": selected.get("id"),
+            }
+
+            return jsonify({
+                "ok": True,
+                "action": "use_existing_pending_visit",
+                "selected_pending_visit": selected,
+                "final_visit_payload": merged_payload,
+                "message": f"Usuário escolheu a visita pendente #{user_reply}."
+            }), 200
+
+        return jsonify({
+            "ok": False,
+            "error": "resposta inválida. Use um número ou NOVA"
+        }), 400
+
+    except Exception as e:
+        print(f"❌ Erro em /chatbot/resolve-confirmation: {e}")
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
+        
 # ============================================================
 # 🌱 VISITS ENDPOINTS
 # ============================================================
