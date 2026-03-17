@@ -65,16 +65,14 @@ def add_missing_columns(app) -> List[str]:
     - Does not remove or alter existing columns.
     """
     added = []
+
     with app.app_context():
-        with app.app_context():
-            engine = db.engine
+        engine = db.engine
         existing_meta = MetaData()
         existing_meta.reflect(bind=engine)
 
         for tname, model_table in db.metadata.tables.items():
-            # get existing table if present
             if tname not in existing_meta.tables:
-                # table doesn't exist in DB; create it fully
                 try:
                     model_table.create(engine)
                     added.append(f"{tname} (created)")
@@ -92,32 +90,40 @@ def add_missing_columns(app) -> List[str]:
 
             for col_name in missing:
                 col = model_cols[col_name]
-                # Try to compile column type for the target dialect
+
                 try:
                     col_type = col.type.compile(engine.dialect)
                 except Exception:
-                    # fallback to generic string representation
                     col_type = str(col.type)
 
-                # Build ALTER TABLE statement; keep new column nullable to avoid data loss
                 sql = f'ALTER TABLE "{tname}" ADD COLUMN "{col_name}" {col_type}'
 
-                # If there is a server_default, include DEFAULT
                 if col.server_default is not None:
-                    # server_default may be a ClauseElement; try to render a text
                     try:
-                        default_text = str(col.server_default.arg)
-                        sql += f' DEFAULT {default_text}'
-                    except Exception:
-                        pass
+                        default_value = col.server_default.arg
 
-                # Note: do NOT add NOT NULL constraints here
+                        # Se vier como texto/str, precisa colocar aspas simples
+                        if isinstance(default_value, str):
+                            escaped = default_value.replace("'", "''")
+                            sql += f" DEFAULT '{escaped}'"
+                        else:
+                            default_text = str(default_value)
+                            # tenta identificar casos como text("'web'")
+                            if default_text.startswith("'") and default_text.endswith("'"):
+                                sql += f" DEFAULT {default_text}"
+                            else:
+                                sql += f" DEFAULT {default_text}"
+
+                    except Exception as e:
+                        print(f"Warning: could not render default for {tname}.{col_name}: {e}")
+
                 try:
-                    with engine.connect() as conn:
+                    with engine.begin() as conn:
                         conn.execute(text(sql))
                     added.append(f"{tname}.{col_name}")
                 except SQLAlchemyError as e:
                     print(f"Failed to add column {tname}.{col_name}: {e}")
+
     return added
 
 
