@@ -349,14 +349,14 @@ class ChatbotService:
         }
 
     def send_telegram_message(chat_id: str, text: str) -> Dict[str, Any]:
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    token = os.getenv("8648977952:AAEHy9MBQwi3Gtum5IponlZvrG0qOnpsIoY")
     if not token:
         return {
             "ok": False,
-            "error": "TELEGRAM_BOT_TOKEN not configured"
+            "error": "8648977952:AAEHy9MBQwi3Gtum5IponlZvrG0qOnpsIoY not configured"
         }
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    url = f"https://api.telegram.org/bot{8648977952:AAEHy9MBQwi3Gtum5IponlZvrG0qOnpsIoY}/sendMessage"
 
     payload = {
         "chat_id": chat_id,
