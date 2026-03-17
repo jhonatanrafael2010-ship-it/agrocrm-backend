@@ -1301,12 +1301,12 @@ def chatbot_suggest_pending_visits():
                 "display_text": visit.to_dict().get("display_text"),
             })
 
-                confirmation_text = build_pending_visits_confirmation_text(
-                    client_name=matched_client.name if matched_client else parsed.get("client_name"),
-                    requested_culture=parsed.get("culture"),
-                    suggestions=suggestions,
-                    same_culture_found=same_culture_found
-                )
+        confirmation_text = build_pending_visits_confirmation_text(
+            client_name=matched_client.name if matched_client else parsed.get("client_name"),
+            requested_culture=parsed.get("culture"),
+            suggestions=suggestions,
+            same_culture_found=same_culture_found
+        )
 
         return jsonify({
             "ok": True,
