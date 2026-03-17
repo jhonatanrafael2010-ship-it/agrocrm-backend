@@ -1039,6 +1039,20 @@ def is_confirmation_reply(text: str) -> bool:
     value = text.strip().upper()
     return value == "NOVA" or value.isdigit()
 
+
+
+def build_name_confirmation_text(entity_label: str, candidates: list) -> str:
+    if not candidates:
+        return f"Não consegui identificar {entity_label}."
+
+    lines = [f"Encontrei estes {entity_label}s parecidos:"]
+    for idx, item in enumerate(candidates[:3], start=1):
+        lines.append(f"{idx}. {item.name}")
+
+    lines.append("")
+    lines.append("Responda com o número correto.")
+    return "\n".join(lines)
+
 @bp.route('/telegram/webhook', methods=['POST'])
 def telegram_webhook():
     """
@@ -1073,6 +1087,132 @@ def telegram_webhook():
                 "ok": True,
                 "message": "mensagem sem texto/caption"
             }), 200
+
+
+        # =========================================================
+        # Se a mensagem for resposta para escolha de cliente parecido
+        # =========================================================
+        if message_text.strip().isdigit():
+            state = ChatbotConversationState.query.filter_by(
+                platform="telegram",
+                chat_id=chat_message.chat_id,
+                status="awaiting_client_confirmation"
+            ).first()
+
+            if state:
+                client_candidates = json.loads(state.pending_visit_suggestions_json or "[]")
+                idx = int(message_text.strip()) - 1
+
+                if idx < 0 or idx >= len(client_candidates):
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="Opção inválida. Responda com o número correto do cliente."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "opção inválida para cliente"
+                    }), 200
+
+                selected_client = client_candidates[idx]
+                selected_client_id = selected_client.get("id")
+
+                matched_client = Client.query.get(selected_client_id)
+                if not matched_client:
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="Não consegui localizar o cliente escolhido."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "cliente escolhido não encontrado"
+                    }), 200
+
+                # reaproveita a mensagem original
+                original_message = state.last_message or ""
+                parsed = parse_chatbot_message(original_message)
+
+                # força o cliente confirmado
+                matched_property, property_candidates, property_needs_confirmation = find_property_by_name(
+                    parsed.get("property_name"),
+                    matched_client.id if matched_client else None
+                )
+
+                pending_visits = []
+                same_culture_found = False
+
+                if matched_client:
+                    pending_visits, same_culture_found = find_pending_visits(
+                        client_id=matched_client.id,
+                        property_id=matched_property.id if matched_property else None,
+                        culture=parsed.get("culture"),
+                        limit=5
+                    )
+
+                suggestions = []
+                for visit in pending_visits:
+                    suggestions.append({
+                        "id": visit.id,
+                        "date": visit.date.isoformat() if visit.date else None,
+                        "status": visit.status,
+                        "culture": visit.culture,
+                        "variety": visit.variety,
+                        "fenologia_real": visit.fenologia_real,
+                        "recommendation": (visit.recommendation or "").strip(),
+                        "client_id": visit.client_id,
+                        "property_id": visit.property_id,
+                        "plot_id": visit.plot_id,
+                        "display_text": visit.to_dict().get("display_text"),
+                    })
+
+                confirmation_text = build_pending_visits_confirmation_text(
+                    client_name=matched_client.name,
+                    requested_culture=parsed.get("culture"),
+                    suggestions=suggestions,
+                    same_culture_found=same_culture_found
+                )
+
+                visit_preview = {
+                    "client_id": matched_client.id if matched_client else None,
+                    "property_id": matched_property.id if matched_property else None,
+                    "plot_id": None,
+                    "consultant_id": 1,
+                    "date": parsed.get("date"),
+                    "status": parsed.get("status", "planned"),
+                    "culture": parsed.get("culture") or "",
+                    "variety": "",
+                    "fenologia_real": parsed.get("fenologia_real"),
+                    "recommendation": parsed.get("recommendation") or "",
+                    "products": [],
+                    "latitude": None,
+                    "longitude": None,
+                    "generate_schedule": False,
+                    "source": parsed.get("source", "chatbot"),
+                }
+
+                # atualiza o mesmo estado, agora aguardando confirmação de visita
+                state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
+                state.visit_preview_json = json.dumps(visit_preview, ensure_ascii=False)
+                state.confirmation_text = confirmation_text
+                state.status = "awaiting_confirmation"
+
+                db.session.commit()
+
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text=confirmation_text
+                )
+
+                return jsonify({
+                    "ok": True,
+                    "message": "cliente confirmado e fluxo continuado",
+                    "matched_client": matched_client.to_dict() if matched_client else None,
+                    "matched_property": matched_property.to_dict() if matched_property else None,
+                    "pending_visit_suggestions": suggestions,
+                    "same_culture_found": same_culture_found,
+                    "confirmation_text": confirmation_text,
+                    "send_result": send_result,
+                }), 200
+
 
         # =========================================================
         # Se a mensagem for resposta de confirmação (1, 2, NOVA),
@@ -1228,11 +1368,52 @@ def telegram_webhook():
 
         parsed = parse_chatbot_message(message_text)
 
-        matched_client = find_client_by_name(parsed.get("client_name"))
-        matched_property = find_property_by_name(
+        matched_client, client_candidates, client_needs_confirmation = find_client_by_name(
+            parsed.get("client_name")
+        )
+
+        matched_property, property_candidates, property_needs_confirmation = find_property_by_name(
             parsed.get("property_name"),
             matched_client.id if matched_client else None
         )
+
+        if client_needs_confirmation:
+            confirmation_text = build_name_confirmation_text("cliente", client_candidates)
+
+            state = ChatbotConversationState.query.filter_by(
+                platform="telegram",
+                chat_id=chat_message.chat_id
+            ).first()
+
+            if not state:
+                state = ChatbotConversationState(
+                    platform="telegram",
+                    chat_id=chat_message.chat_id,
+                )
+                db.session.add(state)
+
+            state.last_message = message_text
+            state.pending_visit_suggestions_json = json.dumps(
+                [{"id": c.id, "name": c.name} for c in client_candidates[:3]],
+                ensure_ascii=False
+            )
+            state.visit_preview_json = json.dumps({}, ensure_ascii=False)
+            state.confirmation_text = confirmation_text
+            state.status = "awaiting_client_confirmation"
+
+            db.session.commit()
+
+            send_result = send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=confirmation_text
+            )
+
+            return jsonify({
+                "ok": True,
+                "confirmation_text": confirmation_text,
+                "client_candidates": [c.to_dict() for c in client_candidates[:3]],
+                "send_result": send_result,
+            }), 200
 
         pending_visits = []
         same_culture_found = False
@@ -1346,11 +1527,11 @@ def normalize_lookup_text(value: str) -> str:
 
 def find_client_by_name(client_name: str):
     if not client_name:
-        return None
+        return None, [], False
 
     target = normalize_lookup_text(client_name)
     if not target:
-        return None
+        return None, [], False
 
     clients = Client.query.all()
 
@@ -1358,7 +1539,7 @@ def find_client_by_name(client_name: str):
     for client in clients:
         current = normalize_lookup_text(client.name)
         if current == target:
-            return client
+            return client, [client], False
 
     # 2) match parcial simples
     partial_candidates = []
@@ -1368,10 +1549,9 @@ def find_client_by_name(client_name: str):
             partial_candidates.append(client)
 
     if len(partial_candidates) == 1:
-        return partial_candidates[0]
+        return partial_candidates[0], partial_candidates, False
 
     if len(partial_candidates) > 1:
-        # escolhe o mais parecido entre os parciais
         best_client = None
         best_score = 0.0
 
@@ -1382,34 +1562,42 @@ def find_client_by_name(client_name: str):
                 best_score = score
                 best_client = client
 
-        if best_client:
-            return best_client
+        if best_client and best_score >= 0.86:
+            return best_client, partial_candidates[:3], False
+
+        return best_client, partial_candidates[:3], True
 
     # 3) similaridade geral
-    best_client = None
-    best_score = 0.0
-
+    scored = []
     for client in clients:
         current = normalize_lookup_text(client.name)
         score = SequenceMatcher(None, target, current).ratio()
-        if score > best_score:
-            best_score = score
-            best_client = client
+        scored.append((client, score))
 
-    # limiar mínimo para evitar match ruim demais
-    if best_client and best_score >= 0.72:
-        return best_client
+    scored.sort(key=lambda x: x[1], reverse=True)
 
-    return None
+    if not scored:
+        return None, [], True
+
+    best_client, best_score = scored[0]
+    top_candidates = [item[0] for item in scored[:3] if item[1] >= 0.55]
+
+    if best_client and best_score >= 0.86:
+        return best_client, top_candidates, False
+
+    if best_client and best_score >= 0.65:
+        return best_client, top_candidates, True
+
+    return None, top_candidates, True
 
 
 def find_property_by_name(property_name: str, client_id: int = None):
     if not property_name:
-        return None
+        return None, [], False
 
     target = normalize_lookup_text(property_name)
     if not target:
-        return None
+        return None, [], False
 
     query = Property.query
     if client_id:
@@ -1421,7 +1609,7 @@ def find_property_by_name(property_name: str, client_id: int = None):
     for prop in properties:
         current = normalize_lookup_text(prop.name)
         if current == target:
-            return prop
+            return prop, [prop], False
 
     # 2) match parcial
     partial_candidates = []
@@ -1431,7 +1619,7 @@ def find_property_by_name(property_name: str, client_id: int = None):
             partial_candidates.append(prop)
 
     if len(partial_candidates) == 1:
-        return partial_candidates[0]
+        return partial_candidates[0], partial_candidates, False
 
     if len(partial_candidates) > 1:
         best_prop = None
@@ -1444,24 +1632,33 @@ def find_property_by_name(property_name: str, client_id: int = None):
                 best_score = score
                 best_prop = prop
 
-        if best_prop:
-            return best_prop
+        if best_prop and best_score >= 0.86:
+            return best_prop, partial_candidates[:3], False
+
+        return best_prop, partial_candidates[:3], True
 
     # 3) similaridade geral
-    best_prop = None
-    best_score = 0.0
-
+    scored = []
     for prop in properties:
         current = normalize_lookup_text(prop.name)
         score = SequenceMatcher(None, target, current).ratio()
-        if score > best_score:
-            best_score = score
-            best_prop = prop
+        scored.append((prop, score))
 
-    if best_prop and best_score >= 0.72:
-        return best_prop
+    scored.sort(key=lambda x: x[1], reverse=True)
 
-    return None
+    if not scored:
+        return None, [], True
+
+    best_prop, best_score = scored[0]
+    top_candidates = [item[0] for item in scored[:3] if item[1] >= 0.55]
+
+    if best_prop and best_score >= 0.86:
+        return best_prop, top_candidates, False
+
+    if best_prop and best_score >= 0.65:
+        return best_prop, top_candidates, True
+
+    return None, top_candidates, True
 
 
 def find_pending_visits(
