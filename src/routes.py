@@ -1038,8 +1038,8 @@ def telegram_webhook():
     - recebe o payload bruto
     - normaliza a mensagem
     - interpreta texto/caption
-    - devolve JSON de depuração
-    Não salva nada no banco ainda.
+    - busca cliente e pendências
+    - envia resposta automática no Telegram
     """
     try:
         payload = request.get_json(silent=True) or {}
@@ -1053,13 +1053,82 @@ def telegram_webhook():
                 "message": "update sem mensagem utilizável"
             }), 200
 
-        message_text = chat_message.text or chat_message.caption or ""
-        parsed = parse_chatbot_message(message_text) if message_text else {}
+        message_text = (chat_message.text or chat_message.caption or "").strip()
+
+        if not message_text:
+            send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text="Recebi sua mensagem, mas ainda não consegui interpretar esse formato."
+            )
+            return jsonify({
+                "ok": True,
+                "message": "mensagem sem texto/caption"
+            }), 200
+
+        parsed = parse_chatbot_message(message_text)
+
+        matched_client = find_client_by_name(parsed.get("client_name"))
+        matched_property = find_property_by_name(
+            parsed.get("property_name"),
+            matched_client.id if matched_client else None
+        )
+
+        pending_visits = []
+        same_culture_found = False
+
+        if matched_client:
+            pending_visits, same_culture_found = find_pending_visits(
+                client_id=matched_client.id,
+                property_id=matched_property.id if matched_property else None,
+                culture=parsed.get("culture"),
+                limit=5
+            )
+
+        suggestions = []
+        for visit in pending_visits:
+            suggestions.append({
+                "id": visit.id,
+                "date": visit.date.isoformat() if visit.date else None,
+                "status": visit.status,
+                "culture": visit.culture,
+                "variety": visit.variety,
+                "fenologia_real": visit.fenologia_real,
+                "recommendation": (visit.recommendation or "").strip(),
+                "client_id": visit.client_id,
+                "property_id": visit.property_id,
+                "plot_id": visit.plot_id,
+                "display_text": visit.to_dict().get("display_text"),
+            })
+
+        if matched_client:
+            confirmation_text = build_pending_visits_confirmation_text(
+                client_name=matched_client.name,
+                requested_culture=parsed.get("culture"),
+                suggestions=suggestions,
+                same_culture_found=same_culture_found
+            )
+        else:
+            confirmation_text = (
+                "Não consegui localizar o cliente informado.\n\n"
+                "Tente enviar no formato:\n"
+                "cliente NOME_CLIENTE fazenda NOME_FAZENDA cultura estágio observação"
+            )
+
+        send_result = send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text=confirmation_text
+        )
 
         return jsonify({
             "ok": True,
             "telegram_summary": chatbot_service.build_internal_summary(chat_message),
             "parsed_message": parsed,
+            "matched_client": matched_client.to_dict() if matched_client else None,
+            "matched_property": matched_property.to_dict() if matched_property else None,
+            "pending_visit_suggestions": suggestions,
+            "same_culture_found": same_culture_found,
+            "confirmation_text": confirmation_text,
+            "send_result": send_result,
         }), 200
 
     except Exception as e:
