@@ -1,4 +1,6 @@
 import re
+import os
+import request
 import unicodedata
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
@@ -344,4 +346,32 @@ class ChatbotService:
             "audio_file_id": chat_message.audio_file_id,
             "photo_file_id": chat_message.photo_file_id,
             "attachments_count": len(chat_message.attachments),
+        }
+
+    def send_telegram_message(chat_id: str, text: str) -> Dict[str, Any]:
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        return {
+            "ok": False,
+            "error": "TELEGRAM_BOT_TOKEN not configured"
+        }
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+    }
+
+    try:
+        response = requests.post(url, json=payload, timeout=20)
+        return {
+            "ok": response.ok,
+            "status_code": response.status_code,
+            "response": response.json() if response.content else {}
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e)
         }

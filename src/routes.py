@@ -95,7 +95,7 @@ from models import (
 )
 from utils.r2_client import get_r2_client
 
-from services.chatbot_service import ChatbotService, parse_chatbot_message
+from services.chatbot_service import ChatbotService, parse_chatbot_message, send_telegram_message
 
 
 
@@ -272,6 +272,34 @@ def whatsapp_webhook_receive():
         db.session.rollback()
         print(f"❌ Erro no webhook WhatsApp: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+
+@bp.route('/telegram/test-send', methods=['POST'])
+def telegram_test_send():
+    try:
+        data = request.get_json(silent=True) or {}
+        chat_id = str(data.get("chat_id") or "").strip()
+        text = (data.get("text") or "Teste do AgroCRM no Telegram").strip()
+
+        if not chat_id:
+            return jsonify({
+                "ok": False,
+                "error": "chat_id is required"
+            }), 400
+
+        result = send_telegram_message(chat_id=chat_id, text=text)
+
+        return jsonify({
+            "ok": True,
+            "send_result": result
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500       
 
 @bp.route("/reports/monthly.xlsx", methods=["GET"])
 def report_monthly_xlsx():
