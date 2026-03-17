@@ -1222,16 +1222,16 @@ def chatbot_suggest_pending_visits():
             matched_client.id if matched_client else None
         )
 
-            pending_visits = []
-            same_culture_found = False
+        pending_visits = []
+        same_culture_found = False
 
-            if matched_client:
-                pending_visits, same_culture_found = find_pending_visits(
-                    client_id=matched_client.id,
-                    property_id=matched_property.id if matched_property else None,
-                    culture=parsed.get("culture"),
-                    limit=5
-                )
+        if matched_client:
+            pending_visits, same_culture_found = find_pending_visits(
+                client_id=matched_client.id,
+                property_id=matched_property.id if matched_property else None,
+                culture=parsed.get("culture"),
+                limit=5
+            )
 
         visit_preview = {
             "client_id": matched_client.id if matched_client else None,
