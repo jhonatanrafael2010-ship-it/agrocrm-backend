@@ -1042,6 +1042,58 @@ def telegram_webhook():
         }), 500
 
 
+@bp.route('/chatbot/preview-visit', methods=['POST'])
+def chatbot_preview_visit():
+    """
+    Recebe uma mensagem simples e devolve uma prévia
+    do payload que no futuro será enviado para /api/visits.
+    Ainda não salva nada no banco.
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        message = (data.get("message") or "").strip()
+        consultant_id = data.get("consultant_id", 1)
+
+        if not message:
+            return jsonify({
+                "ok": False,
+                "error": "message is required"
+            }), 400
+
+        parsed = parse_chatbot_message(message)
+
+        visit_payload = {
+            "client_id": None,
+            "property_id": None,
+            "plot_id": None,
+            "consultant_id": consultant_id,
+            "date": parsed.get("date"),
+            "status": parsed.get("status", "planned"),
+            "culture": parsed.get("culture") or "",
+            "variety": "",
+            "fenologia_real": parsed.get("fenologia_real"),
+            "recommendation": parsed.get("recommendation") or "",
+            "products": [],
+            "latitude": None,
+            "longitude": None,
+            "generate_schedule": False,
+            "source": parsed.get("source", "chatbot"),
+        }
+
+        return jsonify({
+            "ok": True,
+            "parsed_message": parsed,
+            "visit_preview": visit_payload
+        }), 200
+
+    except Exception as e:
+        print(f"❌ Erro em /chatbot/preview-visit: {e}")
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
+
 
 # ============================================================
 # 🌱 VISITS ENDPOINTS
