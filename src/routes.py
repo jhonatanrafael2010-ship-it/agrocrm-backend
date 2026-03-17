@@ -92,6 +92,7 @@ from models import (
     Culture,
     WhatsAppContactBinding,
     WhatsAppInboundMessage,
+    ChatbotConversationState,
 )
 from utils.r2_client import get_r2_client
 

@@ -295,6 +295,44 @@ class WhatsAppInboundMessage(db.Model):
         }
 
 
+class ChatbotConversationState(db.Model):
+    __tablename__ = 'chatbot_conversation_states'
+
+    id = db.Column(db.Integer, primary_key=True)
+    platform = db.Column(db.String(30), nullable=False, index=True)  # telegram, whatsapp, web
+    chat_id = db.Column(db.String(120), nullable=False, index=True)
+
+    last_message = db.Column(db.Text, nullable=True)
+
+    pending_visit_suggestions_json = db.Column(db.Text, nullable=True)
+    visit_preview_json = db.Column(db.Text, nullable=True)
+    confirmation_text = db.Column(db.Text, nullable=True)
+
+    status = db.Column(db.String(30), nullable=False, default='awaiting_confirmation', index=True)
+
+    created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+    updated_at = db.Column(
+        db.DateTime,
+        server_default=db.func.now(),
+        onupdate=db.func.now(),
+        nullable=False
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "platform": self.platform,
+            "chat_id": self.chat_id,
+            "last_message": self.last_message,
+            "pending_visit_suggestions_json": self.pending_visit_suggestions_json,
+            "visit_preview_json": self.visit_preview_json,
+            "confirmation_text": self.confirmation_text,
+            "status": self.status,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 # ============================================================
 # 🧑‍💼 Consultores
 # ============================================================
