@@ -97,6 +97,7 @@ from models import (
 from utils.r2_client import get_r2_client
 
 import json
+from difflib import SequenceMatcher
 
 from services.chatbot_service import ChatbotService, parse_chatbot_message, send_telegram_message
 
@@ -1348,20 +1349,58 @@ def find_client_by_name(client_name: str):
         return None
 
     target = normalize_lookup_text(client_name)
+    if not target:
+        return None
+
     clients = Client.query.all()
 
-    exact_match = None
-    partial_match = None
-
+    # 1) match exato normalizado
     for client in clients:
         current = normalize_lookup_text(client.name)
         if current == target:
-            exact_match = client
-            break
-        if target in current and partial_match is None:
-            partial_match = client
+            return client
 
-    return exact_match or partial_match
+    # 2) match parcial simples
+    partial_candidates = []
+    for client in clients:
+        current = normalize_lookup_text(client.name)
+        if target in current or current in target:
+            partial_candidates.append(client)
+
+    if len(partial_candidates) == 1:
+        return partial_candidates[0]
+
+    if len(partial_candidates) > 1:
+        # escolhe o mais parecido entre os parciais
+        best_client = None
+        best_score = 0.0
+
+        for client in partial_candidates:
+            current = normalize_lookup_text(client.name)
+            score = SequenceMatcher(None, target, current).ratio()
+            if score > best_score:
+                best_score = score
+                best_client = client
+
+        if best_client:
+            return best_client
+
+    # 3) similaridade geral
+    best_client = None
+    best_score = 0.0
+
+    for client in clients:
+        current = normalize_lookup_text(client.name)
+        score = SequenceMatcher(None, target, current).ratio()
+        if score > best_score:
+            best_score = score
+            best_client = client
+
+    # limiar mínimo para evitar match ruim demais
+    if best_client and best_score >= 0.72:
+        return best_client
+
+    return None
 
 
 def find_property_by_name(property_name: str, client_id: int = None):
@@ -1369,25 +1408,60 @@ def find_property_by_name(property_name: str, client_id: int = None):
         return None
 
     target = normalize_lookup_text(property_name)
-    query = Property.query
+    if not target:
+        return None
 
+    query = Property.query
     if client_id:
         query = query.filter_by(client_id=client_id)
 
     properties = query.all()
 
-    exact_match = None
-    partial_match = None
-
+    # 1) match exato
     for prop in properties:
         current = normalize_lookup_text(prop.name)
         if current == target:
-            exact_match = prop
-            break
-        if target in current and partial_match is None:
-            partial_match = prop
+            return prop
 
-    return exact_match or partial_match
+    # 2) match parcial
+    partial_candidates = []
+    for prop in properties:
+        current = normalize_lookup_text(prop.name)
+        if target in current or current in target:
+            partial_candidates.append(prop)
+
+    if len(partial_candidates) == 1:
+        return partial_candidates[0]
+
+    if len(partial_candidates) > 1:
+        best_prop = None
+        best_score = 0.0
+
+        for prop in partial_candidates:
+            current = normalize_lookup_text(prop.name)
+            score = SequenceMatcher(None, target, current).ratio()
+            if score > best_score:
+                best_score = score
+                best_prop = prop
+
+        if best_prop:
+            return best_prop
+
+    # 3) similaridade geral
+    best_prop = None
+    best_score = 0.0
+
+    for prop in properties:
+        current = normalize_lookup_text(prop.name)
+        score = SequenceMatcher(None, target, current).ratio()
+        if score > best_score:
+            best_score = score
+            best_prop = prop
+
+    if best_prop and best_score >= 0.72:
+        return best_prop
+
+    return None
 
 
 def find_pending_visits(
