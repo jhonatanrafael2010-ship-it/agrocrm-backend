@@ -348,15 +348,15 @@ class ChatbotService:
             "attachments_count": len(chat_message.attachments),
         }
 
-    def send_telegram_message(chat_id: str, text: str) -> Dict[str, Any]:
-    token = os.getenv("8648977952:AAEHy9MBQwi3Gtum5IponlZvrG0qOnpsIoY")
+def send_telegram_message(chat_id: str, text: str) -> Dict[str, Any]:
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         return {
             "ok": False,
-            "error": "8648977952:AAEHy9MBQwi3Gtum5IponlZvrG0qOnpsIoY not configured"
+            "error": "TELEGRAM_BOT_TOKEN not configured"
         }
 
-    url = f"https://api.telegram.org/bot{8648977952:AAEHy9MBQwi3Gtum5IponlZvrG0qOnpsIoY}/sendMessage"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
 
     payload = {
         "chat_id": chat_id,
