@@ -1041,6 +1041,58 @@ def telegram_webhook():
             "error": str(e)
         }), 500
 
+def normalize_lookup_text(value: str) -> str:
+    if not value:
+        return ""
+    value = unicodedata.normalize("NFD", value.strip().lower())
+    return "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
+
+
+def find_client_by_name(client_name: str):
+    if not client_name:
+        return None
+
+    target = normalize_lookup_text(client_name)
+    clients = Client.query.all()
+
+    exact_match = None
+    partial_match = None
+
+    for client in clients:
+        current = normalize_lookup_text(client.name)
+        if current == target:
+            exact_match = client
+            break
+        if target in current and partial_match is None:
+            partial_match = client
+
+    return exact_match or partial_match
+
+
+def find_property_by_name(property_name: str, client_id: int = None):
+    if not property_name:
+        return None
+
+    target = normalize_lookup_text(property_name)
+    query = Property.query
+
+    if client_id:
+        query = query.filter_by(client_id=client_id)
+
+    properties = query.all()
+
+    exact_match = None
+    partial_match = None
+
+    for prop in properties:
+        current = normalize_lookup_text(prop.name)
+        if current == target:
+            exact_match = prop
+            break
+        if target in current and partial_match is None:
+            partial_match = prop
+
+    return exact_match or partial_match
 
 @bp.route('/chatbot/preview-visit', methods=['POST'])
 def chatbot_preview_visit():
@@ -1062,9 +1114,15 @@ def chatbot_preview_visit():
 
         parsed = parse_chatbot_message(message)
 
+        matched_client = find_client_by_name(parsed.get("client_name"))
+        matched_property = find_property_by_name(
+            parsed.get("property_name"),
+            matched_client.id if matched_client else None
+        )
+
         visit_payload = {
-            "client_id": None,
-            "property_id": None,
+            "client_id": matched_client.id if matched_client else None,
+            "property_id": matched_property.id if matched_property else None,
             "plot_id": None,
             "consultant_id": consultant_id,
             "date": parsed.get("date"),
@@ -1083,6 +1141,10 @@ def chatbot_preview_visit():
         return jsonify({
             "ok": True,
             "parsed_message": parsed,
+            "matched_entities": {
+                "client": matched_client.to_dict() if matched_client else None,
+                "property": matched_property.to_dict() if matched_property else None,
+            },
             "visit_preview": visit_payload
         }), 200
 
