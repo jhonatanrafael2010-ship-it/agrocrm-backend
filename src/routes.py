@@ -1082,34 +1082,68 @@ def parse_pending_reply(text: str):
     return None
 
 
+
 def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pending_visit: dict = None, close_only: bool = False) -> str:
-    client_id = final_visit_payload.get("client_id")
-    culture = final_visit_payload.get("culture") or "—"
     fenologia = final_visit_payload.get("fenologia_real") or "—"
     date_value = final_visit_payload.get("date") or "—"
-    recommendation = final_visit_payload.get("recommendation") or "—"
+    observations = final_visit_payload.get("recommendation") or "—"
+    client_id = final_visit_payload.get("client_id") or "—"
 
-    lines = ["Resumo da visita:", ""]
+    lines = ["📝 Resumo da visita", ""]
 
     if action == "use_existing_pending_visit" and selected_pending_visit:
-        lines.append(f"Tipo: {'Concluir visita pendente' if close_only else 'Atualizar visita pendente'}")
-        lines.append(f"Visita pendente ID: {selected_pending_visit.get('id')}")
-        lines.append(f"Cultura atual da pendente: {selected_pending_visit.get('culture') or '—'}")
-        lines.append(f"Recomendação atual da pendente: {selected_pending_visit.get('recommendation') or '—'}")
-    elif action == "create_new_visit":
-        lines.append("Tipo: Nova visita")
+        lines.append(f"🔧 Tipo: {'Concluir visita pendente' if close_only else 'Atualizar visita pendente'}")
+        lines.append(f"🆔 ID da visita: {selected_pending_visit.get('id')}")
+        lines.append(f"👤 ID do cliente: {client_id}")
+        lines.append(f"📌 Recomendação pendente: {selected_pending_visit.get('recommendation') or '—'}")
+        lines.append(f"🌿 Fenologia observada: {fenologia}")
+        lines.append(f"📅 Data da visita: {date_value}")
+        lines.append(f"💬 Observações: {observations}")
 
-    lines.append(f"Cliente ID: {client_id or '—'}")
-    lines.append(f"Cultura final: {culture}")
-    lines.append(f"Fenologia: {fenologia}")
-    lines.append(f"Data: {date_value}")
-    lines.append(f"Recomendação: {recommendation}")
+    elif action == "create_new_visit":
+        lines.append("🆕 Tipo: Nova visita")
+        lines.append("🆔 ID da visita: nova")
+        lines.append(f"👤 ID do cliente: {client_id}")
+        lines.append("📌 Recomendação pendente: —")
+        lines.append(f"🌿 Fenologia observada: {fenologia}")
+        lines.append(f"📅 Data da visita: {date_value}")
+        lines.append(f"💬 Observações: {observations}")
+
     lines.append("")
     lines.append("Responda com:")
-    lines.append("- CONFIRMAR")
-    lines.append("- CANCELAR")
+    lines.append("✅ CONFIRMAR")
+    lines.append("❌ CANCELAR")
 
     return "\n".join(lines)
+
+
+def parse_date_flexible(value: str):
+    if not value:
+        return None
+
+    value = value.strip()
+
+    match_br = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", value)
+    if match_br:
+        dd, mm, yyyy = match_br.groups()
+        return f"{yyyy}-{mm}-{dd}"
+
+    match_iso = re.match(r"^(20\d{2})-(\d{2})-(\d{2})$", value)
+    if match_iso:
+        return value
+
+    return None
+
+
+def build_guided_state_payload(action: str, final_visit_payload: dict, selected_pending_visit: dict = None, close_only: bool = False) -> dict:
+    return {
+        "action": action,
+        "final_visit_payload": final_visit_payload,
+        "selected_pending_visit": selected_pending_visit,
+        "close_only": close_only,
+    }
+
+
 
 @bp.route('/telegram/webhook', methods=['POST'])
 def telegram_webhook():
@@ -1146,10 +1180,9 @@ def telegram_webhook():
                 "message": "mensagem sem texto/caption"
             }), 200
 
-            
 
         # =========================================================
-        # Se a mensagem for confirmação final do resumo
+        # CONFIRMAR / CANCELAR do resumo final
         # =========================================================
         parsed_reply = parse_pending_reply(message_text)
 
@@ -1179,6 +1212,7 @@ def telegram_webhook():
                 action = stored_data.get("action")
                 final_visit_payload = stored_data.get("final_visit_payload") or {}
                 selected_pending_visit = stored_data.get("selected_pending_visit")
+                close_only = stored_data.get("close_only", False)
 
                 final_visit_payload["status"] = "done"
 
@@ -1196,8 +1230,6 @@ def telegram_webhook():
                             "message": "visita pendente não encontrada"
                         }), 200
 
-                    close_only = stored_data.get("close_only", False)
-
                     if final_visit_payload.get("date"):
                         visit.date = _date.fromisoformat(final_visit_payload["date"])
 
@@ -1207,8 +1239,6 @@ def telegram_webhook():
                     visit.longitude = final_visit_payload.get("longitude")
 
                     if not close_only:
-                        visit.culture = final_visit_payload.get("culture") or visit.culture
-                        visit.variety = final_visit_payload.get("variety") or visit.variety
                         visit.fenologia_real = final_visit_payload.get("fenologia_real")
                         visit.recommendation = final_visit_payload.get("recommendation") or visit.recommendation
 
@@ -1222,7 +1252,7 @@ def telegram_webhook():
 
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
-                        text=f"Visita pendente atualizada com sucesso ✅\nID da visita: {visit.id}"
+                        text=f"Visita atualizada com sucesso ✅\nID da visita: {visit.id}"
                     )
 
                     return jsonify({
@@ -1280,6 +1310,118 @@ def telegram_webhook():
                         "message": "confirmação final processada com nova visita",
                         "visit": new_visit.to_dict()
                     }), 201
+
+
+
+        # =========================================================
+        # Fluxo guiado: fenologia -> data -> observações -> resumo
+        # =========================================================
+        state = ChatbotConversationState.query.filter_by(
+            platform="telegram",
+            chat_id=chat_message.chat_id
+        ).first()
+
+        if state and state.status in ("awaiting_fenologia", "awaiting_date", "awaiting_observations"):
+            stored_data = json.loads(state.visit_preview_json or "{}")
+            action = stored_data.get("action")
+            final_visit_payload = stored_data.get("final_visit_payload") or {}
+            selected_pending_visit = stored_data.get("selected_pending_visit")
+            close_only = stored_data.get("close_only", False)
+
+            if state.status == "awaiting_fenologia":
+                final_visit_payload["fenologia_real"] = message_text.strip().upper()
+
+                state.visit_preview_json = json.dumps(
+                    build_guided_state_payload(
+                        action=action,
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=close_only,
+                    ),
+                    ensure_ascii=False
+                )
+                state.status = "awaiting_date"
+                db.session.commit()
+
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="📅 Informe a data da visita.\nExemplo: 24/02/2026"
+                )
+
+                return jsonify({
+                    "ok": True,
+                    "message": "fenologia recebida"
+                }), 200
+
+            if state.status == "awaiting_date":
+                parsed_date = parse_date_flexible(message_text.strip())
+                if not parsed_date:
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="Data inválida. Envie no formato 24/02/2026 ou 2026-02-24."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "data inválida"
+                    }), 200
+
+                final_visit_payload["date"] = parsed_date
+
+                state.visit_preview_json = json.dumps(
+                    build_guided_state_payload(
+                        action=action,
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=close_only,
+                    ),
+                    ensure_ascii=False
+                )
+                state.status = "awaiting_observations"
+                db.session.commit()
+
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="💬 Informe as observações da visita."
+                )
+
+                return jsonify({
+                    "ok": True,
+                    "message": "data recebida"
+                }), 200
+
+            if state.status == "awaiting_observations":
+                final_visit_payload["recommendation"] = message_text.strip()
+
+                summary_text = build_visit_summary_text(
+                    action=action,
+                    final_visit_payload=final_visit_payload,
+                    selected_pending_visit=selected_pending_visit,
+                    close_only=close_only
+                )
+
+                state.visit_preview_json = json.dumps(
+                    build_guided_state_payload(
+                        action=action,
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=close_only,
+                    ),
+                    ensure_ascii=False
+                )
+                state.confirmation_text = summary_text
+                state.status = "awaiting_final_confirmation"
+                db.session.commit()
+
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text=summary_text
+                )
+
+                return jsonify({
+                    "ok": True,
+                    "message": "observações recebidas e resumo enviado"
+                }), 200
+
 
         # =========================================================
         # Se a mensagem for resposta para escolha de cliente parecido
@@ -1891,41 +2033,39 @@ def chatbot_preview_visit():
             "error": str(e)
         }), 500
 
-def build_pending_visits_confirmation_text(
-    client_name: str,
-    requested_culture: str,
-    suggestions: list,
-    same_culture_found: bool
-) -> str:
-    if not suggestions:
-        return (
-            f"Não encontrei visitas pendentes para {client_name or 'este cliente'}.\n\n"
-            f"Responda com NOVA para criar uma nova visita."
-        )
-
+def build_pending_visits_confirmation_text(client_name: str, requested_culture: str, suggestions: list, same_culture_found: bool) -> str:
     lines = []
 
-    if requested_culture and not same_culture_found:
-        lines.append(
-            f"Não encontrei visitas pendentes de {requested_culture} para {client_name or 'este cliente'}."
-        )
+    if suggestions:
+        if requested_culture and same_culture_found:
+            lines.append(f"📋 Encontrei visitas pendentes de {requested_culture} para {client_name}:")
+        elif requested_culture and not same_culture_found:
+            lines.append(f"Não encontrei visitas pendentes de {requested_culture} para {client_name}.")
+            lines.append("")
+            lines.append(f"📋 Encontrei outras visitas pendentes deste cliente:")
+        else:
+            lines.append(f"📋 Encontrei visitas pendentes para {client_name}:")
+
+        for idx, item in enumerate(suggestions, start=1):
+            lines.append(f"{idx}. {item.get('culture') or '—'} - {item.get('recommendation') or '—'} - {item.get('date') or '—'}")
+
         lines.append("")
-        lines.append("Encontrei outras visitas pendentes deste cliente:")
-    else:
-        lines.append(f"Encontrei visitas pendentes para {client_name or 'este cliente'}:")
+        lines.append("Responda com:")
+        lines.append("🔢 número da visita para atualizar")
+        lines.append("✅ CONCLUIR X para apenas concluir a visita pendente")
+        lines.append("🆕 NOVA para criar uma nova visita")
+        return "\n".join(lines)
 
-    for idx, item in enumerate(suggestions, start=1):
-        culture = item.get("culture") or "—"
-        recommendation = item.get("recommendation") or "—"
-        date_value = item.get("date") or "sem data"
-        lines.append(f"{idx}. {culture} - {recommendation} - {date_value}")
+    if requested_culture:
+        return (
+            f"Não encontrei visitas pendentes de {requested_culture} para {client_name}.\n\n"
+            "Você pode responder com NOVA para criar uma nova visita."
+        )
 
-    lines.append("")
-    lines.append("Responda com:")
-    lines.append("- o número da visita que deseja realizar")
-    lines.append("- ou NOVA para criar uma nova visita")
-
-    return "\n".join(lines)
+    return (
+        f"Não encontrei visitas pendentes para {client_name}.\n\n"
+        "Você pode responder com NOVA para criar uma nova visita."
+    )
 
 @bp.route('/chatbot/suggest-pending-visits', methods=['POST'])
 def chatbot_suggest_pending_visits():
