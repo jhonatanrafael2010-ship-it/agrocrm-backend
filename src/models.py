@@ -259,6 +259,39 @@ class VisitProduct(db.Model):
             "application_date": self.application_date.isoformat() if self.application_date else None,
         }
 
+
+
+class TelegramContactBinding(db.Model):
+    __tablename__ = "telegram_contact_bindings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    telegram_chat_id = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    telegram_user_id = db.Column(db.String(120), nullable=True, index=True)
+    telegram_username = db.Column(db.String(120), nullable=True)
+    display_name = db.Column(db.String(120), nullable=True)
+
+    consultant_id = db.Column(db.Integer, db.ForeignKey("consultants.id"), nullable=False, index=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+
+    created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+
+    consultant = db.relationship("Consultant", backref="telegram_bindings")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "telegram_chat_id": self.telegram_chat_id,
+            "telegram_user_id": self.telegram_user_id,
+            "telegram_username": self.telegram_username,
+            "display_name": self.display_name,
+            "consultant_id": self.consultant_id,
+            "consultant_name": self.consultant.name if self.consultant else None,
+            "is_active": self.is_active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+
 class WhatsAppInboundMessage(db.Model):
     __tablename__ = 'whatsapp_inbound_messages'
 

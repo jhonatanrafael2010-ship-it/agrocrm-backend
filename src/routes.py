@@ -93,6 +93,7 @@ from models import (
     WhatsAppContactBinding,
     WhatsAppInboundMessage,
     ChatbotConversationState,
+    TelegramContactBinding,
 )
 from utils.r2_client import get_r2_client
 
@@ -1145,6 +1146,22 @@ def build_guided_state_payload(action: str, final_visit_payload: dict, selected_
 
 
 
+def resolve_telegram_consultant(chat_message):
+    if not chat_message:
+        return None
+
+    binding = TelegramContactBinding.query.filter_by(
+        telegram_chat_id=str(chat_message.chat_id),
+        is_active=True
+    ).first()
+
+    if binding and binding.consultant:
+        return binding.consultant
+
+    return None
+
+
+
 @bp.route('/telegram/webhook', methods=['POST'])
 def telegram_webhook():
     """
@@ -1869,6 +1886,85 @@ def telegram_webhook():
             "ok": False,
             "error": str(e)
         }), 500
+
+
+
+
+@bp.route('/telegram/bindings', methods=['POST'])
+def create_telegram_binding():
+    try:
+        data = request.get_json(silent=True) or {}
+
+        telegram_chat_id = str(data.get("telegram_chat_id") or "").strip()
+        telegram_user_id = str(data.get("telegram_user_id") or "").strip()
+        telegram_username = (data.get("telegram_username") or "").strip()
+        display_name = (data.get("display_name") or "").strip()
+        consultant_id = data.get("consultant_id")
+
+        if not telegram_chat_id:
+            return jsonify({
+                "ok": False,
+                "error": "telegram_chat_id is required"
+            }), 400
+
+        if not consultant_id:
+            return jsonify({
+                "ok": False,
+                "error": "consultant_id is required"
+            }), 400
+
+        consultant = Consultant.query.get(consultant_id)
+        if not consultant:
+            return jsonify({
+                "ok": False,
+                "error": "consultant not found"
+            }), 404
+
+        existing = TelegramContactBinding.query.filter_by(
+            telegram_chat_id=telegram_chat_id
+        ).first()
+
+        if existing:
+            existing.telegram_user_id = telegram_user_id or existing.telegram_user_id
+            existing.telegram_username = telegram_username or existing.telegram_username
+            existing.display_name = display_name or existing.display_name
+            existing.consultant_id = consultant_id
+            existing.is_active = True
+            db.session.commit()
+
+            return jsonify({
+                "ok": True,
+                "message": "binding updated",
+                "binding": existing.to_dict()
+            }), 200
+
+        binding = TelegramContactBinding(
+            telegram_chat_id=telegram_chat_id,
+            telegram_user_id=telegram_user_id or None,
+            telegram_username=telegram_username or None,
+            display_name=display_name or None,
+            consultant_id=consultant_id,
+            is_active=True
+        )
+
+        db.session.add(binding)
+        db.session.commit()
+
+        return jsonify({
+            "ok": True,
+            "message": "binding created",
+            "binding": binding.to_dict()
+        }), 201
+
+    except Exception as e:
+        print(f"❌ Erro em /telegram/bindings: {e}")
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
+
+
+
 
 def normalize_lookup_text(value: str) -> str:
     if not value:
