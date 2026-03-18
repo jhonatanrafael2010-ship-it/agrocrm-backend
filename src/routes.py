@@ -94,6 +94,7 @@ from models import (
     WhatsAppInboundMessage,
     ChatbotConversationState,
     TelegramContactBinding,
+    Consultant,
 )
 from utils.r2_client import get_r2_client
 
@@ -1179,6 +1180,9 @@ def telegram_webhook():
         chatbot_service = ChatbotService()
         chat_message = chatbot_service.normalize_telegram_update(payload)
 
+        consultant = resolve_telegram_consultant(chat_message)
+        resolved_consultant_id = consultant.id if consultant else 1
+
         if not chat_message:
             return jsonify({
                 "ok": True,
@@ -1550,7 +1554,7 @@ def telegram_webhook():
                     "client_id": matched_client.id if matched_client else None,
                     "property_id": matched_property.id if matched_property else None,
                     "plot_id": None,
-                    "consultant_id": 1,
+                    "consultant_id": resolved_consultant_id,
                     "date": parsed.get("date"),
                     "status": parsed.get("status", "planned"),
                     "culture": parsed.get("culture") or "",
@@ -1829,7 +1833,7 @@ def telegram_webhook():
             "client_id": matched_client.id if matched_client else None,
             "property_id": matched_property.id if matched_property else None,
             "plot_id": None,
-            "consultant_id": 1,
+            "consultant_id": resolved_consultant_id,
             "date": parsed.get("date"),
             "status": parsed.get("status", "planned"),
             "culture": parsed.get("culture") or "",
