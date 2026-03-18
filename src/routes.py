@@ -1572,71 +1572,126 @@ def telegram_webhook():
 
                 if mode == "create_new":
                     action = "create_new_visit"
-                    final_visit_payload = visit_preview
-
-                else:
-                    idx = parsed_reply["index"]
-
-                    if idx is None or idx < 0 or idx >= len(pending_visit_suggestions):
-                        send_telegram_message(
-                            chat_id=chat_message.chat_id,
-                            text="Opção inválida. Use um número, CONCLUIR X ou NOVA."
-                        )
-                        return jsonify({
-                            "ok": True,
-                            "message": "opção inválida para confirmação"
-                        }), 200
-
-                    selected_pending_visit = pending_visit_suggestions[idx]
-                    action = "use_existing_pending_visit"
-
                     final_visit_payload = {
                         **visit_preview,
-                        "client_id": selected_pending_visit.get("client_id") or visit_preview.get("client_id"),
-                        "property_id": selected_pending_visit.get("property_id") or visit_preview.get("property_id"),
-                        "plot_id": selected_pending_visit.get("plot_id") or visit_preview.get("plot_id"),
-                        "linked_pending_visit_id": selected_pending_visit.get("id"),
+                        "fenologia_real": None,
+                        "date": None,
+                        "recommendation": "",
                     }
 
-                    if mode == "close_only":
-                        close_only = True
-                        final_visit_payload["culture"] = selected_pending_visit.get("culture") or final_visit_payload.get("culture")
-                        final_visit_payload["recommendation"] = selected_pending_visit.get("recommendation") or final_visit_payload.get("recommendation")
-                        final_visit_payload["variety"] = selected_pending_visit.get("variety") or final_visit_payload.get("variety")
-                        final_visit_payload["fenologia_real"] = selected_pending_visit.get("fenologia_real") or final_visit_payload.get("fenologia_real")
+                    state.visit_preview_json = json.dumps(
+                        build_guided_state_payload(
+                            action=action,
+                            final_visit_payload=final_visit_payload,
+                            selected_pending_visit=None,
+                            close_only=False,
+                        ),
+                        ensure_ascii=False
+                    )
+                    state.status = "awaiting_fenologia"
+                    db.session.commit()
 
-                final_visit_payload["status"] = "done"
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="🌿 Informe a fenologia observada.\nExemplo: V4, V5, R1"
+                    )
 
-                summary_text = build_visit_summary_text(
-                    action=action,
-                    final_visit_payload=final_visit_payload,
-                    selected_pending_visit=selected_pending_visit,
-                    close_only=close_only
+                    return jsonify({
+                        "ok": True,
+                        "message": "aguardando fenologia para nova visita",
+                        "action": action,
+                    }), 200
+
+                idx = parsed_reply["index"]
+
+                if idx is None or idx < 0 or idx >= len(pending_visit_suggestions):
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="Opção inválida. Use um número, CONCLUIR X ou NOVA."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "opção inválida para confirmação"
+                    }), 200
+
+                selected_pending_visit = pending_visit_suggestions[idx]
+                action = "use_existing_pending_visit"
+
+                final_visit_payload = {
+                    **visit_preview,
+                    "client_id": selected_pending_visit.get("client_id") or visit_preview.get("client_id"),
+                    "property_id": selected_pending_visit.get("property_id") or visit_preview.get("property_id"),
+                    "plot_id": selected_pending_visit.get("plot_id") or visit_preview.get("plot_id"),
+                    "linked_pending_visit_id": selected_pending_visit.get("id"),
+                }
+
+                if mode == "close_only":
+                    close_only = True
+                    final_visit_payload["culture"] = selected_pending_visit.get("culture") or final_visit_payload.get("culture")
+                    final_visit_payload["variety"] = selected_pending_visit.get("variety") or final_visit_payload.get("variety")
+                    final_visit_payload["fenologia_real"] = selected_pending_visit.get("fenologia_real")
+                    final_visit_payload["recommendation"] = selected_pending_visit.get("recommendation") or ""
+                    final_visit_payload["date"] = selected_pending_visit.get("date") or final_visit_payload.get("date")
+
+                    summary_text = build_visit_summary_text(
+                        action=action,
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=True
+                    )
+
+                    state.visit_preview_json = json.dumps(
+                        build_guided_state_payload(
+                            action=action,
+                            final_visit_payload=final_visit_payload,
+                            selected_pending_visit=selected_pending_visit,
+                            close_only=True,
+                        ),
+                        ensure_ascii=False
+                    )
+                    state.confirmation_text = summary_text
+                    state.status = "awaiting_final_confirmation"
+                    db.session.commit()
+
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text=summary_text
+                    )
+
+                    return jsonify({
+                        "ok": True,
+                        "message": "resumo final enviado para conclusão simples",
+                        "summary_text": summary_text,
+                        "action": action,
+                        "close_only": True,
+                    }), 200
+
+                final_visit_payload["fenologia_real"] = None
+                final_visit_payload["date"] = None
+                final_visit_payload["recommendation"] = ""
+
+                state.visit_preview_json = json.dumps(
+                    build_guided_state_payload(
+                        action=action,
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=False,
+                    ),
+                    ensure_ascii=False
                 )
-
-                state.visit_preview_json = json.dumps({
-                    "action": action,
-                    "final_visit_payload": final_visit_payload,
-                    "selected_pending_visit": selected_pending_visit,
-                    "close_only": close_only,
-                }, ensure_ascii=False)
-
-                state.confirmation_text = summary_text
-                state.status = "awaiting_final_confirmation"
-
+                state.status = "awaiting_fenologia"
                 db.session.commit()
 
                 send_telegram_message(
                     chat_id=chat_message.chat_id,
-                    text=summary_text
+                    text="🌿 Informe a fenologia observada.\nExemplo: V4, V5, R1"
                 )
 
                 return jsonify({
                     "ok": True,
-                    "message": "resumo final enviado",
-                    "summary_text": summary_text,
+                    "message": "aguardando fenologia para visita pendente",
                     "action": action,
-                    "close_only": close_only,
+                    "close_only": False,
                 }), 200
 
         parsed = parse_chatbot_message(message_text)
