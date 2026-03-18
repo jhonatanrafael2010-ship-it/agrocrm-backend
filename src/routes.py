@@ -1329,7 +1329,19 @@ def telegram_webhook():
             close_only = stored_data.get("close_only", False)
 
             if state.status == "awaiting_fenologia":
-                final_visit_payload["fenologia_real"] = message_text.strip().upper()
+                fenologia_input = message_text.strip().upper()
+
+                if not is_valid_fenologia(fenologia_input):
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="🌿 Fenologia inválida.\nEnvie algo como: V4, V5, VE, VT, R1."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "fenologia inválida"
+                    }), 200
+
+                final_visit_payload["fenologia_real"] = fenologia_input
 
                 state.visit_preview_json = json.dumps(
                     build_guided_state_payload(
@@ -1390,7 +1402,19 @@ def telegram_webhook():
                 }), 200
 
             if state.status == "awaiting_observations":
-                final_visit_payload["recommendation"] = message_text.strip()
+                observations_input = message_text.strip()
+
+                if len(observations_input) < 2:
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="💬 Observação muito curta. Envie um texto curto descrevendo a visita."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "observação inválida"
+                    }), 200
+
+                final_visit_payload["recommendation"] = observations_input
 
                 summary_text = build_visit_summary_text(
                     action=action,
@@ -1987,6 +2011,27 @@ def find_property_by_name(property_name: str, client_id: int = None):
         return best_prop, top_candidates, True
 
     return None, top_candidates, True
+
+
+def is_valid_fenologia(value: str) -> bool:
+    if not value:
+        return False
+
+    value = value.strip().upper()
+
+    valid_patterns = [
+        r"^V\d{1,2}$",   # V1, V4, V10
+        r"^R\d{1,2}$",   # R1, R2, R6
+        r"^VE$",
+        r"^VC$",
+        r"^VT$",
+    ]
+
+    for pattern in valid_patterns:
+        if re.match(pattern, value):
+            return True
+
+    return False
 
 
 def find_pending_visits(
