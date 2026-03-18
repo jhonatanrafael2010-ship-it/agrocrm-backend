@@ -1146,6 +1146,23 @@ def build_guided_state_payload(action: str, final_visit_payload: dict, selected_
     }
 
 
+def normalize_culture_input(value: str):
+    if not value:
+        return None
+
+    raw = value.strip().lower()
+    normalized = normalize_lookup_text(raw)
+
+    if normalized == "milho":
+        return "Milho"
+    if normalized == "soja":
+        return "Soja"
+    if normalized in ("algodao", "algodão"):
+        return "Algodão"
+
+    return None
+
+
 
 def resolve_telegram_consultant(chat_message):
     if not chat_message:
@@ -1342,12 +1359,51 @@ def telegram_webhook():
             chat_id=chat_message.chat_id
         ).first()
 
-        if state and state.status in ("awaiting_fenologia", "awaiting_date", "awaiting_observations"):
+        if state and state.status in ("awaiting_culture", "awaiting_fenologia", "awaiting_date", "awaiting_observations"):
             stored_data = json.loads(state.visit_preview_json or "{}")
             action = stored_data.get("action")
             final_visit_payload = stored_data.get("final_visit_payload") or {}
             selected_pending_visit = stored_data.get("selected_pending_visit")
             close_only = stored_data.get("close_only", False)
+
+
+            if state.status == "awaiting_culture":
+                culture_input = normalize_culture_input(message_text)
+
+                if not culture_input:
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="🌱 Cultura inválida.\nEnvie algo como: Milho, Soja ou Algodão."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "cultura inválida"
+                    }), 200
+
+                final_visit_payload["culture"] = culture_input
+
+                state.visit_preview_json = json.dumps(
+                    build_guided_state_payload(
+                        action=action,
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=close_only,
+                    ),
+                    ensure_ascii=False
+                )
+                state.status = "awaiting_fenologia"
+                db.session.commit()
+
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="🌿 Informe a fenologia observada.\nExemplo: V4, V5, R1"
+                )
+
+                return jsonify({
+                    "ok": True,
+                    "message": "cultura recebida"
+                }), 200
+
 
             if state.status == "awaiting_fenologia":
                 fenologia_input = message_text.strip().upper()
@@ -1619,6 +1675,7 @@ def telegram_webhook():
                     action = "create_new_visit"
                     final_visit_payload = {
                         **visit_preview,
+                        "culture": "",
                         "fenologia_real": None,
                         "date": None,
                         "recommendation": "",
@@ -1633,17 +1690,17 @@ def telegram_webhook():
                         ),
                         ensure_ascii=False
                     )
-                    state.status = "awaiting_fenologia"
+                    state.status = "awaiting_culture"
                     db.session.commit()
 
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
-                        text="🌿 Informe a fenologia observada.\nExemplo: V4, V5, R1"
+                        text="🌱 Informe a cultura da visita.\nExemplo: Milho, Soja, Algodão"
                     )
 
                     return jsonify({
                         "ok": True,
-                        "message": "aguardando fenologia para nova visita",
+                        "message": "aguardando cultura para nova visita",
                         "action": action,
                     }), 200
 
