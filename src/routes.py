@@ -1600,14 +1600,14 @@ def telegram_webhook():
             if state.status == "awaiting_observations":
                 observations_input = message_text.strip()
 
-                if len(observations_input) < 2:
+                if observations_input == "":
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
-                        text="💬 Observação muito curta. Envie um texto curto descrevendo a visita."
+                        text="💬 Envie algo nas observações, mesmo que seja apenas ."
                     )
                     return jsonify({
                         "ok": True,
-                        "message": "observação inválida"
+                        "message": "observação vazia"
                     }), 200
 
                 final_visit_payload["recommendation"] = observations_input
