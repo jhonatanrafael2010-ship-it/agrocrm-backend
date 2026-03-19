@@ -1351,15 +1351,22 @@ def telegram_webhook():
 
 
 
-        # =========================================================
-        # Fluxo guiado: fenologia -> data -> observações -> resumo
-        # =========================================================
+        # =====================================================================================
+        # Fluxo guiado: cultura -> plantio/avulsa -> fenologia/data -> observações -> resumo 
+        # =====================================================================================
         state = ChatbotConversationState.query.filter_by(
             platform="telegram",
             chat_id=chat_message.chat_id
         ).first()
 
-        if state and state.status in ("awaiting_culture", "awaiting_fenologia", "awaiting_date", "awaiting_observations"):
+        if state and state.status in (
+            "awaiting_culture",
+            "awaiting_planting_confirmation",
+            "awaiting_avulsa_confirmation",
+            "awaiting_fenologia",
+            "awaiting_date",
+            "awaiting_observations",
+        ):
             stored_data = json.loads(state.visit_preview_json or "{}")
             action = stored_data.get("action")
             final_visit_payload = stored_data.get("final_visit_payload") or {}
@@ -1391,18 +1398,130 @@ def telegram_webhook():
                     ),
                     ensure_ascii=False
                 )
-                state.status = "awaiting_fenologia"
+                state.status = "awaiting_planting_confirmation"
                 db.session.commit()
 
                 send_telegram_message(
                     chat_id=chat_message.chat_id,
-                    text="🌿 Informe a fenologia observada.\nExemplo: V4, V5, R1"
+                    text="🌱 É visita de plantio?\nResponda com SIM ou NÃO."
                 )
 
                 return jsonify({
                     "ok": True,
-                    "message": "cultura recebida"
+                    "message": "cultura recebida, aguardando confirmação de plantio"
                 }), 200
+
+            
+            if state.status == "awaiting_planting_confirmation":
+                yes_no = parse_yes_no(message_text)
+
+                if yes_no is None:
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="🌱 Resposta inválida.\nResponda apenas com SIM ou NÃO."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "resposta inválida para plantio"
+                    }), 200
+
+                if yes_no is True:
+                    final_visit_payload["fenologia_real"] = "Plantio"
+
+                    state.visit_preview_json = json.dumps(
+                        build_guided_state_payload(
+                            action=action,
+                            final_visit_payload=final_visit_payload,
+                            selected_pending_visit=selected_pending_visit,
+                            close_only=close_only,
+                        ),
+                        ensure_ascii=False
+                    )
+                    state.status = "awaiting_date"
+                    db.session.commit()
+
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="📅 Informe a data da visita de plantio.\nExemplo: 24/02/2026"
+                    )
+
+                    return jsonify({
+                        "ok": True,
+                        "message": "visita de plantio confirmada"
+                    }), 200
+
+                state.visit_preview_json = json.dumps(
+                    build_guided_state_payload(
+                        action=action,
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=close_only,
+                    ),
+                    ensure_ascii=False
+                )
+                state.status = "awaiting_avulsa_confirmation"
+                db.session.commit()
+
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="📌 É uma visita avulsa?\nResponda com SIM ou NÃO."
+                )
+
+                return jsonify({
+                    "ok": True,
+                    "message": "aguardando confirmação de visita avulsa"
+                }), 200
+
+
+            if state.status == "awaiting_avulsa_confirmation":
+                yes_no = parse_yes_no(message_text)
+
+                if yes_no is None:
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="📌 Resposta inválida.\nResponda apenas com SIM ou NÃO."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "resposta inválida para visita avulsa"
+                    }), 200
+
+                if yes_no is True:
+                    state.visit_preview_json = json.dumps(
+                        build_guided_state_payload(
+                            action=action,
+                            final_visit_payload=final_visit_payload,
+                            selected_pending_visit=selected_pending_visit,
+                            close_only=close_only,
+                        ),
+                        ensure_ascii=False
+                    )
+                    state.status = "awaiting_fenologia"
+                    db.session.commit()
+
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="🌿 Informe a fenologia observada.\nExemplo: V4, V5, VE, VT, R1"
+                    )
+
+                    return jsonify({
+                        "ok": True,
+                        "message": "visita avulsa confirmada"
+                    }), 200
+
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="No momento consigo seguir com nova visita de plantio ou visita avulsa.\nSe quiser, responda NOVA novamente e siga uma dessas opções."
+                )
+
+                state.status = "cancelled"
+                db.session.commit()
+
+                return jsonify({
+                    "ok": True,
+                    "message": "fluxo encerrado por não ser plantio nem avulsa"
+                }), 200
+
 
 
             if state.status == "awaiting_fenologia":
@@ -2032,6 +2151,21 @@ def normalize_lookup_text(value: str) -> str:
         return ""
     value = unicodedata.normalize("NFD", value.strip().lower())
     return "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
+
+    
+def parse_yes_no(value: str):
+    if not value:
+        return None
+
+    normalized = normalize_lookup_text(value)
+
+    if normalized in ("sim", "s", "yes", "y"):
+        return True
+
+    if normalized in ("nao", "não", "n", "no"):
+        return False
+
+    return None   
 
 
 def find_client_by_name(client_name: str):
