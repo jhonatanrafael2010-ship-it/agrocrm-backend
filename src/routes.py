@@ -9,7 +9,7 @@ import unicodedata
 import datetime
 from io import BytesIO
 from urllib.request import Request, urlopen
-from datetime import date as _date, datetime as _dt
+from datetime import date as _date, datetime as _dt, timedelta as _timedelta
 
 # =========================
 # Third-party
@@ -1271,6 +1271,112 @@ def telegram_webhook():
             }), 200
 
 
+        # =========================================================
+        # Cancelar a qualquer momento
+        # =========================================================
+        if normalize_lookup_text(message_text) in ("cancelar", "cancela", "cancel"):
+            state = ChatbotConversationState.query.filter_by(
+                platform="telegram",
+                chat_id=chat_message.chat_id
+            ).first()
+
+            if state:
+                state.status = "cancelled"
+                db.session.commit()
+
+            send_result = send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text="Operação cancelada com sucesso."
+            )
+
+            return jsonify({
+                "ok": True,
+                "message": "operação cancelada globalmente",
+                "send_result": send_result,
+            }), 200
+
+
+        # =========================================================
+        # Escolha da(s) visita(s) para gerar PDF
+        # =========================================================
+        state = ChatbotConversationState.query.filter_by(
+            platform="telegram",
+            chat_id=chat_message.chat_id,
+            status="awaiting_pdf_visit_selection"
+        ).first()
+
+        if state:
+            selected_indexes = parse_pdf_selection(message_text)
+
+            if selected_indexes is None or not selected_indexes:
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Opção inválida. Responda com um número ou vários, como 1,3 ou 1 3 5."
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "opção inválida para pdf",
+                    "send_result": send_result,
+                }), 200
+
+            pdf_candidates = json.loads(state.pending_visit_suggestions_json or "[]")
+
+            invalid = [idx for idx in selected_indexes if idx < 0 or idx >= len(pdf_candidates)]
+            if invalid:
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Uma ou mais opções são inválidas. Revise os números e tente novamente."
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "índices inválidos para pdf",
+                    "send_result": send_result,
+                }), 200
+
+            results = []
+            sent_count = 0
+
+            for idx in selected_indexes:
+                selected = pdf_candidates[idx]
+                visit_id = selected.get("id")
+
+                try:
+                    buffer, filename = build_visit_pdf_file(visit_id)
+                    pdf_bytes = buffer.getvalue()
+
+                    send_result = send_telegram_document(
+                        chat_id=chat_message.chat_id,
+                        file_bytes=pdf_bytes,
+                        filename=filename,
+                        caption=f"📄 PDF da visita {visit_id}"
+                    )
+
+                    results.append({
+                        "visit_id": visit_id,
+                        "send_result": send_result,
+                    })
+
+                    if send_result.get("ok"):
+                        sent_count += 1
+
+                except Exception as e:
+                    results.append({
+                        "visit_id": visit_id,
+                        "error": str(e),
+                    })
+
+            state.status = "completed"
+            db.session.commit()
+
+            return jsonify({
+                "ok": True,
+                "message": "pdf(s) processado(s)",
+                "requested_count": len(selected_indexes),
+                "sent_count": sent_count,
+                "results": results,
+            }), 200
+
+
 
         # =========================================================
         # Agenda / visitas pendentes da semana
@@ -1312,6 +1418,67 @@ def telegram_webhook():
                     "name": consultant.name,
                 },
                 "visits_count": len(week_visits),
+                "response_text": response_text,
+                "send_result": send_result,
+            }), 200
+
+
+
+        
+        # =========================================================
+        # Pedido manual de PDF
+        # =========================================================
+        if is_pdf_request(message_text):
+            if not consultant:
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text=(
+                        "Seu Telegram ainda não está vinculado a um consultor do AgroCRM.\n"
+                        "Use /start e depois /vincular SEU_CODIGO."
+                    )
+                )
+                return jsonify({
+                    "ok": False,
+                    "message": "consultor não vinculado",
+                    "send_result": send_result,
+                }), 400
+
+            recent_visits = find_last_completed_visits_for_consultant(
+                consultant_id=consultant.id,
+                limit=6
+            )
+
+            response_text = build_pdf_visit_selection_text(recent_visits)
+
+            state = ChatbotConversationState.query.filter_by(
+                platform="telegram",
+                chat_id=chat_message.chat_id
+            ).first()
+
+            if not state:
+                state = ChatbotConversationState(
+                    platform="telegram",
+                    chat_id=chat_message.chat_id,
+                )
+                db.session.add(state)
+
+            state.pending_visit_suggestions_json = json.dumps(
+                [{"id": v.id} for v in recent_visits],
+                ensure_ascii=False
+            )
+            state.confirmation_text = response_text
+            state.status = "awaiting_pdf_visit_selection"
+            db.session.commit()
+
+            send_result = send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=response_text
+            )
+
+            return jsonify({
+                "ok": True,
+                "message": "lista de visitas para pdf enviada",
+                "visits_count": len(recent_visits),
                 "response_text": response_text,
                 "send_result": send_result,
             }), 200
@@ -2283,6 +2450,98 @@ def find_telegram_binding(chat_message):
     ).first()
 
 
+def is_pdf_request(text: str) -> bool:
+    if not text:
+        return False
+
+    normalized = normalize_lookup_text(text)
+
+    triggers = [
+        "pdf",
+        "gerar pdf",
+        "me manda o pdf",
+        "mande o pdf",
+        "pdf da ultima visita",
+        "pdf da última visita",
+        "pdf das ultimas visitas",
+        "pdf das últimas visitas",
+        "relatorio pdf",
+        "relatório pdf",
+    ]
+
+    return any(trigger in normalized for trigger in triggers)
+
+
+def find_last_completed_visits_for_consultant(consultant_id: int, limit: int = 6):
+    if not consultant_id:
+        return []
+
+    visits = (
+        Visit.query
+        .filter(Visit.consultant_id == consultant_id)
+        .filter(Visit.status == "done")
+        .order_by(Visit.date.desc().nullslast(), Visit.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return visits
+
+
+
+
+def build_pdf_visit_selection_text(visits: list) -> str:
+    if not visits:
+        return "Não encontrei visitas concluídas recentes para gerar PDF."
+
+    lines = ["📄 Encontrei estas visitas recentes:", ""]
+
+    for idx, v in enumerate(visits, start=1):
+        client_name = v.client.name if getattr(v, "client", None) else f"Cliente {v.client_id}"
+        visit_date = v.date.strftime("%d/%m/%Y") if v.date else "—"
+        culture = v.culture or "—"
+        fenologia = v.fenologia_real or "—"
+
+        lines.append(f"{idx}. {visit_date} - {client_name} - {culture} - {fenologia}")
+
+    lines.append("")
+    lines.append("Responda com:")
+    lines.append("🔢 um número: 1")
+    lines.append("🔢 vários números: 1,3 ou 1 3 5")
+    lines.append("❌ CANCELAR para sair")
+
+    return "\n".join(lines)
+
+
+
+
+def parse_pdf_selection(text: str):
+    if not text:
+        return []
+
+    raw = text.strip()
+    parts = re.split(r"[,\s;]+", raw)
+
+    indexes = []
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if not part.isdigit():
+            return None
+        indexes.append(int(part) - 1)
+
+    # remove duplicados preservando ordem
+    seen = set()
+    unique_indexes = []
+    for idx in indexes:
+        if idx not in seen:
+            seen.add(idx)
+            unique_indexes.append(idx)
+
+    return unique_indexes
+
+
+
 def bind_telegram_consultant_by_code(chat_message, code: str):
     if not chat_message or not code:
         return None, "dados inválidos"
@@ -2344,8 +2603,8 @@ def is_week_schedule_request(text: str) -> bool:
 
 def get_week_date_range(reference_date=None):
     today = reference_date or _date.today()
-    start = today - datetime.timedelta(days=today.weekday())  # segunda
-    end = start + datetime.timedelta(days=6)  # domingo
+    start = today - _timedelta(days=today.weekday())
+    end = start + _timedelta(days=6)
     return start, end
 
 
