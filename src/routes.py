@@ -1208,6 +1208,68 @@ def telegram_webhook():
 
         message_text = (chat_message.text or chat_message.caption or "").strip()
 
+
+        # =========================================================
+        # Auto-vínculo Telegram
+        # =========================================================
+        current_binding = find_telegram_binding(chat_message)
+
+        if message_text.strip().lower() == "/start":
+            if current_binding:
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text=f"Olá, {current_binding.consultant.name}! Seu Telegram já está vinculado ao AgroCRM ✅"
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "telegram já vinculado",
+                    "binding": current_binding.to_dict(),
+                    "send_result": send_result,
+                }), 200
+
+            send_result = send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=(
+                    "Olá! Seu Telegram ainda não está vinculado ao AgroCRM.\n\n"
+                    "Envie o comando:\n"
+                    "/vincular SEU_CODIGO\n\n"
+                    "Exemplo:\n"
+                    "/vincular JHONAT-AB12"
+                )
+            )
+            return jsonify({
+                "ok": True,
+                "message": "aguardando vínculo",
+                "send_result": send_result,
+            }), 200
+
+        if message_text.strip().lower().startswith("/vincular "):
+            code = message_text.strip()[10:].strip()
+
+            binding, error = bind_telegram_consultant_by_code(chat_message, code)
+
+            if error:
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Código inválido. Verifique o código recebido e tente novamente."
+                )
+                return jsonify({
+                    "ok": False,
+                    "message": error,
+                    "send_result": send_result,
+                }), 400
+
+            send_result = send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=f"Telegram vinculado com sucesso ✅\nConsultor: {binding.consultant.name}"
+            )
+            return jsonify({
+                "ok": True,
+                "message": "vínculo realizado com sucesso",
+                "binding": binding.to_dict(),
+                "send_result": send_result,
+            }), 200
+
         if not message_text:
             send_telegram_message(
                 chat_id=chat_message.chat_id,
@@ -1217,6 +1279,53 @@ def telegram_webhook():
                 "ok": True,
                 "message": "mensagem sem texto/caption"
             }), 200
+
+
+
+        # =========================================================
+        # Agenda / visitas pendentes da semana
+        # =========================================================
+        if is_week_schedule_request(message_text):
+            if not consultant:
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text=(
+                        "Seu Telegram ainda não está vinculado a um consultor do AgroCRM.\n"
+                        "Use /start e depois /vincular SEU_CODIGO."
+                    )
+                )
+                return jsonify({
+                    "ok": False,
+                    "message": "consultor não vinculado",
+                    "send_result": send_result,
+                }), 400
+
+            week_visits = find_consultant_pending_visits_for_week(
+                consultant_id=consultant.id
+            )
+
+            response_text = build_week_schedule_text(
+                consultant_name=consultant.name,
+                visits=week_visits
+            )
+
+            send_result = send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=response_text
+            )
+
+            return jsonify({
+                "ok": True,
+                "message": "agenda semanal enviada",
+                "consultant": {
+                    "id": consultant.id,
+                    "name": consultant.name,
+                },
+                "visits_count": len(week_visits),
+                "response_text": response_text,
+                "send_result": send_result,
+            }), 200
+
 
 
         # =========================================================
@@ -2067,6 +2176,130 @@ def telegram_webhook():
             "error": str(e)
         }), 500
 
+
+
+def find_telegram_binding(chat_message):
+    if not chat_message:
+        return None
+
+    return TelegramContactBinding.query.filter_by(
+        telegram_chat_id=str(chat_message.chat_id),
+        is_active=True
+    ).first()
+
+
+def bind_telegram_consultant_by_code(chat_message, code: str):
+    if not chat_message or not code:
+        return None, "dados inválidos"
+
+    normalized_code = code.strip().upper()
+
+    consultant = Consultant.query.filter(
+        db.func.upper(Consultant.telegram_link_code) == normalized_code
+    ).first()
+
+    if not consultant:
+        return None, "código inválido"
+
+    existing = TelegramContactBinding.query.filter_by(
+        telegram_chat_id=str(chat_message.chat_id)
+    ).first()
+
+    if existing:
+        existing.telegram_user_id = str(chat_message.user_id) if chat_message.user_id else existing.telegram_user_id
+        existing.telegram_username = chat_message.user_name or existing.telegram_username
+        existing.display_name = chat_message.user_name or existing.display_name
+        existing.consultant_id = consultant.id
+        existing.is_active = True
+        db.session.commit()
+        return existing, None
+
+    binding = TelegramContactBinding(
+        telegram_chat_id=str(chat_message.chat_id),
+        telegram_user_id=str(chat_message.user_id) if chat_message.user_id else None,
+        telegram_username=chat_message.user_name or None,
+        display_name=chat_message.user_name or None,
+        consultant_id=consultant.id,
+        is_active=True
+    )
+
+    db.session.add(binding)
+    db.session.commit()
+    return binding, None
+
+
+def is_week_schedule_request(text: str) -> bool:
+    if not text:
+        return False
+
+    normalized = normalize_lookup_text(text)
+
+    triggers = [
+        "visitas pendentes dessa semana",
+        "visitas pendentes da semana",
+        "minhas visitas da semana",
+        "agenda da semana",
+        "visitas da semana",
+        "pendentes da semana",
+        "agenda semanal",
+    ]
+
+    return any(trigger in normalized for trigger in triggers)
+
+
+def get_week_date_range(reference_date=None):
+    today = reference_date or _date.today()
+    start = today - datetime.timedelta(days=today.weekday())  # segunda
+    end = start + datetime.timedelta(days=6)  # domingo
+    return start, end
+
+
+def find_consultant_pending_visits_for_week(consultant_id: int, reference_date=None, limit: int = 20):
+    if not consultant_id:
+        return []
+
+    start_date, end_date = get_week_date_range(reference_date)
+
+    visits = (
+        Visit.query
+        .filter(Visit.consultant_id == consultant_id)
+        .filter(Visit.status.in_(["planned", "pendente", "planejada", "planejado"]))
+        .filter(Visit.date >= start_date)
+        .filter(Visit.date <= end_date)
+        .order_by(Visit.date.asc())
+        .limit(limit)
+        .all()
+    )
+
+    return visits
+
+
+
+def build_week_schedule_text(consultant_name: str, visits: list) -> str:
+    start_date, end_date = get_week_date_range()
+
+    if not visits:
+        return (
+            f"📅 Agenda da semana de {consultant_name}\n"
+            f"Período: {start_date.isoformat()} até {end_date.isoformat()}\n\n"
+            "Nenhuma visita pendente encontrada para esta semana."
+        )
+
+    lines = [
+        f"📅 Agenda da semana de {consultant_name}",
+        f"Período: {start_date.isoformat()} até {end_date.isoformat()}",
+        "",
+    ]
+
+    for idx, visit in enumerate(visits, start=1):
+        client_name = visit.client.name if getattr(visit, "client", None) else f"Cliente {visit.client_id}"
+        recommendation = (visit.recommendation or "—").strip()
+        culture = visit.culture or "—"
+        visit_date = visit.date.isoformat() if visit.date else "—"
+
+        lines.append(f"{idx}. {visit_date} - {client_name} - {culture} - {recommendation}")
+
+    return "\n".join(lines)
 
 
 
