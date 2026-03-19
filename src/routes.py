@@ -101,9 +101,12 @@ from utils.r2_client import get_r2_client
 import json
 from difflib import SequenceMatcher
 
-from services.chatbot_service import ChatbotService, parse_chatbot_message, send_telegram_message
-
-
+from services.chatbot_service import (
+    ChatbotService,
+    parse_chatbot_message,
+    send_telegram_message,
+    send_telegram_document,
+)
 
 
 
@@ -1009,19 +1012,6 @@ def list_varieties():
     ]), 200
 
 
-# ============================================================
-# 👨‍🌾 CONSULTANTS — lista fixa (IDs estáveis 1..5)
-# ============================================================
-CONSULTANTS = [
-    {"id": 1, "name": "Jhonatan"},
-    {"id": 2, "name": "Felipe"},
-    {"id": 3, "name": "Everton"},
-    {"id": 4, "name": "Pedro"},
-    {"id": 5, "name": "Alexandre"},
-]
-
-CONSULTANT_IDS = {c["id"] for c in CONSULTANTS}
-
 @bp.route('/consultants', methods=['GET'])
 def list_consultants():
     return jsonify(CONSULTANTS), 200
@@ -1397,9 +1387,20 @@ def telegram_webhook():
                     state.status = "completed"
                     db.session.commit()
 
+                    state.visit_preview_json = json.dumps({
+                        "last_completed_visit_id": visit.id
+                    }, ensure_ascii=False)
+                    state.status = "awaiting_pdf_confirmation"
+                    db.session.commit()
+
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
-                        text=f"Visita atualizada com sucesso ✅\nID da visita: {visit.id}"
+                        text=(
+                            f"Visita atualizada com sucesso ✅\n"
+                            f"ID da visita: {visit.id}\n\n"
+                            f"📄 Deseja gerar o PDF desta visita?\n"
+                            f"Responda com SIM ou NÃO."
+                        )
                     )
 
                     return jsonify({
@@ -1447,9 +1448,20 @@ def telegram_webhook():
                     state.status = "completed"
                     db.session.commit()
 
+                    state.visit_preview_json = json.dumps({
+                        "last_completed_visit_id": new_visit.id
+                    }, ensure_ascii=False)
+                    state.status = "awaiting_pdf_confirmation"
+                    db.session.commit()
+
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
-                        text=f"Nova visita criada com sucesso ✅\nID da visita: {new_visit.id}"
+                        text=(
+                            f"Nova visita criada com sucesso ✅\n"
+                            f"ID da visita: {new_visit.id}\n\n"
+                            f"📄 Deseja gerar o PDF desta visita?\n"
+                            f"Responda com SIM ou NÃO."
+                        )
                     )
 
                     return jsonify({
@@ -1458,6 +1470,89 @@ def telegram_webhook():
                         "visit": new_visit.to_dict()
                     }), 201
 
+
+
+        # =========================================================
+        # Confirmação para gerar PDF da última visita concluída
+        # =========================================================
+        state = ChatbotConversationState.query.filter_by(
+            platform="telegram",
+            chat_id=chat_message.chat_id,
+            status="awaiting_pdf_confirmation"
+        ).first()
+
+        if state:
+            yes_no = parse_yes_no(message_text)
+
+            if yes_no is None:
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="📄 Resposta inválida. Responda com SIM ou NÃO."
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "resposta inválida para pdf"
+                }), 200
+
+            if yes_no is False:
+                state.status = "completed"
+                db.session.commit()
+
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Certo. PDF não gerado."
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "pdf não gerado"
+                }), 200
+
+            stored_data = json.loads(state.visit_preview_json or "{}")
+            visit_id = stored_data.get("last_completed_visit_id")
+
+            if not visit_id:
+                state.status = "completed"
+                db.session.commit()
+
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Não consegui identificar a última visita para gerar o PDF."
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "visit_id ausente para pdf"
+                }), 200
+
+            try:
+                buffer, filename = build_visit_pdf_file(visit_id)
+                pdf_bytes = buffer.getvalue()
+
+                send_result = send_telegram_document(
+                    chat_id=chat_message.chat_id,
+                    file_bytes=pdf_bytes,
+                    filename=filename,
+                    caption=f"📄 PDF da visita {visit_id}"
+                )
+
+                state.status = "completed"
+                db.session.commit()
+
+                return jsonify({
+                    "ok": True,
+                    "message": "pdf enviado",
+                    "visit_id": visit_id,
+                    "send_result": send_result,
+                }), 200
+
+            except Exception as e:
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text=f"Erro ao gerar o PDF da visita {visit_id}."
+                )
+                return jsonify({
+                    "ok": False,
+                    "error": str(e)
+                }), 500
 
 
         # =====================================================================================
@@ -3058,10 +3153,8 @@ def get_visits():
 
         for v in visits:
             client = Client.query.get(v.client_id)
-            consultant_name = next(
-                (c["name"] for c in CONSULTANTS if c["id"] == v.consultant_id),
-                None
-            )
+            consultant = Consultant.query.get(v.consultant_id) if v.consultant_id else None
+            consultant_name = consultant.name if consultant else None
 
             photos = []
             for p in v.photos:
@@ -3139,7 +3232,7 @@ def create_visit():
         return jsonify(message="propriedade não encontrada"), 404
     if plot_id and not Plot.query.get(plot_id):
         return jsonify(message="talhão não encontrado"), 404
-    if consultant_id and int(consultant_id) not in {c["id"] for c in CONSULTANTS}:
+    if consultant_id and not Consultant.query.get(int(consultant_id)):
         return jsonify(message="consultor não encontrado"), 404
 
     try:
@@ -3279,35 +3372,20 @@ def create_visit():
     return jsonify(message="visita criada", visit=v.to_dict()), 201
 
 
-
-
-@bp.route('/visits/<int:visit_id>/pdf', methods=['GET'])
-@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
-def export_visit_pdf(visit_id):
+def build_visit_pdf_file(visit_id: int):
     """
-    📄 Gera um PDF cumulativo moderno:
-    - Capa estilizada
-    - Visitas do ciclo
-    - Layout centralizado
-    - Fotos com compressão inteligente
+    Gera o mesmo PDF da visita e retorna:
+    - buffer (BytesIO)
+    - filename (str)
     """
-
-    # =====================================================
-    # 🔎 BUSCA DADOS PRINCIPAIS
-    # =====================================================
     visit = Visit.query.get_or_404(visit_id)
     client = Client.query.get(visit.client_id)
     property_ = Property.query.get(visit.property_id) if visit.property_id else None
     plot = Plot.query.get(visit.plot_id) if visit.plot_id else None
 
-    consultant_name = next(
-        (c["name"] for c in CONSULTANTS if c["id"] == visit.consultant_id),
-        f"Consultor {visit.consultant_id}" if visit.consultant_id else ""
-    )
+    consultant = Consultant.query.get(visit.consultant_id) if visit.consultant_id else None
+    consultant_name = consultant.name if consultant else (f"Consultor {visit.consultant_id}" if visit.consultant_id else "")
 
-    # =====================================================
-    # 🔎 BUSCA TODAS AS VISITAS DO CICLO
-    # =====================================================
     if visit.planting_id:
         visits_to_include = (
             Visit.query.filter(Visit.planting_id == visit.planting_id)
@@ -3324,10 +3402,6 @@ def export_visit_pdf(visit_id):
             .order_by(Visit.date.desc()).all()
         )
 
-    # =====================================================
-    # 🔎 FILTRO DE VISITAS COM FOTOS
-    # =====================================================
-    uploads_dir = ...
     filtered = []
     for v in visits_to_include:
         valid = [p for p in getattr(v, "photos", []) if getattr(p, "url", None)]
@@ -3335,39 +3409,26 @@ def export_visit_pdf(visit_id):
             v._valid_photos = valid
             filtered.append(v)
 
-    visits_to_include = filtered
+    visits_to_include = filtered[:MAX_VISITS]
 
-    # ✅ corta visitas (o PDF cumulativo é o que mais pesa)
-    visits_to_include = visits_to_include[:MAX_VISITS]
-
-
-
-
-    # =====================================================
-    # ✅ PRESERVAR QUEBRA DE LINHA NAS OBSERVAÇÕES
-    # =====================================================
     def nl2br(text: str) -> str:
         if not text:
             return ""
         t = text.replace("\r\n", "\n").replace("\r", "\n")
-        t = html_escape(t)  # evita quebrar markup no Paragraph
+        t = html_escape(t)
         return t.replace("\n", "<br/>")
 
-    # =====================================================
-    # 🖼️ LOGOS (rodapé em todas as páginas)
-    # =====================================================
     static_dir = os.path.join(os.path.dirname(__file__), "static")
-
     nutriverde_logo_path = os.path.join(static_dir, "nutriverde_logo_pdf.png")
 
     def slugify_variety(name: str) -> str:
         if not name:
             return ""
         s = unicodedata.normalize("NFD", name)
-        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")  # remove acento
+        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
         s = s.strip().lower()
-        s = re.sub(r"\s+", "_", s)          # espaços -> _
-        s = re.sub(r"[^a-z0-9_]+", "", s)   # limpa resto
+        s = re.sub(r"\s+", "_", s)
+        s = re.sub(r"[^a-z0-9_]+", "", s)
         return s
 
     variety_slug = slugify_variety(visit.variety or "")
@@ -3375,11 +3436,9 @@ def export_visit_pdf(visit_id):
 
     def draw_footer(canvas, doc):
         canvas.saveState()
-
         y = 22
         pad = 50
 
-        # Logo Variedade (esquerda) — menor
         if variety_slug and os.path.exists(variety_logo_path):
             try:
                 img = PILImage.open(variety_logo_path)
@@ -3391,7 +3450,6 @@ def export_visit_pdf(visit_id):
             except:
                 pass
 
-        # Logo Nutriverde (direita) — maior
         if os.path.exists(nutriverde_logo_path):
             try:
                 img = PILImage.open(nutriverde_logo_path)
@@ -3405,33 +3463,20 @@ def export_visit_pdf(visit_id):
 
         canvas.restoreState()
 
-    # =====================================================
-    # 📝 PREPARAÇÃO DO PDF
-    # =====================================================
     buffer = BytesIO()
-
-    # ✅ rastrear arquivos temporários para apagar no final
     temp_jpgs = []
 
-
     def smart_params(total_photos_all: int):
-        # Mais agressivo pra não matar o worker
         if total_photos_all <= 4:  return (1280, 75)
         if total_photos_all <= 8:  return (1200, 70)
         if total_photos_all <= 16: return (1100, 62)
         return (1000, 55)
 
     def download_to_temp(url: str, timeout=20, max_bytes=12_000_000):
-        """
-        Baixa a imagem para arquivo temporário com limite em bytes (MB).
-        - Primeiro tenta validar pelo Content-Length (quando existe)
-        - Se não tiver, conta bytes no stream.
-        """
         tmp = None
         try:
             req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urlopen(req, timeout=timeout) as r:
-                # ✅ 1) Se o servidor enviar Content-Length, valida antes
                 try:
                     cl = r.headers.get("Content-Length")
                     if cl and int(cl) > max_bytes:
@@ -3439,7 +3484,6 @@ def export_visit_pdf(visit_id):
                 except:
                     pass
 
-                # ✅ 2) Baixa contando bytes (vale para Content-Length ausente)
                 tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".img")
                 total = 0
 
@@ -3459,9 +3503,7 @@ def export_visit_pdf(visit_id):
 
                 tmp.close()
                 return tmp.name
-
         except Exception:
-            # garante limpeza se algo falhar no meio
             try:
                 if tmp and tmp.name:
                     tmp.close()
@@ -3471,14 +3513,9 @@ def export_visit_pdf(visit_id):
             return None
 
     def compress_to_jpeg_temp(src_path: str, max_px: int, quality: int):
-        """
-        Converte pra JPEG comprimido em /tmp e devolve o path final.
-        """
         try:
             img = PILImage.open(src_path)
             img = ImageOps.exif_transpose(img)
-
-            # thumbnail já reduz, sem explodir tanto RAM quanto load() + resize bruto
             img.thumbnail((max_px, max_px), PILImage.LANCZOS)
 
             out = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
@@ -3494,12 +3531,10 @@ def export_visit_pdf(visit_id):
         except Exception:
             return None
         finally:
-            # sempre remove o bruto baixado
             try:
                 os.remove(src_path)
             except:
                 pass
-
 
     def draw_dark_background(canvas, doc):
         canvas.saveState()
@@ -3512,7 +3547,6 @@ def export_visit_pdf(visit_id):
         canvas.saveState()
         canvas.setFillColor(colors.HexColor("#0E0E0E"))
         canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
-
         canvas.setFillColor(colors.HexColor("#00E676"))
         canvas.rect(0, 0, 28, A4[1], fill=True, stroke=False)
         canvas.restoreState()
@@ -3525,83 +3559,28 @@ def export_visit_pdf(visit_id):
     )
 
     styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="VisitTitleSmall", fontSize=12, leading=14, alignment=TA_CENTER, textColor=colors.HexColor("#BBF7D0"), spaceAfter=8))
+    styles.add(ParagraphStyle(name="VisitStageBig", fontSize=22, leading=26, alignment=TA_CENTER, textColor=colors.HexColor("#FFFFFF"), spaceAfter=14))
+    styles.add(ParagraphStyle(name="VisitDateCenter", fontSize=12, leading=14, alignment=TA_CENTER, textColor=colors.HexColor("#E0E0E0"), spaceAfter=14))
+    styles.add(ParagraphStyle(name="VisitSectionLabel", fontSize=14, leading=16, alignment=TA_CENTER, textColor=colors.HexColor("#A5D6A7"), spaceBefore=10, spaceAfter=4))
+    styles.add(ParagraphStyle(name="VisitSectionValue", fontSize=16, leading=20, alignment=TA_CENTER, textColor=colors.HexColor("#FFFFFF"), spaceAfter=14))
+    styles.add(ParagraphStyle(name="HrLine", alignment=TA_CENTER, fontSize=10, textColor=colors.HexColor("#333333"), spaceBefore=10, spaceAfter=16))
+    styles.add(ParagraphStyle(name="Caption", alignment=TA_CENTER, fontSize=9, textColor=colors.HexColor("#BDBDBD"), spaceBefore=4, spaceAfter=10))
+    styles.add(ParagraphStyle(name="Footer", alignment=TA_CENTER, fontSize=9, textColor=colors.HexColor("#9E9E9E"), spaceBefore=20))
 
-    # =====================================================
-    # 🎨 ESTILOS PERSONALIZADOS
-    # =====================================================
-    styles.add(ParagraphStyle(
-        name="VisitTitleSmall",
-        fontSize=12, leading=14, alignment=TA_CENTER,
-        textColor=colors.HexColor("#BBF7D0"), spaceAfter=8
-    ))
-    styles.add(ParagraphStyle(
-        name="VisitStageBig",
-        fontSize=22, leading=26, alignment=TA_CENTER,
-        textColor=colors.HexColor("#FFFFFF"), spaceAfter=14
-    ))
-    styles.add(ParagraphStyle(
-        name="VisitDateCenter",
-        fontSize=12, leading=14, alignment=TA_CENTER,
-        textColor=colors.HexColor("#E0E0E0"), spaceAfter=14
-    ))
-    styles.add(ParagraphStyle(
-        name="VisitSectionLabel",
-        fontSize=14, leading=16, alignment=TA_CENTER,
-        textColor=colors.HexColor("#A5D6A7"), spaceBefore=10, spaceAfter=4
-    ))
-    styles.add(ParagraphStyle(
-        name="VisitSectionValue",
-        fontSize=16, leading=20, alignment=TA_CENTER,
-        textColor=colors.HexColor("#FFFFFF"), spaceAfter=14
-    ))
-    styles.add(ParagraphStyle(
-        name="HrLine",
-        alignment=TA_CENTER, fontSize=10,
-        textColor=colors.HexColor("#333333"),
-        spaceBefore=10, spaceAfter=16
-    ))
-    styles.add(ParagraphStyle(
-        name="Caption",
-        alignment=TA_CENTER, fontSize=9,
-        textColor=colors.HexColor("#BDBDBD"),
-        spaceBefore=4, spaceAfter=10
-    ))
-    styles.add(ParagraphStyle(
-        name="Footer",
-        alignment=TA_CENTER, fontSize=9,
-        textColor=colors.HexColor("#9E9E9E"),
-        spaceBefore=20
-    ))
-
-    # =====================================================
-    # 📘 CAPA COMPLETA
-    # =====================================================
     story = []
     story.append(Spacer(1, 80))
 
-    title_style = ParagraphStyle(
-        name="CoverTitle",
-        fontSize=22, leading=26, alignment=TA_CENTER,
-        textColor=colors.HexColor("#E0F2F1"), spaceAfter=6
-    )
-    subtitle_style = ParagraphStyle(
-        name="CoverSubtitle",
-        fontSize=14, leading=18, alignment=TA_CENTER,
-        textColor=colors.HexColor("#80CBC4"), spaceAfter=25
-    )
+    title_style = ParagraphStyle(name="CoverTitle", fontSize=22, leading=26, alignment=TA_CENTER, textColor=colors.HexColor("#E0F2F1"), spaceAfter=6)
+    subtitle_style = ParagraphStyle(name="CoverSubtitle", fontSize=14, leading=18, alignment=TA_CENTER, textColor=colors.HexColor("#80CBC4"), spaceAfter=25)
 
     story.append(Paragraph("RELATÓRIO TÉCNICO DE", title_style))
     story.append(Paragraph("ACOMPANHAMENTO", title_style))
     story.append(Paragraph("Ciclo Fenológico", subtitle_style))
 
-    client_style = ParagraphStyle(
-        name="ClientBig",
-        fontSize=22, leading=28, alignment=TA_CENTER,
-        textColor=colors.HexColor("#FFFFFF"), spaceAfter=35
-    )
+    client_style = ParagraphStyle(name="ClientBig", fontSize=22, leading=28, alignment=TA_CENTER, textColor=colors.HexColor("#FFFFFF"), spaceAfter=35)
     story.append(Paragraph((client.name or "Cliente").strip(), client_style))
 
-    # Logo do PDF (NutriCRM)
     try:
         logo_path = os.path.join(static_dir, "nutricrm_logo_pdf.png")
         if os.path.exists(logo_path):
@@ -3613,14 +3592,8 @@ def export_visit_pdf(visit_id):
     except:
         pass
 
-    info_label = ParagraphStyle(
-        name="InfoLabel", fontSize=12, alignment=TA_LEFT,
-        textColor=colors.HexColor("#A5D6A7")
-    )
-    info_value = ParagraphStyle(
-        name="InfoValue", fontSize=12, alignment=TA_LEFT,
-        textColor=colors.HexColor("#E0E0E0"), spaceAfter=6
-    )
+    info_label = ParagraphStyle(name="InfoLabel", fontSize=12, alignment=TA_LEFT, textColor=colors.HexColor("#A5D6A7"))
+    info_value = ParagraphStyle(name="InfoValue", fontSize=12, alignment=TA_LEFT, textColor=colors.HexColor("#E0E0E0"), spaceAfter=6)
 
     def add_info(label, value):
         if value:
@@ -3634,26 +3607,19 @@ def export_visit_pdf(visit_id):
     add_info("Consultor:", consultant_name or "")
 
     if visits_to_include:
-        start_date = visits_to_include[-1].date.strftime("%d/%m/%Y")  # mais antigo
-        end_date   = visits_to_include[0].date.strftime("%d/%m/%Y")   # mais recente
+        start_date = visits_to_include[-1].date.strftime("%d/%m/%Y")
+        end_date = visits_to_include[0].date.strftime("%d/%m/%Y")
     else:
         start_date = end_date = visit.date.strftime("%d/%m/%Y")
-
 
     add_info("Período de acompanhamento:", f"{start_date} → {end_date}")
 
     story.append(Spacer(1, 40))
     story.append(PageBreak())
 
-
-
-    # =====================================================
-    # 🟢 VISITAS (ORDEM AJUSTADA)
-    # =====================================================
     total_visits = len(visits_to_include)
-    for pos, v in enumerate(visits_to_include):  # pos começa em 0
-        idx = total_visits - pos                 # 4,3,2,1 (ou 5,4,3,2,1)
-
+    for pos, v in enumerate(visits_to_include):
+        idx = total_visits - pos
 
         story.append(Paragraph(f"VISITA {idx}", styles["VisitTitleSmall"]))
         story.append(Paragraph(v.fenologia_real or "—", styles["VisitStageBig"]))
@@ -3663,7 +3629,6 @@ def export_visit_pdf(visit_id):
         except:
             dtext = str(v.date)
         story.append(Paragraph(dtext, styles["VisitDateCenter"]))
-
         story.append(Spacer(1, 20))
 
         if v.recommendation:
@@ -3674,7 +3639,6 @@ def export_visit_pdf(visit_id):
 
         photos = list(getattr(v, "_valid_photos", []) or [])
         if photos:
-            # 🔻 limita fotos por visita (economia RAM)
             photos = photos[:MAX_PHOTOS_V]
             total = len(photos)
 
@@ -3682,11 +3646,7 @@ def export_visit_pdf(visit_id):
             max_width = 220 if cols == 1 else 160
             col_width = (A4[0] - 100) / cols
 
-            # total global (para decidir compressão)
-            total_all = sum(
-                min(len(getattr(x, "photos", []) or []), MAX_PHOTOS_V)
-                for x in visits_to_include
-            )
+            total_all = sum(min(len(getattr(x, "photos", []) or []), MAX_PHOTOS_V) for x in visits_to_include)
             max_px, quality = smart_params(total_all)
 
             row = []
@@ -3698,22 +3658,16 @@ def export_visit_pdf(visit_id):
                     continue
 
                 try:
-                    # 1) baixa pra temp
                     src_path = download_to_temp(photo_url, timeout=20, max_bytes=12_000_000)
                     if not src_path:
-                        print(f"⚠️ PDF: download bloqueado/maior que limite url={photo_url}")
                         continue
 
-                    # 2) comprime pra jpeg em temp
                     jpg_path = compress_to_jpeg_temp(src_path, max_px=max_px, quality=quality)
                     if not jpg_path:
-                        print(f"⚠️ PDF: falha compress url={photo_url}")
                         continue
 
                     temp_jpgs.append(jpg_path)
 
-
-                    # 3) pegar aspect
                     probe = PILImage.open(jpg_path)
                     w, h = probe.size
                     try:
@@ -3722,11 +3676,8 @@ def export_visit_pdf(visit_id):
                         pass
 
                     aspect = (h / w) if w else 1
-
-                    # 4) passa PATH pro ReportLab
                     img_obj = Image(jpg_path, width=max_width, height=max_width * aspect)
 
-                    # caption
                     base_caption = getattr(photo, "caption", "") or ""
                     lat = getattr(photo, "latitude", None)
                     lon = getattr(photo, "longitude", None)
@@ -3738,7 +3689,6 @@ def export_visit_pdf(visit_id):
                     final_caption = html_escape(base_caption)
                     if gps_caption:
                         final_caption += f"<br/><small>{html_escape(gps_caption)}</small>"
-
 
                     caption_par = Paragraph(final_caption, styles["Caption"])
 
@@ -3758,24 +3708,18 @@ def export_visit_pdf(visit_id):
                         row = []
                         count = 0
 
-
-                except Exception as e:
-                    print(f"⚠️ PDF: erro processando url={photo_url} erro={e}")
+                except Exception:
                     continue
 
-
-            # ✅ AQUI É O LUGAR CERTO (fora do for das fotos)
             if pos < total_visits - 1:
-                story.append(PageBreak())       
+                story.append(PageBreak())
 
-    # Rodapé texto final
     story.append(Paragraph("<b>NutriCRM</b>", styles["Footer"]))
     story.append(Paragraph("Relatório cumulativo — ciclo fenológico", styles["Footer"]))
 
     doc.build(story, onFirstPage=draw_cover_background, onLaterPages=draw_dark_background)
     buffer.seek(0)
 
-    # ✅ limpa temporários do /tmp
     for p in temp_jpgs:
         try:
             os.remove(p)
@@ -3783,11 +3727,21 @@ def export_visit_pdf(visit_id):
             pass
 
     filename = f"{client.name if client else 'Cliente'} - {visit.variety or ''} - Relatório.pdf"
-    return send_file(buffer, mimetype="application/pdf", as_attachment=True, download_name=filename)
+    return buffer, filename
 
 
 
 
+@bp.route('/visits/<int:visit_id>/pdf', methods=['GET'])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
+def export_visit_pdf(visit_id):
+    buffer, filename = build_visit_pdf_file(visit_id)
+    return send_file(
+        buffer,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=filename
+    )
 
 
 
