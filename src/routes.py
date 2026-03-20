@@ -10,7 +10,6 @@ import datetime
 from io import BytesIO
 from urllib.request import Request, urlopen
 from datetime import date as _date, datetime as _dt, timedelta as _timedelta
-from openai import openai
 
 # =========================
 # Third-party
@@ -108,6 +107,14 @@ from services.chatbot_service import (
     send_telegram_message,
     send_telegram_document,
 )
+import io
+import subprocess
+from openai import OpenAI
+
+
+
+
+
 
 
 
@@ -1251,9 +1258,25 @@ def telegram_webhook():
                     "error": download_error,
                 }), 200
 
-            transcript_text, transcript_error = transcribe_audio_bytes(
+            wav_bytes, convert_error = convert_audio_bytes_to_wav(
                 audio_bytes=audio_bytes,
-                filename=audio_info["filename"],
+                input_suffix=audio_info["suffix"],
+            )
+
+            if convert_error or not wav_bytes:
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Recebi seu áudio, mas não consegui converter para transcrição."
+                )
+                return jsonify({
+                    "ok": False,
+                    "message": "falha na conversão do áudio",
+                    "error": convert_error,
+                }), 200
+
+            transcript_text, transcript_error = transcribe_audio_bytes(
+                audio_bytes=wav_bytes,
+                filename="audio.wav",
             )
 
             if transcript_error or not transcript_text:
@@ -2596,6 +2619,7 @@ def extract_telegram_audio_info(payload: dict):
         return {
             "file_id": voice.get("file_id"),
             "filename": "voice.ogg",
+            "suffix": ".ogg",
             "mime_type": voice.get("mime_type") or "audio/ogg",
             "kind": "voice",
         }
@@ -2603,9 +2627,11 @@ def extract_telegram_audio_info(payload: dict):
     audio = message.get("audio")
     if audio and audio.get("file_id"):
         filename = audio.get("file_name") or "audio.mp3"
+        suffix = os.path.splitext(filename)[1] or ".mp3"
         return {
             "file_id": audio.get("file_id"),
             "filename": filename,
+            "suffix": suffix,
             "mime_type": audio.get("mime_type") or "audio/mpeg",
             "kind": "audio",
         }
@@ -2614,17 +2640,16 @@ def extract_telegram_audio_info(payload: dict):
 
 
 
-def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.ogg"):
+def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.wav"):
     """
     Transcreve áudio usando OpenAI.
     Retorna: (texto_transcrito, erro)
     """
     try:
-        client = OpenAI()  # usa OPENAI_API_KEY do ambiente
+        client = OpenAI()  # usa OPENAI_API_KEY
 
-        import io
         audio_file = io.BytesIO(audio_bytes)
-        audio_file.name = filename  # importante para o backend identificar o tipo
+        audio_file.name = filename
 
         transcript = client.audio.transcriptions.create(
             model="gpt-4o-mini-transcribe",
@@ -2642,6 +2667,57 @@ def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.ogg"):
     except Exception as e:
         return None, str(e)
 
+
+
+def convert_audio_bytes_to_wav(audio_bytes: bytes, input_suffix: str = ".ogg"):
+    """
+    Converte áudio recebido em bytes para WAV usando ffmpeg.
+    Retorna: (wav_bytes, erro)
+    """
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=input_suffix) as src:
+            src.write(audio_bytes)
+            src_path = src.name
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as dst:
+            dst_path = dst.name
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", src_path,
+            "-ar", "16000",
+            "-ac", "1",
+            dst_path,
+        ]
+
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120
+        )
+
+        if result.returncode != 0:
+            return None, result.stderr.decode("utf-8", errors="ignore")
+
+        with open(dst_path, "rb") as f:
+            wav_bytes = f.read()
+
+        return wav_bytes, None
+
+    except Exception as e:
+        return None, str(e)
+
+    finally:
+        try:
+            os.remove(src_path)
+        except:
+            pass
+        try:
+            os.remove(dst_path)
+        except:
+            pass
 
 
 
