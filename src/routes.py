@@ -1296,86 +1296,62 @@ def telegram_webhook():
             }), 200
 
 
-        # =========================================================
-        # Escolha da(s) visita(s) para gerar PDF
-        # =========================================================
-        state = ChatbotConversationState.query.filter_by(
-            platform="telegram",
-            chat_id=chat_message.chat_id,
-            status="awaiting_pdf_visit_selection"
-        ).first()
+    
 
-        if state:
-            selected_indexes = parse_pdf_selection(message_text)
-
-            if selected_indexes is None or not selected_indexes:
+        # =========================================================
+        # PDF da última visita
+        # =========================================================
+        if is_last_pdf_request(message_text):
+            if not consultant:
                 send_result = send_telegram_message(
                     chat_id=chat_message.chat_id,
-                    text="Opção inválida. Responda com um número ou vários, como 1,3 ou 1 3 5."
-                )
-                return jsonify({
-                    "ok": True,
-                    "message": "opção inválida para pdf",
-                    "send_result": send_result,
-                }), 200
-
-            pdf_candidates = json.loads(state.pending_visit_suggestions_json or "[]")
-
-            invalid = [idx for idx in selected_indexes if idx < 0 or idx >= len(pdf_candidates)]
-            if invalid:
-                send_result = send_telegram_message(
-                    chat_id=chat_message.chat_id,
-                    text="Uma ou mais opções são inválidas. Revise os números e tente novamente."
-                )
-                return jsonify({
-                    "ok": True,
-                    "message": "índices inválidos para pdf",
-                    "send_result": send_result,
-                }), 200
-
-            results = []
-            sent_count = 0
-
-            for idx in selected_indexes:
-                selected = pdf_candidates[idx]
-                visit_id = selected.get("id")
-
-                try:
-                    buffer, filename = build_visit_pdf_file(visit_id)
-                    pdf_bytes = buffer.getvalue()
-
-                    send_result = send_telegram_document(
-                        chat_id=chat_message.chat_id,
-                        file_bytes=pdf_bytes,
-                        filename=filename,
-                        caption=f"📄 PDF da visita {visit_id}"
+                    text=(
+                        "Seu Telegram ainda não está vinculado a um consultor do AgroCRM.\n"
+                        "Use /start e depois /vincular SEU_CODIGO."
                     )
+                )
+                return jsonify({
+                    "ok": False,
+                    "message": "consultor não vinculado",
+                    "send_result": send_result,
+                }), 400
 
-                    results.append({
-                        "visit_id": visit_id,
-                        "send_result": send_result,
-                    })
+            last_visit = find_last_completed_visit_for_consultant(consultant.id)
 
-                    if send_result.get("ok"):
-                        sent_count += 1
+            if not last_visit:
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Não encontrei nenhuma visita concluída recente para gerar PDF."
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "nenhuma visita concluída encontrada",
+                    "send_result": send_result,
+                }), 200
 
-                except Exception as e:
-                    results.append({
-                        "visit_id": visit_id,
-                        "error": str(e),
-                    })
+            try:
+                buffer, filename = build_visit_pdf_file(last_visit.id)
+                pdf_bytes = buffer.getvalue()
 
-            state.status = "completed"
-            db.session.commit()
+                send_result = send_telegram_document(
+                    chat_id=chat_message.chat_id,
+                    file_bytes=pdf_bytes,
+                    filename=filename,
+                    caption=f"📄 PDF da última visita ({last_visit.id})"
+                )
 
-            return jsonify({
-                "ok": True,
-                "message": "pdf(s) processado(s)",
-                "requested_count": len(selected_indexes),
-                "sent_count": sent_count,
-                "results": results,
-            }), 200
+                return jsonify({
+                    "ok": True,
+                    "message": "pdf da última visita enviado",
+                    "visit_id": last_visit.id,
+                    "send_result": send_result,
+                }), 200
 
+            except Exception as e:
+                return jsonify({
+                    "ok": False,
+                    "error": str(e)
+                }), 500
 
 
         # =========================================================
@@ -1481,6 +1457,88 @@ def telegram_webhook():
                 "visits_count": len(recent_visits),
                 "response_text": response_text,
                 "send_result": send_result,
+            }), 200
+
+
+
+        # =========================================================
+        # Escolha da(s) visita(s) para gerar PDF
+        # =========================================================
+        state = ChatbotConversationState.query.filter_by(
+            platform="telegram",
+            chat_id=chat_message.chat_id,
+            status="awaiting_pdf_visit_selection"
+        ).first()
+
+        if state:
+            selected_indexes = parse_pdf_selection(message_text)
+
+            if selected_indexes is None or not selected_indexes:
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Opção inválida. Responda com um número ou vários, como 1,3 ou 1 3 5."
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "opção inválida para pdf",
+                    "send_result": send_result,
+                }), 200
+
+            pdf_candidates = json.loads(state.pending_visit_suggestions_json or "[]")
+
+            invalid = [idx for idx in selected_indexes if idx < 0 or idx >= len(pdf_candidates)]
+            if invalid:
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Uma ou mais opções são inválidas. Revise os números e tente novamente."
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "índices inválidos para pdf",
+                    "send_result": send_result,
+                }), 200
+
+            results = []
+            sent_count = 0
+
+            for idx in selected_indexes:
+                selected = pdf_candidates[idx]
+                visit_id = selected.get("id")
+
+                try:
+                    buffer, filename = build_visit_pdf_file(visit_id)
+                    pdf_bytes = buffer.getvalue()
+
+                    send_result = send_telegram_document(
+                        chat_id=chat_message.chat_id,
+                        file_bytes=pdf_bytes,
+                        filename=filename,
+                        caption=f"📄 PDF da visita {visit_id}"
+                    )
+
+                    results.append({
+                        "visit_id": visit_id,
+                        "send_result": send_result,
+                    })
+
+                    if send_result.get("ok"):
+                        sent_count += 1
+
+                except Exception as e:
+                    results.append({
+                        "visit_id": visit_id,
+                        "error": str(e),
+                    })
+
+            state.status = "completed"
+            db.session.commit()
+
+            return jsonify({
+                "ok": True,
+                "message": "pdf(s) processado(s)",
+                "requested_count": len(selected_indexes),
+                "sent_count": sent_count,
+                "results": results,
             }), 200
 
 
@@ -2910,6 +2968,27 @@ def is_valid_fenologia(value: str) -> bool:
             return True
 
     return False
+
+
+
+def is_last_pdf_request(text: str) -> bool:
+    if not text:
+        return False
+
+    normalized = normalize_lookup_text(text)
+
+    triggers = [
+        "pdf da ultima visita",
+        "pdf da última visita",
+        "pdf ultima visita",
+        "ultimo pdf",
+        "último pdf",
+        "pdf da visita mais recente",
+        "me manda o pdf da ultima visita",
+        "me manda o pdf da última visita",
+    ]
+
+    return any(trigger in normalized for trigger in triggers)
 
 
 def find_pending_visits(
