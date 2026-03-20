@@ -10,6 +10,7 @@ import datetime
 from io import BytesIO
 from urllib.request import Request, urlopen
 from datetime import date as _date, datetime as _dt, timedelta as _timedelta
+from openai import openai
 
 # =========================
 # Third-party
@@ -1233,11 +1234,11 @@ def telegram_webhook():
 
 
 
-        audio_file_id = extract_telegram_audio_file_id(payload)
+        audio_info = extract_telegram_audio_info(payload)
 
         # Se não veio texto/caption, mas veio áudio, tenta transcrever
-        if not message_text and audio_file_id:
-            audio_bytes, download_error = download_telegram_file_bytes(audio_file_id)
+        if not message_text and audio_info:
+            audio_bytes, download_error = download_telegram_file_bytes(audio_info["file_id"])
 
             if download_error or not audio_bytes:
                 send_telegram_message(
@@ -1250,12 +1251,15 @@ def telegram_webhook():
                     "error": download_error,
                 }), 200
 
-            transcript_text, transcript_error = transcribe_audio_bytes(audio_bytes)
+            transcript_text, transcript_error = transcribe_audio_bytes(
+                audio_bytes=audio_bytes,
+                filename=audio_info["filename"],
+            )
 
             if transcript_error or not transcript_text:
                 send_telegram_message(
                     chat_id=chat_message.chat_id,
-                    text="Recebi seu áudio, mas ainda não consegui transcrever."
+                    text="Recebi seu áudio, mas não consegui transcrever. Tente novamente ou envie em texto."
                 )
                 return jsonify({
                     "ok": False,
@@ -2581,24 +2585,62 @@ def find_telegram_binding(chat_message):
 
 
 
-def extract_telegram_audio_file_id(payload: dict):
+def extract_telegram_audio_info(payload: dict):
     if not payload:
         return None
 
     message = payload.get("message") or {}
-    voice = message.get("voice") or {}
-    audio = message.get("audio") or {}
 
-    return voice.get("file_id") or audio.get("file_id")
+    voice = message.get("voice")
+    if voice and voice.get("file_id"):
+        return {
+            "file_id": voice.get("file_id"),
+            "filename": "voice.ogg",
+            "mime_type": voice.get("mime_type") or "audio/ogg",
+            "kind": "voice",
+        }
+
+    audio = message.get("audio")
+    if audio and audio.get("file_id"):
+        filename = audio.get("file_name") or "audio.mp3"
+        return {
+            "file_id": audio.get("file_id"),
+            "filename": filename,
+            "mime_type": audio.get("mime_type") or "audio/mpeg",
+            "kind": "audio",
+        }
+
+    return None
 
 
 
-def transcribe_audio_bytes(audio_bytes: bytes):
+def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.ogg"):
     """
-    Stub temporário.
-    Depois você troca pela transcrição real.
+    Transcreve áudio usando OpenAI.
+    Retorna: (texto_transcrito, erro)
     """
-    return None, "transcrição ainda não implementada"
+    try:
+        client = OpenAI()  # usa OPENAI_API_KEY do ambiente
+
+        import io
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = filename  # importante para o backend identificar o tipo
+
+        transcript = client.audio.transcriptions.create(
+            model="gpt-4o-mini-transcribe",
+            file=audio_file,
+        )
+
+        text = getattr(transcript, "text", None) or ""
+        text = text.strip()
+
+        if not text:
+            return None, "transcrição vazia"
+
+        return text, None
+
+    except Exception as e:
+        return None, str(e)
 
 
 
