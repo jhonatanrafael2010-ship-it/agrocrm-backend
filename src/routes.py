@@ -1113,16 +1113,49 @@ def parse_date_flexible(value: str):
     if not value:
         return None
 
-    value = value.strip()
+    raw = value.strip()
+    normalized = normalize_lookup_text(raw)
+    today = _date.today()
 
-    match_br = re.match(r"^(\d{2})/(\d{2})/(\d{4})$", value)
+    if normalized == "hoje":
+        return today.isoformat()
+
+    if normalized in ("amanha", "amanhã"):
+        return (today + _timedelta(days=1)).isoformat()
+
+    # só dia do mês atual, ex: "15"
+    if re.match(r"^\d{1,2}$", raw):
+        day = int(raw)
+        try:
+            return _date(today.year, today.month, day).isoformat()
+        except ValueError:
+            return None
+
+    # formato DD/MM/YYYY
+    match_br = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", raw)
     if match_br:
         dd, mm, yyyy = match_br.groups()
-        return f"{yyyy}-{mm}-{dd}"
+        try:
+            return _date(int(yyyy), int(mm), int(dd)).isoformat()
+        except ValueError:
+            return None
 
-    match_iso = re.match(r"^(20\d{2})-(\d{2})-(\d{2})$", value)
+    # formato DD/MM (assume ano atual)
+    match_br_short = re.match(r"^(\d{1,2})/(\d{1,2})$", raw)
+    if match_br_short:
+        dd, mm = match_br_short.groups()
+        try:
+            return _date(today.year, int(mm), int(dd)).isoformat()
+        except ValueError:
+            return None
+
+    # formato YYYY-MM-DD
+    match_iso = re.match(r"^(20\d{2})-(\d{2})-(\d{2})$", raw)
     if match_iso:
-        return value
+        try:
+            return _date.fromisoformat(raw).isoformat()
+        except ValueError:
+            return None
 
     return None
 
@@ -1197,6 +1230,45 @@ def telegram_webhook():
             }), 200
 
         message_text = (chat_message.text or chat_message.caption or "").strip()
+
+
+
+        audio_file_id = extract_telegram_audio_file_id(payload)
+
+        # Se não veio texto/caption, mas veio áudio, tenta transcrever
+        if not message_text and audio_file_id:
+            audio_bytes, download_error = download_telegram_file_bytes(audio_file_id)
+
+            if download_error or not audio_bytes:
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Recebi seu áudio, mas não consegui baixar para transcrever."
+                )
+                return jsonify({
+                    "ok": False,
+                    "message": "falha ao baixar áudio",
+                    "error": download_error,
+                }), 200
+
+            transcript_text, transcript_error = transcribe_audio_bytes(audio_bytes)
+
+            if transcript_error or not transcript_text:
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Recebi seu áudio, mas ainda não consegui transcrever."
+                )
+                return jsonify({
+                    "ok": False,
+                    "message": "falha na transcrição",
+                    "error": transcript_error,
+                }), 200
+
+            message_text = transcript_text.strip()
+
+            send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=f"🎤 Áudio transcrito:\n{message_text}"
+            )
 
 
         # =========================================================
@@ -1871,7 +1943,7 @@ def telegram_webhook():
 
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
-                        text="📅 Informe a data da visita de plantio.\nExemplo: 24/02/2026"
+                        text="📅 Informe a data da visita.\nExemplos: hoje, amanhã, 15, 24/02/2026"
                     )
 
                     return jsonify({
@@ -1995,7 +2067,7 @@ def telegram_webhook():
                 if not parsed_date:
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
-                        text="Data inválida. Envie no formato 24/02/2026 ou 2026-02-24."
+                        text="Data inválida. Envie algo como: hoje, amanhã, 15, 24/02/2026 ou 2026-02-24."
                     )
                     return jsonify({
                         "ok": True,
@@ -2506,6 +2578,59 @@ def find_telegram_binding(chat_message):
         telegram_chat_id=str(chat_message.chat_id),
         is_active=True
     ).first()
+
+
+
+def extract_telegram_audio_file_id(payload: dict):
+    if not payload:
+        return None
+
+    message = payload.get("message") or {}
+    voice = message.get("voice") or {}
+    audio = message.get("audio") or {}
+
+    return voice.get("file_id") or audio.get("file_id")
+
+
+
+def transcribe_audio_bytes(audio_bytes: bytes):
+    """
+    Stub temporário.
+    Depois você troca pela transcrição real.
+    """
+    return None, "transcrição ainda não implementada"
+
+
+
+
+def download_telegram_file_bytes(file_id: str):
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token or not file_id:
+        return None, "token ou file_id ausente"
+
+    try:
+        # 1) pega file_path
+        get_file_url = f"https://api.telegram.org/bot{token}/getFile"
+        resp = requests.get(get_file_url, params={"file_id": file_id}, timeout=30)
+        data = resp.json()
+
+        if not resp.ok or not data.get("ok"):
+            return None, f"erro ao obter file_path: {data}"
+
+        file_path = data["result"]["file_path"]
+
+        # 2) baixa o arquivo
+        download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+        file_resp = requests.get(download_url, timeout=60)
+
+        if not file_resp.ok:
+            return None, f"erro ao baixar arquivo: status {file_resp.status_code}"
+
+        return file_resp.content, None
+
+    except Exception as e:
+        return None, str(e)
+
 
 
 def is_pdf_request(text: str) -> bool:
