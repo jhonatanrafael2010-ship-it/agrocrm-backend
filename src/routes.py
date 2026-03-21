@@ -2909,7 +2909,7 @@ def get_week_date_range(reference_date=None):
     return start, end
 
 
-def find_consultant_pending_visits_for_week(consultant_id: int, reference_date=None, limit: int = 20):
+def find_consultant_pending_visits_for_week(consultant_id: int, reference_date=None, limit: int = 50):
     if not consultant_id:
         return []
 
@@ -2918,10 +2918,10 @@ def find_consultant_pending_visits_for_week(consultant_id: int, reference_date=N
     visits = (
         Visit.query
         .filter(Visit.consultant_id == consultant_id)
-        .filter(Visit.status.in_(["planned", "pendente", "planejada", "planejado"]))
         .filter(Visit.date >= start_date)
         .filter(Visit.date <= end_date)
-        .order_by(Visit.date.asc())
+        .filter(Visit.status != "done")
+        .order_by(Visit.date.asc(), Visit.id.asc())
         .limit(limit)
         .all()
     )
