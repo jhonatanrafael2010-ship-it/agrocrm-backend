@@ -2695,33 +2695,27 @@ def telegram_webhook():
             current_state=current_state
         )
 
-        if ai_result:
+        if ai_result and ai_result.get("confidence") in ("high", "medium"):
             ai_intent = ai_result.get("intent")
 
-            # agenda da semana
             if ai_intent == "week_schedule_request":
                 message_text = "agenda da semana"
 
-            # pdf última visita
             elif ai_intent == "pdf_last_visit":
                 message_text = "pdf da última visita"
 
-            # pdf recentes
             elif ai_intent == "pdf_recent_visits":
                 message_text = "gerar pdf"
 
-            # confirmar
             elif ai_intent == "confirm":
                 message_text = "CONFIRMAR"
 
-            # cancelar
             elif ai_intent == "cancel":
                 message_text = "CANCELAR"
 
-            # editar resumo
             elif ai_intent == "edit_summary":
                 field = ai_result.get("field")
-                value = ai_result.get("value")
+                value = (ai_result.get("value") or "").strip()
 
                 if field and value:
                     field_map = {
@@ -2736,17 +2730,42 @@ def telegram_webhook():
                     if prefix:
                         message_text = f"{prefix} {value}"
 
-            # lançar visita da agenda
             elif ai_intent == "launch_week_visit":
                 visit_index = ai_result.get("visit_index")
                 if visit_index:
                     message_text = f"LANCAR VISITA {visit_index}"
 
-            # concluir visita da agenda
             elif ai_intent == "complete_week_visit":
                 visit_index = ai_result.get("visit_index")
                 if visit_index:
                     message_text = f"CONCLUIR VISITA {visit_index}"
+
+            elif ai_intent == "create_visit_like_message":
+                parsed_visit = ai_result.get("parsed_visit") or {}
+
+                ai_parts = []
+                if parsed_visit.get("client_name"):
+                    ai_parts.append(f"cliente {parsed_visit['client_name']}")
+                if parsed_visit.get("property_name"):
+                    ai_parts.append(f"fazenda {parsed_visit['property_name']}")
+                if parsed_visit.get("plot_name"):
+                    ai_parts.append(f"talhao {parsed_visit['plot_name']}")
+                if parsed_visit.get("culture"):
+                    ai_parts.append(str(parsed_visit["culture"]))
+                if parsed_visit.get("fenologia_real"):
+                    ai_parts.append(str(parsed_visit["fenologia_real"]))
+                if parsed_visit.get("date"):
+                    ai_parts.append(str(parsed_visit["date"]))
+                if parsed_visit.get("recommendation"):
+                    ai_parts.append(str(parsed_visit["recommendation"]))
+
+                if ai_parts:
+                    message_text = " ".join(ai_parts)
+
+
+
+
+
 
 
 
@@ -2913,6 +2932,14 @@ def find_telegram_binding(chat_message):
         is_active=True
     ).first()
 
+
+def compact_user_text_for_ai(text: str) -> str:
+    if not text:
+        return ""
+
+    text = text.replace("\r", " ").replace("\n", " ").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
 
 
 def extract_telegram_audio_info(payload: dict):
@@ -3194,16 +3221,43 @@ def parse_summary_edit_command(text: str):
 
 def interpret_user_message_with_ai(message_text: str, current_state: str = ""):
     """
-    Usa OpenAI para interpretar mensagens livres do usuário.
-    Retorna dict ou None.
+    Interpreta mensagem livre do usuário com OpenAI.
+    Retorna um dict estruturado ou None.
+    Muito mais tolerante a erro de digitação e linguagem natural.
     """
     try:
         client = OpenAI()
 
-        prompt = f"""
-Você é um interpretador de intenções para um chatbot de visitas técnicas agrícolas.
+        cleaned_text = compact_user_text_for_ai(message_text)
 
-Seu trabalho é ler a mensagem do usuário e responder APENAS com JSON válido.
+        system_prompt = """
+Você é um interpretador de intenções para um chatbot agrícola do AgroCRM.
+
+Seu papel é transformar a mensagem do usuário em JSON ESTRITAMENTE válido.
+Nunca explique nada.
+Nunca escreva texto fora do JSON.
+Nunca use markdown.
+Nunca use crases.
+Nunca escreva comentários.
+
+Você deve ser extremamente tolerante a:
+- erros de digitação
+- falta de acento
+- abreviações
+- frases incompletas
+- português informal
+- ordem bagunçada dos dados
+
+Contexto do sistema:
+O chatbot é usado por consultores agrícolas para:
+1) consultar agenda semanal
+2) lançar visita de uma agenda já listada
+3) concluir visita rapidamente
+4) criar nova visita
+5) corrigir campos do resumo antes de confirmar
+6) pedir PDF da última visita
+7) pedir lista de PDFs recentes
+8) confirmar ou cancelar fluxos
 
 Estados possíveis do chatbot:
 - awaiting_week_visit_selection
@@ -3214,65 +3268,190 @@ Estados possíveis do chatbot:
 - awaiting_observations
 - awaiting_pdf_visit_selection
 - awaiting_pdf_confirmation
+- awaiting_client_confirmation
+- awaiting_culture
+- awaiting_planting_confirmation
+- awaiting_avulsa_confirmation
 - none
 
-Estado atual: {current_state or "none"}
+Regras gerais:
+- Se o usuário pedir agenda semanal, retorne intent = week_schedule_request
+- Se o usuário quiser abrir/lançar/fazer/realizar uma visita da agenda e citar um número, retorne intent = launch_week_visit
+- Se o usuário quiser concluir/fechar/finalizar uma visita da agenda e citar um número, retorne intent = complete_week_visit
+- Se o usuário quiser PDF da última visita, retorne intent = pdf_last_visit
+- Se o usuário quiser lista de PDFs ou gerar PDF sem especificar qual, retorne intent = pdf_recent_visits
+- Se o usuário quiser confirmar, retorne intent = confirm
+- Se o usuário quiser cancelar, retorne intent = cancel
+- Se o usuário quiser alterar um campo do resumo, retorne intent = edit_summary
+- Se a mensagem parecer um lançamento completo de visita, retorne intent = create_visit_like_message
+- Se não souber, retorne intent = unknown
 
-Possíveis intenções:
-- week_schedule_request
-- launch_week_visit
-- complete_week_visit
-- pdf_last_visit
-- pdf_recent_visits
-- confirm
-- cancel
-- edit_summary
-- unknown
-
-Campos possíveis:
+Campos possíveis no JSON:
 - intent
-- visit_index (número humano, ex: 7)
+- confidence
+- visit_index
 - field
 - value
+- parsed_visit
 
+Campos permitidos em field:
+- fenologia_real
+- date
+- recommendation
+- culture
+- variety
+
+Campos permitidos em parsed_visit:
+- client_name
+- property_name
+- plot_name
+- culture
+- fenologia_real
+- date
+- recommendation
+
+Regras para edit_summary:
+- "corrija a fenologia para v10" -> field fenologia_real, value V10
+- "muda a data pra hoje" -> field date, value hoje
+- "ajusta observacao para baixa incidencia de pragas" -> field recommendation
+- "troca cultura pra soja" -> field culture
+- "muda variedade para as 1868 pro4" -> field variety
+
+Regras para datas:
+- preserve exatamente termos como "hoje", "amanha", "amanhã"
+- preserve datas digitadas como "24/02/2026", "24/02", "2026-02-24"
+- preserve números simples como "15" se parecerem data do mês
+
+Regras para visita da agenda:
+- "visita 7" normalmente significa launch_week_visit
+- "lança a 7", "lancar visita 7", "realizar 7", "fazer a 3" => launch_week_visit
+- "concluir 7", "fechar visita 7", "finalizar a 4" => complete_week_visit
+
+Regras para PDF:
+- "pdf da ultima", "manda o pdf da ultima visita", "ultimo pdf" => pdf_last_visit
+- "gera pdf", "me manda um pdf", "quero pdf" => pdf_recent_visits
+
+Regras para agenda:
+- "agenda da semana", "minha agenda", "visitas da semana", "o que tenho essa semana" => week_schedule_request
+
+Regras para confirmação:
+- "confirmar", "ok", "pode confirmar", "fechou", "isso", "certo" => confirm
+- "cancelar", "cancela", "para", "desconsidera", "esquece" => cancel
+
+Regras para mensagens completas de visita:
+Se a mensagem parecer um lançamento completo, extraia parsed_visit.
+Exemplo:
+"cliente Marcelo Alonso soja v4 hoje aplicar fungicida"
+=> intent create_visit_like_message
+
+Se houver erro de digitação em cultura ou fenologia, tente inferir o mais provável.
 Exemplos:
-Mensagem: "agenda da semana"
-JSON: {{"intent":"week_schedule_request"}}
+- "sojja" -> "Soja"
+- "milhho" -> "Milho"
+- "algodao" -> "Algodão"
+- "penduamento" pode aparecer como recomendação/fenologia textual
+- "fenolojia v10" -> field fenologia_real value V10
 
-Mensagem: "lança visita 7"
-JSON: {{"intent":"launch_week_visit","visit_index":7}}
+Formato de saída:
+Retorne SEMPRE JSON válido.
+Confidence deve ser: high, medium ou low.
 
-Mensagem: "concluir visita 3"
-JSON: {{"intent":"complete_week_visit","visit_index":3}}
+Exemplos de saída:
 
-Mensagem: "pdf da última visita"
-JSON: {{"intent":"pdf_last_visit"}}
+{"intent":"week_schedule_request","confidence":"high"}
 
-Mensagem: "quero gerar pdf"
-JSON: {{"intent":"pdf_recent_visits"}}
+{"intent":"launch_week_visit","confidence":"high","visit_index":7}
 
-Mensagem: "confirmar"
-JSON: {{"intent":"confirm"}}
+{"intent":"complete_week_visit","confidence":"high","visit_index":3}
 
-Mensagem: "cancelar"
-JSON: {{"intent":"cancel"}}
+{"intent":"pdf_last_visit","confidence":"high"}
 
-Mensagem: "corrija a fenologia para V10"
-JSON: {{"intent":"edit_summary","field":"fenologia_real","value":"V10"}}
+{"intent":"pdf_recent_visits","confidence":"high"}
 
-Mensagem: "muda a data para hoje"
-JSON: {{"intent":"edit_summary","field":"date","value":"hoje"}}
+{"intent":"confirm","confidence":"medium"}
 
-Mensagem: "{message_text}"
-"""
+{"intent":"cancel","confidence":"high"}
+
+{"intent":"edit_summary","confidence":"high","field":"fenologia_real","value":"V10"}
+
+{"intent":"edit_summary","confidence":"high","field":"date","value":"hoje"}
+
+{"intent":"edit_summary","confidence":"high","field":"recommendation","value":"baixa incidencia de pragas"}
+
+{"intent":"create_visit_like_message","confidence":"medium","parsed_visit":{"client_name":"Marcelo Alonso","property_name":"","plot_name":"","culture":"Soja","fenologia_real":"V4","date":"hoje","recommendation":"aplicar fungicida"}}
+
+{"intent":"unknown","confidence":"low"}
+""".strip()
+
+        user_prompt = f"""
+Estado atual do chatbot: {current_state or "none"}
+
+Mensagem do usuário:
+{cleaned_text}
+""".strip()
 
         response = client.responses.create(
             model="gpt-4.1-mini",
-            input=prompt
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
         )
 
-        output_text = response.output_text.strip()
-        return json.loads(output_text)
+        output_text = (response.output_text or "").strip()
+        if not output_text:
+            return None
+
+        # tentativa direta
+        try:
+            data = json.loads(output_text)
+        except Exception:
+            # fallback: tenta extrair primeiro bloco JSON da resposta
+            match = re.search(r"\{.*\}", output_text, re.DOTALL)
+            if not match:
+                return None
+            data = json.loads(match.group(0))
+
+        # saneamento mínimo
+        if not isinstance(data, dict):
+            return None
+
+        intent = data.get("intent")
+        if not intent:
+            return None
+
+        allowed_intents = {
+            "week_schedule_request",
+            "launch_week_visit",
+            "complete_week_visit",
+            "pdf_last_visit",
+            "pdf_recent_visits",
+            "confirm",
+            "cancel",
+            "edit_summary",
+            "create_visit_like_message",
+            "unknown",
+        }
+
+        if intent not in allowed_intents:
+            return None
+
+        confidence = (data.get("confidence") or "low").lower()
+        if confidence not in {"high", "medium", "low"}:
+            data["confidence"] = "low"
+
+        if "visit_index" in data and data["visit_index"] is not None:
+            try:
+                data["visit_index"] = int(data["visit_index"])
+            except Exception:
+                data["visit_index"] = None
+
+        if "field" in data and data["field"] is not None:
+            allowed_fields = {"fenologia_real", "date", "recommendation", "culture", "variety"}
+            if data["field"] not in allowed_fields:
+                data["field"] = None
+
+        return data
 
     except Exception as e:
         print(f"⚠️ IA fallback falhou: {e}")
