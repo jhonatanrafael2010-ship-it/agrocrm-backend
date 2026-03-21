@@ -1113,6 +1113,9 @@ def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pe
     lines.append("Responda com:")
     lines.append("✅ CONFIRMAR")
     lines.append("❌ CANCELAR")
+    lines.append("✏️ ALTERAR FENOLOGIA V10")
+    lines.append("📅 ALTERAR DATA hoje")
+    lines.append("💬 ALTERAR OBSERVACAO baixa incidência de pragas")
 
     return "\n".join(lines)
 
@@ -1787,6 +1790,95 @@ def telegram_webhook():
                 "sent_count": sent_count,
                 "results": results,
             }), 200
+
+
+
+        # =========================================================
+        # Edição do resumo final antes de confirmar
+        # =========================================================
+        state = ChatbotConversationState.query.filter_by(
+            platform="telegram",
+            chat_id=chat_message.chat_id,
+            status="awaiting_final_confirmation"
+        ).first()
+
+        if state:
+            edit_cmd = parse_summary_edit_command(message_text)
+
+            if edit_cmd:
+                stored_data = json.loads(state.visit_preview_json or "{}")
+                action = stored_data.get("action")
+                final_visit_payload = stored_data.get("final_visit_payload") or {}
+                selected_pending_visit = stored_data.get("selected_pending_visit")
+                close_only = stored_data.get("close_only", False)
+
+                field_name = edit_cmd["field"]
+                field_value = edit_cmd["value"].strip()
+
+                if field_name == "date":
+                    parsed_date = parse_date_flexible(field_value)
+                    if not parsed_date:
+                        send_telegram_message(
+                            chat_id=chat_message.chat_id,
+                            text="Data inválida. Envie algo como: hoje, amanhã, 15, 24/02/2026 ou 2026-02-24."
+                        )
+                        return jsonify({
+                            "ok": True,
+                            "message": "data inválida na edição do resumo"
+                        }), 200
+                    final_visit_payload["date"] = parsed_date
+
+                elif field_name == "fenologia_real":
+                    final_visit_payload["fenologia_real"] = field_value.upper()
+
+                elif field_name == "recommendation":
+                    final_visit_payload["recommendation"] = field_value
+
+                elif field_name == "culture":
+                    normalized_culture = normalize_culture_input(field_value)
+                    if not normalized_culture:
+                        send_telegram_message(
+                            chat_id=chat_message.chat_id,
+                            text="Cultura inválida. Envie algo como: Milho, Soja ou Algodão."
+                        )
+                        return jsonify({
+                            "ok": True,
+                            "message": "cultura inválida na edição do resumo"
+                        }), 200
+                    final_visit_payload["culture"] = normalized_culture
+
+                elif field_name == "variety":
+                    final_visit_payload["variety"] = field_value
+
+                summary_text = build_visit_summary_text(
+                    action=action,
+                    final_visit_payload=final_visit_payload,
+                    selected_pending_visit=selected_pending_visit,
+                    close_only=close_only
+                )
+
+                state.visit_preview_json = json.dumps(
+                    build_guided_state_payload(
+                        action=action,
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=close_only,
+                    ),
+                    ensure_ascii=False
+                )
+                state.confirmation_text = summary_text
+                db.session.commit()
+
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text=summary_text
+                )
+
+                return jsonify({
+                    "ok": True,
+                    "message": "resumo atualizado com sucesso",
+                    "summary_text": summary_text
+                }), 200
 
 
 
@@ -2591,6 +2683,73 @@ def telegram_webhook():
                     "close_only": False,
                 }), 200
 
+
+        # =========================================================
+        # IA fallback para interpretação livre
+        # =========================================================
+        current_state_row = get_current_chatbot_state("telegram", chat_message.chat_id)
+        current_state = current_state_row.status if current_state_row else ""
+
+        ai_result = interpret_user_message_with_ai(
+            message_text=message_text,
+            current_state=current_state
+        )
+
+        if ai_result:
+            ai_intent = ai_result.get("intent")
+
+            # agenda da semana
+            if ai_intent == "week_schedule_request":
+                message_text = "agenda da semana"
+
+            # pdf última visita
+            elif ai_intent == "pdf_last_visit":
+                message_text = "pdf da última visita"
+
+            # pdf recentes
+            elif ai_intent == "pdf_recent_visits":
+                message_text = "gerar pdf"
+
+            # confirmar
+            elif ai_intent == "confirm":
+                message_text = "CONFIRMAR"
+
+            # cancelar
+            elif ai_intent == "cancel":
+                message_text = "CANCELAR"
+
+            # editar resumo
+            elif ai_intent == "edit_summary":
+                field = ai_result.get("field")
+                value = ai_result.get("value")
+
+                if field and value:
+                    field_map = {
+                        "fenologia_real": "ALTERAR FENOLOGIA",
+                        "date": "ALTERAR DATA",
+                        "recommendation": "ALTERAR OBSERVACAO",
+                        "culture": "ALTERAR CULTURA",
+                        "variety": "ALTERAR VARIEDADE",
+                    }
+
+                    prefix = field_map.get(field)
+                    if prefix:
+                        message_text = f"{prefix} {value}"
+
+            # lançar visita da agenda
+            elif ai_intent == "launch_week_visit":
+                visit_index = ai_result.get("visit_index")
+                if visit_index:
+                    message_text = f"LANCAR VISITA {visit_index}"
+
+            # concluir visita da agenda
+            elif ai_intent == "complete_week_visit":
+                visit_index = ai_result.get("visit_index")
+                if visit_index:
+                    message_text = f"CONCLUIR VISITA {visit_index}"
+
+
+
         parsed = parse_chatbot_message(message_text)
 
         matched_client, client_candidates, client_needs_confirmation = find_client_by_name(
@@ -2988,6 +3147,146 @@ def parse_pdf_selection(text: str):
             unique_indexes.append(idx)
 
     return unique_indexes
+
+
+
+def parse_summary_edit_command(text: str):
+    if not text:
+        return None
+
+    raw = text.strip()
+    normalized = normalize_lookup_text(raw)
+
+    patterns = [
+        # fenologia
+        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*fenologia(?:\s+observada)?(?:\s+para)?\s+(.+)$", "fenologia_real"),
+        (r"^(?:fenologia|fenologia observada)(?:\s+para)?\s+(.+)$", "fenologia_real"),
+
+        # data
+        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*data(?:\s+da\s+visita)?(?:\s+para)?\s+(.+)$", "date"),
+        (r"^(?:data|data da visita)(?:\s+para)?\s+(.+)$", "date"),
+
+        # observações
+        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*observacao(?:oes)?(?:\s+para)?\s+(.+)$", "recommendation"),
+        (r"^(?:observacao|observacoes)(?:\s+para)?\s+(.+)$", "recommendation"),
+
+        # cultura
+        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*cultura(?:\s+para)?\s+(.+)$", "culture"),
+        (r"^cultura(?:\s+para)?\s+(.+)$", "culture"),
+
+        # variedade
+        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*variedade(?:\s+para)?\s+(.+)$", "variety"),
+        (r"^variedade(?:\s+para)?\s+(.+)$", "variety"),
+    ]
+
+    for pattern, field_name in patterns:
+        match = re.match(pattern, normalized)
+        if match:
+            value = raw[match.start(1):].strip()
+            return {
+                "field": field_name,
+                "value": value
+            }
+
+    return None
+
+
+
+def interpret_user_message_with_ai(message_text: str, current_state: str = ""):
+    """
+    Usa OpenAI para interpretar mensagens livres do usuário.
+    Retorna dict ou None.
+    """
+    try:
+        client = OpenAI()
+
+        prompt = f"""
+Você é um interpretador de intenções para um chatbot de visitas técnicas agrícolas.
+
+Seu trabalho é ler a mensagem do usuário e responder APENAS com JSON válido.
+
+Estados possíveis do chatbot:
+- awaiting_week_visit_selection
+- awaiting_final_confirmation
+- awaiting_confirmation
+- awaiting_fenologia
+- awaiting_date
+- awaiting_observations
+- awaiting_pdf_visit_selection
+- awaiting_pdf_confirmation
+- none
+
+Estado atual: {current_state or "none"}
+
+Possíveis intenções:
+- week_schedule_request
+- launch_week_visit
+- complete_week_visit
+- pdf_last_visit
+- pdf_recent_visits
+- confirm
+- cancel
+- edit_summary
+- unknown
+
+Campos possíveis:
+- intent
+- visit_index (número humano, ex: 7)
+- field
+- value
+
+Exemplos:
+Mensagem: "agenda da semana"
+JSON: {{"intent":"week_schedule_request"}}
+
+Mensagem: "lança visita 7"
+JSON: {{"intent":"launch_week_visit","visit_index":7}}
+
+Mensagem: "concluir visita 3"
+JSON: {{"intent":"complete_week_visit","visit_index":3}}
+
+Mensagem: "pdf da última visita"
+JSON: {{"intent":"pdf_last_visit"}}
+
+Mensagem: "quero gerar pdf"
+JSON: {{"intent":"pdf_recent_visits"}}
+
+Mensagem: "confirmar"
+JSON: {{"intent":"confirm"}}
+
+Mensagem: "cancelar"
+JSON: {{"intent":"cancel"}}
+
+Mensagem: "corrija a fenologia para V10"
+JSON: {{"intent":"edit_summary","field":"fenologia_real","value":"V10"}}
+
+Mensagem: "muda a data para hoje"
+JSON: {{"intent":"edit_summary","field":"date","value":"hoje"}}
+
+Mensagem: "{message_text}"
+"""
+
+        response = client.responses.create(
+            model="gpt-4.1-mini",
+            input=prompt
+        )
+
+        output_text = response.output_text.strip()
+        return json.loads(output_text)
+
+    except Exception as e:
+        print(f"⚠️ IA fallback falhou: {e}")
+        return None
+
+
+
+
+def get_current_chatbot_state(platform: str, chat_id: str):
+    return ChatbotConversationState.query.filter_by(
+        platform=platform,
+        chat_id=chat_id
+    ).first()
+
 
 
 
