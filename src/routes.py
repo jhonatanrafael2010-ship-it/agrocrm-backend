@@ -1750,6 +1750,94 @@ Mensagem do usuário:
 
 
 
+def extract_telegram_photo_info(payload: dict) -> dict | None:
+    """
+    Extrai informações da melhor foto enviada no update do Telegram.
+
+    Retorna algo como:
+    {
+        "file_id": "...",
+        "file_unique_id": "...",
+        "width": 1280,
+        "height": 960,
+        "file_size": 123456,
+        "caption": "texto da legenda",
+        "mime_group": "photo"
+    }
+
+    Se não houver foto, retorna None.
+    """
+    if not payload:
+        return None
+
+    message = payload.get("message") or payload.get("edited_message") or {}
+    photos = message.get("photo") or []
+    caption = (message.get("caption") or "").strip()
+
+    if not photos:
+        return None
+
+    # Telegram envia vários tamanhos da mesma foto.
+    # Vamos pegar a maior, normalmente a última.
+    best = photos[-1] if photos else None
+    if not best:
+        return None
+
+    return {
+        "file_id": best.get("file_id"),
+        "file_unique_id": best.get("file_unique_id"),
+        "width": best.get("width"),
+        "height": best.get("height"),
+        "file_size": best.get("file_size"),
+        "caption": caption,
+        "mime_group": "photo",
+    }
+
+
+def download_telegram_file_bytes(file_id: str) -> tuple[bytes | None, str | None]:
+    """
+    Baixa um arquivo do Telegram a partir do file_id.
+    Retorna: (bytes, erro)
+    """
+    try:
+        import os
+        import requests
+
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        if not bot_token:
+            return None, "TELEGRAM_BOT_TOKEN não configurado"
+
+        get_file_url = f"https://api.telegram.org/bot{bot_token}/getFile"
+        resp = requests.get(get_file_url, params={"file_id": file_id}, timeout=20)
+        if resp.status_code != 200:
+            return None, f"falha getFile status={resp.status_code}"
+
+        data = resp.json()
+        if not data.get("ok"):
+            return None, f"getFile retornou ok=False: {data}"
+
+        file_path = data.get("result", {}).get("file_path")
+        if not file_path:
+            return None, "file_path ausente no getFile"
+
+        download_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+        file_resp = requests.get(download_url, timeout=40)
+        if file_resp.status_code != 200:
+            return None, f"falha download status={file_resp.status_code}"
+
+        return file_resp.content, None
+
+    except Exception as e:
+        return None, str(e)
+
+
+def guess_telegram_photo_filename(photo_info: dict | None) -> str:
+    if not photo_info:
+        return "telegram_photo.jpg"
+
+    file_unique_id = photo_info.get("file_unique_id") or "photo"
+    return f"telegram_{file_unique_id}.jpg"
+
 
 
 
@@ -2751,9 +2839,9 @@ def telegram_webhook():
 
         message_text = (chat_message.text or chat_message.caption or "").strip()
 
-
-
         audio_info = extract_telegram_audio_info(payload)
+        photo_info = extract_telegram_photo_info(payload)
+
 
         # Se não veio texto/caption, mas veio áudio, tenta transcrever
         if not message_text and audio_info:
@@ -2808,6 +2896,38 @@ def telegram_webhook():
                 chat_id=chat_message.chat_id,
                 text=f"🎤 Áudio transcrito:\n{message_text}"
             )
+
+
+
+        # Se não veio texto/caption, mas veio foto, orienta o usuário a complementar
+        if not message_text and photo_info:
+            send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=(
+                    "Recebi sua foto. Agora me envie junto uma descrição curta para eu entender o lançamento.\n\n"
+                    "Exemplos:\n"
+                    "- lançar visita no cliente Fazenda Modelo\n"
+                    "- visita de milho V4 com boa uniformidade\n"
+                    "- alterar visita 2 e anexar esta foto"
+                )
+            )
+            return jsonify({
+                "ok": True,
+                "message": "foto recebida sem descricao"
+            }), 200
+
+
+        downloaded_photo_bytes = None
+        downloaded_photo_name = None
+
+        if photo_info:
+            downloaded_photo_name = guess_telegram_photo_filename(photo_info)
+
+            downloaded_photo_bytes, photo_download_error = download_telegram_file_bytes(photo_info["file_id"])
+
+            if photo_download_error:
+                print("DEBUG telegram photo download error:", photo_download_error)
+                downloaded_photo_bytes = None
 
         # normaliza texto para evitar .strip() em None
         message_text = (message_text or "").strip()
