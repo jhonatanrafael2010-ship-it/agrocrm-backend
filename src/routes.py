@@ -1,6 +1,8 @@
 # =========================
 # Python (stdlib)
 # =========================
+from datetime import datetime, date, timedelta
+import calendar
 import os
 import re
 import uuid
@@ -141,6 +143,1615 @@ def normalize_phone_number(phone: str) -> str:
     if not phone.startswith("55"):
         phone = f"55{phone}"
     return phone
+
+
+def _normalize_text(text: str) -> str:
+    """
+    Remove acentos, deixa minúsculo e limpa espaços extras.
+    """
+    if not text:
+        return ""
+    text = text.strip().lower()
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+
+def normalize_lookup_text(value: str) -> str:
+    if not value:
+        return ""
+    value = unicodedata.normalize("NFD", value.strip().lower())
+    return "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
+
+def _safe_date(year: int, month: int, day: int) -> date | None:
+    """
+    Cria data de forma segura. Se inválida, retorna None.
+    """
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def format_date_br(dt: date | None) -> str:
+    if not dt:
+        return ""
+    return dt.strftime("%d/%m/%Y")
+
+
+def _last_day_of_month(year: int, month: int) -> int:
+    return calendar.monthrange(year, month)[1]
+
+
+def parse_human_date(text: str, base_date: date | None = None) -> date | None:
+    """
+    Interpreta datas em linguagem humana para uso no bot.
+
+    Aceita exemplos:
+    - hoje
+    - amanha / amanhã
+    - ontem
+    - anteontem
+    - 2 dias atras / 2 dias atrás
+    - ha 3 dias / há 3 dias
+    - semana passada
+    - semana retrasada
+    - 15
+    - 24/02
+    - 24/02/2026
+    - 2026-02-24
+
+    Retorna:
+    - datetime.date quando conseguir interpretar
+    - None quando não entender
+    """
+    if not text:
+        return None
+
+    today = base_date or datetime.now().date()
+    normalized = _normalize_text(text)
+
+    # Remove pontuação lateral comum
+    normalized = normalized.strip(" .,!?:;")
+
+    # -----------------------------
+    # Casos exatos simples
+    # -----------------------------
+    simple_map = {
+        "hoje": 0,
+        "amanha": 1,
+        "ontem": -1,
+        "anteontem": -2,
+        "semana passada": -7,
+        "semana retrasada": -14,
+    }
+
+    if normalized in simple_map:
+        return today + timedelta(days=simple_map[normalized])
+
+    # -----------------------------
+    # X dias atrás / ha X dias
+    # -----------------------------
+    match = re.fullmatch(r"(\d+)\s+dia[s]?\s+atras", normalized)
+    if match:
+        days = int(match.group(1))
+        return today - timedelta(days=days)
+
+    match = re.fullmatch(r"ha\s+(\d+)\s+dia[s]?", normalized)
+    if match:
+        days = int(match.group(1))
+        return today - timedelta(days=days)
+
+    # -----------------------------
+    # X semanas atrás
+    # -----------------------------
+    match = re.fullmatch(r"(\d+)\s+semana[s]?\s+atras", normalized)
+    if match:
+        weeks = int(match.group(1))
+        return today - timedelta(days=weeks * 7)
+
+    # -----------------------------
+    # "dia 15" ou apenas "15"
+    # Interpreta como dia do mês atual.
+    # Se quiser, dá para mover para mês anterior quando passar muito.
+    # -----------------------------
+    match = re.fullmatch(r"(dia\s+)?(\d{1,2})", normalized)
+    if match:
+        day = int(match.group(2))
+
+        current_month_last_day = _last_day_of_month(today.year, today.month)
+        if day <= current_month_last_day:
+            candidate = date(today.year, today.month, day)
+
+            if candidate < today - timedelta(days=15):
+                next_month = today.month + 1
+                next_year = today.year
+                if next_month > 12:
+                    next_month = 1
+                    next_year += 1
+
+                next_month_last_day = _last_day_of_month(next_year, next_month)
+                if day <= next_month_last_day:
+                    return date(next_year, next_month, day)
+
+            return candidate
+
+        return None
+
+    # -----------------------------
+    # dd/mm ou dd-mm
+    # Ex: 24/02
+    # Assume ano atual
+    # -----------------------------
+    match = re.fullmatch(r"(\d{1,2})[\/\-](\d{1,2})", normalized)
+    if match:
+        day = int(match.group(1))
+        month = int(match.group(2))
+        return _safe_date(today.year, month, day)
+
+    # -----------------------------
+    # dd/mm/yyyy ou dd-mm-yyyy
+    # -----------------------------
+    match = re.fullmatch(r"(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})", normalized)
+    if match:
+        day = int(match.group(1))
+        month = int(match.group(2))
+        year = int(match.group(3))
+        return _safe_date(year, month, day)
+
+    # -----------------------------
+    # yyyy-mm-dd
+    # -----------------------------
+    match = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", normalized)
+    if match:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        day = int(match.group(3))
+        return _safe_date(year, month, day)
+
+    return None
+
+
+
+def normalize_intent_text(text: str) -> str:
+    return normalize_lookup_text(text or "").strip()
+
+
+
+
+
+
+
+def is_pdf_request(text: str) -> bool:
+    normalized = normalize_intent_text(text)
+
+    triggers = [
+        "pdf",
+        "gerar pdf",
+        "gera pdf",
+        "me manda o pdf",
+        "mande o pdf",
+        "quero o pdf",
+        "relatorio pdf",
+        "relatorio em pdf",
+        "pdf das visitas",
+        "pdf das ultimas visitas",
+        "pdf das últimas visitas",
+    ]
+
+    return any(trigger in normalized for trigger in triggers)
+
+
+
+def parse_yes_no(value: str):
+    if not value:
+        return None
+
+    normalized = normalize_lookup_text(value)
+
+    if normalized in ("sim", "s", "yes", "y"):
+        return True
+
+    if normalized in ("nao", "não", "n", "no"):
+        return False
+
+    return None   
+
+
+def parse_pending_reply(text: str):
+    if not text:
+        return None
+
+    value = text.strip().upper()
+
+    if value == "NOVA":
+        return {"mode": "create_new", "index": None}
+
+    if value.isdigit():
+        return {"mode": "update_existing", "index": int(value) - 1}
+
+    match = re.match(r"^CONCLUIR\s+(\d+)$", value)
+    if match:
+        return {"mode": "close_only", "index": int(match.group(1)) - 1}
+
+    match = re.match(r"^(\d+)\s+CONCLUIR$", value)
+    if match:
+        return {"mode": "close_only", "index": int(match.group(1)) - 1}
+
+    if value == "CONFIRMAR":
+        return {"mode": "confirm_final", "index": None}
+
+    if value == "CANCELAR":
+        return {"mode": "cancel_final", "index": None}
+
+    return None
+
+
+def parse_pdf_selection(text: str):
+    if not text:
+        return []
+
+    raw = text.strip()
+    parts = re.split(r"[,\s;]+", raw)
+
+    indexes = []
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if not part.isdigit():
+            return None
+        indexes.append(int(part) - 1)
+
+    # remove duplicados preservando ordem
+    seen = set()
+    unique_indexes = []
+    for idx in indexes:
+        if idx not in seen:
+            seen.add(idx)
+            unique_indexes.append(idx)
+
+    return unique_indexes
+
+
+def parse_summary_edit_command(text: str):
+    if not text:
+        return None
+
+    raw = text.strip()
+    normalized = normalize_lookup_text(raw)
+
+    patterns = [
+        # fenologia
+        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*fenologia(?:\s+observada)?(?:\s+para)?\s+(.+)$", "fenologia_real"),
+        (r"^(?:fenologia|fenologia observada)(?:\s+para)?\s+(.+)$", "fenologia_real"),
+
+        # data
+        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*data(?:\s+da\s+visita)?(?:\s+para)?\s+(.+)$", "date"),
+        (r"^(?:data|data da visita)(?:\s+para)?\s+(.+)$", "date"),
+
+        # observações
+        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*observacao(?:oes)?(?:\s+para)?\s+(.+)$", "recommendation"),
+        (r"^(?:observacao|observacoes)(?:\s+para)?\s+(.+)$", "recommendation"),
+
+        # cultura
+        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*cultura(?:\s+para)?\s+(.+)$", "culture"),
+        (r"^cultura(?:\s+para)?\s+(.+)$", "culture"),
+
+        # variedade
+        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*variedade(?:\s+para)?\s+(.+)$", "variety"),
+        (r"^variedade(?:\s+para)?\s+(.+)$", "variety"),
+    ]
+
+    for pattern, field_name in patterns:
+        match = re.match(pattern, normalized)
+        if match:
+            value = raw[match.start(1):].strip()
+            return {
+                "field": field_name,
+                "value": value
+            }
+
+    return None
+
+
+
+def parse_week_visit_action(text: str):
+    if not text:
+        return None
+
+    normalized = normalize_intent_text(text)
+
+    patterns = [
+        (r"^(?:lanca|lancar|vamos lancar|quero lancar|realizar|fazer|abre|abrir)\s+(?:a\s+)?(?:visita\s+)?(\d+)$", "launch_week_visit"),
+        (r"^(?:concluir|conclui|finalizar|finaliza|fechar|fecha)\s+(?:a\s+)?(?:visita\s+)?(\d+)$", "complete_week_visit"),
+        (r"^(?:visita\s+)?(\d+)$", "launch_week_visit"),
+    ]
+
+    for pattern, intent in patterns:
+        match = re.match(pattern, normalized)
+        if match:
+            return {
+                "intent": intent,
+                "index": int(match.group(1)) - 1
+            }
+
+    return None
+
+
+def is_last_pdf_request(text: str) -> bool:
+    normalized = normalize_intent_text(text)
+
+    triggers = [
+        "pdf da ultima visita",
+        "pdf da última visita",
+        "pdf ultima visita",
+        "ultimo pdf",
+        "último pdf",
+        "pdf da visita mais recente",
+        "me manda o pdf da ultima visita",
+        "me manda o pdf da última visita",
+    ]
+
+    return any(trigger in normalized for trigger in triggers)
+
+def is_pdf_request(text: str) -> bool:
+    if not text:
+        return False
+
+    normalized = normalize_lookup_text(text)
+
+    triggers = [
+        "pdf",
+        "gerar pdf",
+        "me manda o pdf",
+        "mande o pdf",
+        "pdf da ultima visita",
+        "pdf da última visita",
+        "pdf das ultimas visitas",
+        "pdf das últimas visitas",
+        "relatorio pdf",
+        "relatório pdf",
+    ]
+
+    return any(trigger in normalized for trigger in triggers)
+
+
+
+def is_week_schedule_request(text: str) -> bool:
+    normalized = normalize_intent_text(text)
+
+    triggers = [
+        "agenda da semana",
+        "visitas da semana",
+        "visitas pendentes da semana",
+        "chat agenda da semana",
+        "me passa agenda",
+        "me passe agenda",
+        "me passa as visitas da semana",
+        "me passe as visitas da semana",
+        "quais visitas tenho essa semana",
+        "quais visitas tenho na semana",
+        "minha agenda da semana",
+    ]
+
+    return any(trigger in normalized for trigger in triggers)
+
+
+def normalize_culture_input(value: str):
+    if not value:
+        return None
+
+    raw = value.strip().lower()
+    normalized = normalize_lookup_text(raw)
+
+    if normalized == "milho":
+        return "Milho"
+    if normalized == "soja":
+        return "Soja"
+    if normalized in ("algodao", "algodão"):
+        return "Algodão"
+
+    return None
+
+
+def is_valid_fenologia(value: str) -> bool:
+    if not value:
+        return False
+
+    value = value.strip().upper()
+
+    valid_patterns = [
+        r"^V\d{1,2}$",   # V1, V4, V10
+        r"^R\d{1,2}$",   # R1, R2, R6
+        r"^VE$",
+        r"^VC$",
+        r"^VT$",
+    ]
+
+    for pattern in valid_patterns:
+        if re.match(pattern, value):
+            return True
+
+    return False
+
+
+def build_name_confirmation_text(entity_label: str, candidates: list) -> str:
+    if not candidates:
+        return f"Não consegui identificar {entity_label}."
+
+    lines = [f"Encontrei estes {entity_label}s parecidos:"]
+    for idx, item in enumerate(candidates[:3], start=1):
+        lines.append(f"{idx}. {item.name}")
+
+    lines.append("")
+    lines.append("Responda com o número correto.")
+    return "\n".join(lines)
+
+
+def build_pending_visits_confirmation_text(client_name: str, requested_culture: str, suggestions: list, same_culture_found: bool) -> str:
+    lines = []
+
+    if suggestions:
+        if requested_culture and same_culture_found:
+            lines.append(f"📋 Encontrei visitas pendentes de {requested_culture} para {client_name}:")
+        elif requested_culture and not same_culture_found:
+            lines.append(f"Não encontrei visitas pendentes de {requested_culture} para {client_name}.")
+            lines.append("")
+            lines.append(f"📋 Encontrei outras visitas pendentes deste cliente:")
+        else:
+            lines.append(f"📋 Encontrei visitas pendentes para {client_name}:")
+
+        for idx, item in enumerate(suggestions, start=1):
+            lines.append(f"{idx}. {item.get('culture') or '—'} - {item.get('recommendation') or '—'} - {item.get('date') or '—'}")
+
+        lines.append("")
+        lines.append("Responda com:")
+        lines.append("🔢 número da visita para atualizar")
+        lines.append("✅ CONCLUIR X para apenas concluir a visita pendente")
+        lines.append("🆕 NOVA para criar uma nova visita")
+        return "\n".join(lines)
+
+    if requested_culture:
+        return (
+            f"Não encontrei visitas pendentes de {requested_culture} para {client_name}.\n\n"
+            "Você pode responder com NOVA para criar uma nova visita."
+        )
+
+    return (
+        f"Não encontrei visitas pendentes para {client_name}.\n\n"
+        "Você pode responder com NOVA para criar uma nova visita."
+    )
+
+def build_pdf_visit_selection_text(visits: list) -> str:
+    if not visits:
+        return "Não encontrei visitas concluídas recentes para gerar PDF."
+
+    lines = ["📄 Encontrei estas visitas recentes:", ""]
+
+    for idx, v in enumerate(visits, start=1):
+        client_name = v.client.name if getattr(v, "client", None) else f"Cliente {v.client_id}"
+        visit_date = v.date.strftime("%d/%m/%Y") if v.date else "—"
+        culture = v.culture or "—"
+        fenologia = v.fenologia_real or "—"
+
+        lines.append(f"{idx}. {visit_date} - {client_name} - {culture} - {fenologia}")
+
+    lines.append("")
+    lines.append("Responda com:")
+    lines.append("🔢 um número: 1")
+    lines.append("🔢 vários números: 1,3 ou 1 3 5")
+    lines.append("❌ CANCELAR para sair")
+
+    return "\n".join(lines)
+
+
+def build_week_schedule_text(consultant_name: str, visits: list) -> str:
+    start_date, end_date = get_week_date_range()
+
+    if not visits:
+        return (
+            f"📅 Agenda da semana de {consultant_name}\n"
+            f"Período: {start_date.isoformat()} até {end_date.isoformat()}\n\n"
+            "Nenhuma visita pendente encontrada para esta semana."
+        )
+
+    lines = [
+        f"📅 Agenda da semana de {consultant_name}",
+        f"Período: {start_date.isoformat()} até {end_date.isoformat()}",
+        "",
+    ]
+
+    for idx, visit in enumerate(visits, start=1):
+        client_name = visit.client.name if getattr(visit, "client", None) else f"Cliente {visit.client_id}"
+        recommendation = (visit.recommendation or "—").strip()
+        culture = visit.culture or "—"
+        visit_date = visit.date.isoformat() if visit.date else "—"
+
+        lines.append(f"{idx}. {visit_date} - {client_name} - {culture} - {recommendation}")
+
+    lines.append("")
+    lines.append("Responda com:")
+    lines.append("🔢 LANCAR VISITA X para atualizar uma visita da agenda")
+    lines.append("✅ CONCLUIR VISITA X para apenas concluir")
+    lines.append("❌ CANCELAR para sair")
+
+    return "\n".join(lines)
+
+def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pending_visit: dict = None, close_only: bool = False) -> str:
+    fenologia = final_visit_payload.get("fenologia_real") or "—"
+    date_value = final_visit_payload.get("date") or "—"
+    observations = final_visit_payload.get("recommendation") or "—"
+    client_id = final_visit_payload.get("client_id") or "—"
+
+    lines = ["📝 Resumo da visita", ""]
+
+    if action == "use_existing_pending_visit" and selected_pending_visit:
+        lines.append(f"🔧 Tipo: {'Concluir visita pendente' if close_only else 'Atualizar visita pendente'}")
+        lines.append(f"🆔 ID da visita: {selected_pending_visit.get('id')}")
+        lines.append(f"👤 ID do cliente: {client_id}")
+        lines.append(f"📌 Recomendação pendente: {selected_pending_visit.get('recommendation') or '—'}")
+        lines.append(f"🌿 Fenologia observada: {fenologia}")
+        lines.append(f"📅 Data da visita: {date_value}")
+        lines.append(f"💬 Observações: {observations}")
+
+    elif action == "create_new_visit":
+        lines.append("🆕 Tipo: Nova visita")
+        lines.append("🆔 ID da visita: nova")
+        lines.append(f"👤 ID do cliente: {client_id}")
+        lines.append("📌 Recomendação pendente: —")
+        lines.append(f"🌿 Fenologia observada: {fenologia}")
+        lines.append(f"📅 Data da visita: {date_value}")
+        lines.append(f"💬 Observações: {observations}")
+
+    lines.append("")
+    lines.append("Responda com:")
+    lines.append("✅ CONFIRMAR")
+    lines.append("❌ CANCELAR")
+    lines.append("✏️ ALTERAR FENOLOGIA V10")
+    lines.append("📅 ALTERAR DATA hoje")
+    lines.append("💬 ALTERAR OBSERVACAO baixa incidência de pragas")
+
+    return "\n".join(lines)
+
+def build_guided_state_payload(action: str, final_visit_payload: dict, selected_pending_visit: dict = None, close_only: bool = False) -> dict:
+    return {
+        "action": action,
+        "final_visit_payload": final_visit_payload,
+        "selected_pending_visit": selected_pending_visit,
+        "close_only": close_only,
+    }
+
+
+def resolve_telegram_consultant(chat_message):
+    if not chat_message:
+        return None
+
+    binding = TelegramContactBinding.query.filter_by(
+        telegram_chat_id=str(chat_message.chat_id),
+        is_active=True
+    ).first()
+
+    if binding and binding.consultant:
+        return binding.consultant
+
+    return None
+
+
+def find_telegram_binding(chat_message):
+    if not chat_message:
+        return None
+
+    return TelegramContactBinding.query.filter_by(
+        telegram_chat_id=str(chat_message.chat_id),
+        is_active=True
+    ).first()
+
+
+def bind_telegram_consultant_by_code(chat_message, code: str):
+    if not chat_message or not code:
+        return None, "dados inválidos"
+
+    normalized_code = code.strip().upper()
+
+    consultant = Consultant.query.filter(
+        db.func.upper(Consultant.telegram_link_code) == normalized_code
+    ).first()
+
+    if not consultant:
+        return None, "código inválido"
+
+    existing = TelegramContactBinding.query.filter_by(
+        telegram_chat_id=str(chat_message.chat_id)
+    ).first()
+
+    if existing:
+        existing.telegram_user_id = str(chat_message.user_id) if chat_message.user_id else existing.telegram_user_id
+        existing.telegram_username = chat_message.user_name or existing.telegram_username
+        existing.display_name = chat_message.user_name or existing.display_name
+        existing.consultant_id = consultant.id
+        existing.is_active = True
+        db.session.commit()
+        return existing, None
+
+    binding = TelegramContactBinding(
+        telegram_chat_id=str(chat_message.chat_id),
+        telegram_user_id=str(chat_message.user_id) if chat_message.user_id else None,
+        telegram_username=chat_message.user_name or None,
+        display_name=chat_message.user_name or None,
+        consultant_id=consultant.id,
+        is_active=True
+    )
+
+    db.session.add(binding)
+    db.session.commit()
+    return binding, None
+
+
+
+def find_last_completed_visits_for_consultant(consultant_id: int, limit: int = 6):
+    if not consultant_id:
+        return []
+
+    visits = (
+        Visit.query
+        .filter(Visit.consultant_id == consultant_id)
+        .filter(Visit.status == "done")
+        .order_by(Visit.date.desc().nullslast(), Visit.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return visits
+
+
+def find_consultant_pending_visits_for_week(consultant_id: int, reference_date=None, limit: int = 50):
+    if not consultant_id:
+        return []
+
+    start_date, end_date = get_week_date_range(reference_date)
+
+    visits = (
+        Visit.query
+        .filter(Visit.consultant_id == consultant_id)
+        .filter(Visit.date >= start_date)
+        .filter(Visit.date <= end_date)
+        .filter(Visit.status != "done")
+        .order_by(Visit.date.asc(), Visit.id.asc())
+        .limit(limit)
+        .all()
+    )
+
+    return visits
+
+
+def find_client_by_name(client_name: str):
+    if not client_name:
+        return None, [], False
+
+    target = normalize_lookup_text(client_name)
+    if not target:
+        return None, [], False
+
+    clients = Client.query.all()
+
+    # 1) match exato normalizado
+    for client in clients:
+        current = normalize_lookup_text(client.name)
+        if current == target:
+            return client, [client], False
+
+    # 2) match parcial simples
+    partial_candidates = []
+    for client in clients:
+        current = normalize_lookup_text(client.name)
+        if target in current or current in target:
+            partial_candidates.append(client)
+
+    if len(partial_candidates) == 1:
+        return partial_candidates[0], partial_candidates, False
+
+    if len(partial_candidates) > 1:
+        best_client = None
+        best_score = 0.0
+
+        for client in partial_candidates:
+            current = normalize_lookup_text(client.name)
+            score = SequenceMatcher(None, target, current).ratio()
+            if score > best_score:
+                best_score = score
+                best_client = client
+
+        if best_client and best_score >= 0.86:
+            return best_client, partial_candidates[:3], False
+
+        return best_client, partial_candidates[:3], True
+
+    # 3) similaridade geral
+    scored = []
+    for client in clients:
+        current = normalize_lookup_text(client.name)
+        score = SequenceMatcher(None, target, current).ratio()
+        scored.append((client, score))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    if not scored:
+        return None, [], True
+
+    best_client, best_score = scored[0]
+    top_candidates = [item[0] for item in scored[:3] if item[1] >= 0.55]
+
+    if best_client and best_score >= 0.86:
+        return best_client, top_candidates, False
+
+    if best_client and best_score >= 0.65:
+        return best_client, top_candidates, True
+
+    return None, top_candidates, True
+
+
+
+def find_property_by_name(property_name: str, client_id: int = None):
+    if not property_name:
+        return None, [], False
+
+    target = normalize_lookup_text(property_name)
+    if not target:
+        return None, [], False
+
+    query = Property.query
+    if client_id:
+        query = query.filter_by(client_id=client_id)
+
+    properties = query.all()
+
+    # 1) match exato
+    for prop in properties:
+        current = normalize_lookup_text(prop.name)
+        if current == target:
+            return prop, [prop], False
+
+    # 2) match parcial
+    partial_candidates = []
+    for prop in properties:
+        current = normalize_lookup_text(prop.name)
+        if target in current or current in target:
+            partial_candidates.append(prop)
+
+    if len(partial_candidates) == 1:
+        return partial_candidates[0], partial_candidates, False
+
+    if len(partial_candidates) > 1:
+        best_prop = None
+        best_score = 0.0
+
+        for prop in partial_candidates:
+            current = normalize_lookup_text(prop.name)
+            score = SequenceMatcher(None, target, current).ratio()
+            if score > best_score:
+                best_score = score
+                best_prop = prop
+
+        if best_prop and best_score >= 0.86:
+            return best_prop, partial_candidates[:3], False
+
+        return best_prop, partial_candidates[:3], True
+
+    # 3) similaridade geral
+    scored = []
+    for prop in properties:
+        current = normalize_lookup_text(prop.name)
+        score = SequenceMatcher(None, target, current).ratio()
+        scored.append((prop, score))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    if not scored:
+        return None, [], True
+
+    best_prop, best_score = scored[0]
+    top_candidates = [item[0] for item in scored[:3] if item[1] >= 0.55]
+
+    if best_prop and best_score >= 0.86:
+        return best_prop, top_candidates, False
+
+    if best_prop and best_score >= 0.65:
+        return best_prop, top_candidates, True
+
+    return None, top_candidates, True
+
+def find_pending_visits(
+    client_id: int,
+    property_id: int = None,
+    culture: str = None,
+    limit: int = 5
+):
+    """
+    Busca visitas pendentes do cliente e, se houver, da propriedade.
+    Retorna:
+    - visits: lista de visitas
+    - same_culture_found: se encontrou visitas da mesma cultura
+    """
+    base_query = Visit.query.filter(Visit.client_id == client_id)
+    base_query = base_query.filter(Visit.status.in_(["planned", "pendente", "planejada", "planejado"]))
+
+    if property_id:
+        base_query = base_query.filter(Visit.property_id == property_id)
+
+    if culture:
+        same_culture = (
+            base_query
+            .filter(Visit.culture == culture)
+            .order_by(Visit.date.asc().nullslast())
+            .limit(limit)
+            .all()
+        )
+        if same_culture:
+            return same_culture, True
+
+    fallback = (
+        base_query
+        .order_by(Visit.date.asc().nullslast())
+        .limit(limit)
+        .all()
+    )
+    return fallback, False
+
+
+
+def get_current_chatbot_state(platform: str, chat_id: str):
+    return ChatbotConversationState.query.filter_by(
+        platform=platform,
+        chat_id=chat_id
+    ).first()
+
+
+
+def extract_telegram_audio_info(payload: dict):
+    if not payload:
+        return None
+
+    message = payload.get("message") or {}
+
+    voice = message.get("voice")
+    if voice and voice.get("file_id"):
+        return {
+            "file_id": voice.get("file_id"),
+            "filename": "voice.ogg",
+            "suffix": ".ogg",
+            "mime_type": voice.get("mime_type") or "audio/ogg",
+            "kind": "voice",
+        }
+
+    audio = message.get("audio")
+    if audio and audio.get("file_id"):
+        filename = audio.get("file_name") or "audio.mp3"
+        suffix = os.path.splitext(filename)[1] or ".mp3"
+        return {
+            "file_id": audio.get("file_id"),
+            "filename": filename,
+            "suffix": suffix,
+            "mime_type": audio.get("mime_type") or "audio/mpeg",
+            "kind": "audio",
+        }
+
+    return None
+
+
+
+def download_telegram_file_bytes(file_id: str):
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token or not file_id:
+        return None, "token ou file_id ausente"
+
+    try:
+        # 1) pega file_path
+        get_file_url = f"https://api.telegram.org/bot{token}/getFile"
+        resp = requests.get(get_file_url, params={"file_id": file_id}, timeout=30)
+        data = resp.json()
+
+        if not resp.ok or not data.get("ok"):
+            return None, f"erro ao obter file_path: {data}"
+
+        file_path = data["result"]["file_path"]
+
+        # 2) baixa o arquivo
+        download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+        file_resp = requests.get(download_url, timeout=60)
+
+        if not file_resp.ok:
+            return None, f"erro ao baixar arquivo: status {file_resp.status_code}"
+
+        return file_resp.content, None
+
+    except Exception as e:
+        return None, str(e)
+
+
+
+def convert_audio_bytes_to_wav(audio_bytes: bytes, input_suffix: str = ".ogg"):
+    """
+    Converte áudio recebido em bytes para WAV usando ffmpeg.
+    Retorna: (wav_bytes, erro)
+    """
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=input_suffix) as src:
+            src.write(audio_bytes)
+            src_path = src.name
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as dst:
+            dst_path = dst.name
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", src_path,
+            "-ar", "16000",
+            "-ac", "1",
+            dst_path,
+        ]
+
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120
+        )
+
+        if result.returncode != 0:
+            return None, result.stderr.decode("utf-8", errors="ignore")
+
+        with open(dst_path, "rb") as f:
+            wav_bytes = f.read()
+
+        return wav_bytes, None
+
+    except Exception as e:
+        return None, str(e)
+
+    finally:
+        try:
+            os.remove(src_path)
+        except:
+            pass
+        try:
+            os.remove(dst_path)
+        except:
+            pass
+
+def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.wav"):
+    """
+    Transcreve áudio usando OpenAI.
+    Retorna: (texto_transcrito, erro)
+    """
+    try:
+        client = OpenAI()  # usa OPENAI_API_KEY
+
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = filename
+
+        transcript = client.audio.transcriptions.create(
+            model="gpt-4o-mini-transcribe",
+            file=audio_file,
+        )
+
+        text = getattr(transcript, "text", None) or ""
+        text = text.strip()
+
+        if not text:
+            return None, "transcrição vazia"
+
+        return text, None
+
+    except Exception as e:
+        return None, str(e)
+
+
+
+def build_visit_pdf_file(visit_id: int):
+    """
+    Gera o mesmo PDF da visita e retorna:
+    - buffer (BytesIO)
+    - filename (str)
+    """
+    visit = Visit.query.get_or_404(visit_id)
+    client = Client.query.get(visit.client_id)
+    property_ = Property.query.get(visit.property_id) if visit.property_id else None
+    plot = Plot.query.get(visit.plot_id) if visit.plot_id else None
+
+    consultant = Consultant.query.get(visit.consultant_id) if visit.consultant_id else None
+    consultant_name = consultant.name if consultant else (f"Consultor {visit.consultant_id}" if visit.consultant_id else "")
+
+    if visit.planting_id:
+        visits_to_include = (
+            Visit.query.filter(Visit.planting_id == visit.planting_id)
+            .order_by(Visit.date.desc()).all()
+        )
+    else:
+        visits_to_include = (
+            Visit.query.filter(
+                Visit.client_id == visit.client_id,
+                Visit.property_id == visit.property_id,
+                Visit.plot_id == visit.plot_id,
+                Visit.culture == visit.culture,
+            )
+            .order_by(Visit.date.desc()).all()
+        )
+
+    filtered = []
+    for v in visits_to_include:
+        valid = [p for p in getattr(v, "photos", []) if getattr(p, "url", None)]
+        if valid:
+            v._valid_photos = valid
+            filtered.append(v)
+
+    visits_to_include = filtered[:MAX_VISITS]
+
+    def nl2br(text: str) -> str:
+        if not text:
+            return ""
+        t = text.replace("\r\n", "\n").replace("\r", "\n")
+        t = html_escape(t)
+        return t.replace("\n", "<br/>")
+
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    nutriverde_logo_path = os.path.join(static_dir, "nutriverde_logo_pdf.png")
+
+    def slugify_variety(name: str) -> str:
+        if not name:
+            return ""
+        s = unicodedata.normalize("NFD", name)
+        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+        s = s.strip().lower()
+        s = re.sub(r"\s+", "_", s)
+        s = re.sub(r"[^a-z0-9_]+", "", s)
+        return s
+
+    variety_slug = slugify_variety(visit.variety or "")
+    variety_logo_path = os.path.join(static_dir, "variety_logos", f"{variety_slug}.png")
+
+    def draw_footer(canvas, doc):
+        canvas.saveState()
+        y = 22
+        pad = 50
+
+        if variety_slug and os.path.exists(variety_logo_path):
+            try:
+                img = PILImage.open(variety_logo_path)
+                aspect = img.height / float(img.width)
+                w = 110
+                h = w * aspect
+                x = pad
+                canvas.drawImage(variety_logo_path, x, y, width=w, height=h, mask="auto")
+            except:
+                pass
+
+        if os.path.exists(nutriverde_logo_path):
+            try:
+                img = PILImage.open(nutriverde_logo_path)
+                aspect = img.height / float(img.width)
+                w = 70
+                h = w * aspect
+                x = A4[0] - pad - w
+                canvas.drawImage(nutriverde_logo_path, x, y, width=w, height=h, mask="auto")
+            except:
+                pass
+
+        canvas.restoreState()
+
+    buffer = BytesIO()
+    temp_jpgs = []
+
+    def smart_params(total_photos_all: int):
+        if total_photos_all <= 4:  return (1280, 75)
+        if total_photos_all <= 8:  return (1200, 70)
+        if total_photos_all <= 16: return (1100, 62)
+        return (1000, 55)
+
+    def download_to_temp(url: str, timeout=20, max_bytes=12_000_000):
+        tmp = None
+        try:
+            req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urlopen(req, timeout=timeout) as r:
+                try:
+                    cl = r.headers.get("Content-Length")
+                    if cl and int(cl) > max_bytes:
+                        return None
+                except:
+                    pass
+
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".img")
+                total = 0
+
+                while True:
+                    chunk = r.read(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        tmp.close()
+                        try:
+                            os.remove(tmp.name)
+                        except:
+                            pass
+                        return None
+                    tmp.write(chunk)
+
+                tmp.close()
+                return tmp.name
+        except Exception:
+            try:
+                if tmp and tmp.name:
+                    tmp.close()
+                    os.remove(tmp.name)
+            except:
+                pass
+            return None
+
+    def compress_to_jpeg_temp(src_path: str, max_px: int, quality: int):
+        try:
+            img = PILImage.open(src_path)
+            img = ImageOps.exif_transpose(img)
+            img.thumbnail((max_px, max_px), PILImage.LANCZOS)
+
+            out = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+            out_path = out.name
+            out.close()
+
+            img.convert("RGB").save(out_path, "JPEG", optimize=True, quality=quality)
+            try:
+                img.close()
+            except:
+                pass
+            return out_path
+        except Exception:
+            return None
+        finally:
+            try:
+                os.remove(src_path)
+            except:
+                pass
+
+    def draw_dark_background(canvas, doc):
+        canvas.saveState()
+        canvas.setFillColor(colors.HexColor("#101010"))
+        canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
+        canvas.restoreState()
+        draw_footer(canvas, doc)
+
+    def draw_cover_background(canvas, doc):
+        canvas.saveState()
+        canvas.setFillColor(colors.HexColor("#0E0E0E"))
+        canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
+        canvas.setFillColor(colors.HexColor("#00E676"))
+        canvas.rect(0, 0, 28, A4[1], fill=True, stroke=False)
+        canvas.restoreState()
+        draw_footer(canvas, doc)
+
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=50, rightMargin=40,
+        topMargin=60, bottomMargin=40
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name="VisitTitleSmall", fontSize=12, leading=14, alignment=TA_CENTER, textColor=colors.HexColor("#BBF7D0"), spaceAfter=8))
+    styles.add(ParagraphStyle(name="VisitStageBig", fontSize=22, leading=26, alignment=TA_CENTER, textColor=colors.HexColor("#FFFFFF"), spaceAfter=14))
+    styles.add(ParagraphStyle(name="VisitDateCenter", fontSize=12, leading=14, alignment=TA_CENTER, textColor=colors.HexColor("#E0E0E0"), spaceAfter=14))
+    styles.add(ParagraphStyle(name="VisitSectionLabel", fontSize=14, leading=16, alignment=TA_CENTER, textColor=colors.HexColor("#A5D6A7"), spaceBefore=10, spaceAfter=4))
+    styles.add(ParagraphStyle(name="VisitSectionValue", fontSize=16, leading=20, alignment=TA_CENTER, textColor=colors.HexColor("#FFFFFF"), spaceAfter=14))
+    styles.add(ParagraphStyle(name="HrLine", alignment=TA_CENTER, fontSize=10, textColor=colors.HexColor("#333333"), spaceBefore=10, spaceAfter=16))
+    styles.add(ParagraphStyle(name="Caption", alignment=TA_CENTER, fontSize=9, textColor=colors.HexColor("#BDBDBD"), spaceBefore=4, spaceAfter=10))
+    styles.add(ParagraphStyle(name="Footer", alignment=TA_CENTER, fontSize=9, textColor=colors.HexColor("#9E9E9E"), spaceBefore=20))
+
+    story = []
+    story.append(Spacer(1, 80))
+
+    title_style = ParagraphStyle(name="CoverTitle", fontSize=22, leading=26, alignment=TA_CENTER, textColor=colors.HexColor("#E0F2F1"), spaceAfter=6)
+    subtitle_style = ParagraphStyle(name="CoverSubtitle", fontSize=14, leading=18, alignment=TA_CENTER, textColor=colors.HexColor("#80CBC4"), spaceAfter=25)
+
+    story.append(Paragraph("RELATÓRIO TÉCNICO DE", title_style))
+    story.append(Paragraph("ACOMPANHAMENTO", title_style))
+    story.append(Paragraph("Ciclo Fenológico", subtitle_style))
+
+    client_style = ParagraphStyle(name="ClientBig", fontSize=22, leading=28, alignment=TA_CENTER, textColor=colors.HexColor("#FFFFFF"), spaceAfter=35)
+    story.append(Paragraph((client.name or "Cliente").strip(), client_style))
+
+    try:
+        logo_path = os.path.join(static_dir, "nutricrm_logo_pdf.png")
+        if os.path.exists(logo_path):
+            img = PILImage.open(logo_path)
+            aspect = img.height / float(img.width)
+            width = 160
+            story.append(Image(logo_path, width=width, height=width * aspect))
+            story.append(Spacer(1, 20))
+    except:
+        pass
+
+    info_label = ParagraphStyle(name="InfoLabel", fontSize=12, alignment=TA_LEFT, textColor=colors.HexColor("#A5D6A7"))
+    info_value = ParagraphStyle(name="InfoValue", fontSize=12, alignment=TA_LEFT, textColor=colors.HexColor("#E0E0E0"), spaceAfter=6)
+
+    def add_info(label, value):
+        if value:
+            story.append(Paragraph(label, info_label))
+            story.append(Paragraph(str(value), info_value))
+
+    add_info("Propriedade:", property_.name if property_ else "")
+    add_info("Talhão:", plot.name if plot else "")
+    add_info("Cultura:", visit.culture or "")
+    add_info("Variedade:", visit.variety or "")
+    add_info("Consultor:", consultant_name or "")
+
+    if visits_to_include:
+        start_date = visits_to_include[-1].date.strftime("%d/%m/%Y")
+        end_date = visits_to_include[0].date.strftime("%d/%m/%Y")
+    else:
+        start_date = end_date = visit.date.strftime("%d/%m/%Y")
+
+    add_info("Período de acompanhamento:", f"{start_date} → {end_date}")
+
+    story.append(Spacer(1, 40))
+    story.append(PageBreak())
+
+    total_visits = len(visits_to_include)
+    for pos, v in enumerate(visits_to_include):
+        idx = total_visits - pos
+
+        story.append(Paragraph(f"VISITA {idx}", styles["VisitTitleSmall"]))
+        story.append(Paragraph(v.fenologia_real or "—", styles["VisitStageBig"]))
+
+        try:
+            dtext = v.date.strftime("%d/%m/%Y")
+        except:
+            dtext = str(v.date)
+        story.append(Paragraph(dtext, styles["VisitDateCenter"]))
+        story.append(Spacer(1, 20))
+
+        if v.recommendation:
+            story.append(Paragraph("Observações", styles["VisitSectionLabel"]))
+            story.append(Paragraph(nl2br(v.recommendation), styles["VisitSectionValue"]))
+
+        story.append(Paragraph("<hr/>", styles["HrLine"]))
+
+        photos = list(getattr(v, "_valid_photos", []) or [])
+        if photos:
+            photos = photos[:MAX_PHOTOS_V]
+            total = len(photos)
+
+            cols = 1 if total <= 3 else (2 if total <= 6 else 3)
+            max_width = 220 if cols == 1 else 160
+            col_width = (A4[0] - 100) / cols
+
+            total_all = sum(min(len(getattr(x, "photos", []) or []), MAX_PHOTOS_V) for x in visits_to_include)
+            max_px, quality = smart_params(total_all)
+
+            row = []
+            count = 0
+
+            for i, photo in enumerate(photos, 1):
+                photo_url = resolve_photo_url(photo.url)
+                if not photo_url:
+                    continue
+
+                try:
+                    src_path = download_to_temp(photo_url, timeout=20, max_bytes=12_000_000)
+                    if not src_path:
+                        continue
+
+                    jpg_path = compress_to_jpeg_temp(src_path, max_px=max_px, quality=quality)
+                    if not jpg_path:
+                        continue
+
+                    temp_jpgs.append(jpg_path)
+
+                    probe = PILImage.open(jpg_path)
+                    w, h = probe.size
+                    try:
+                        probe.close()
+                    except:
+                        pass
+
+                    aspect = (h / w) if w else 1
+                    img_obj = Image(jpg_path, width=max_width, height=max_width * aspect)
+
+                    base_caption = getattr(photo, "caption", "") or ""
+                    lat = getattr(photo, "latitude", None)
+                    lon = getattr(photo, "longitude", None)
+
+                    gps_caption = ""
+                    if lat is not None and lon is not None:
+                        gps_caption = f"📍 {lat:.5f}, {lon:.5f}"
+
+                    final_caption = html_escape(base_caption)
+                    if gps_caption:
+                        final_caption += f"<br/><small>{html_escape(gps_caption)}</small>"
+
+                    caption_par = Paragraph(final_caption, styles["Caption"])
+
+                    row.append([img_obj, caption_par])
+                    count += 1
+
+                    if count == cols or i == total:
+                        story.append(
+                            Table(
+                                [row],
+                                colWidths=[col_width] * len(row),
+                                hAlign="CENTER",
+                                style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")])
+                            )
+                        )
+                        story.append(Spacer(1, 14))
+                        row = []
+                        count = 0
+
+                except Exception:
+                    continue
+
+            if pos < total_visits - 1:
+                story.append(PageBreak())
+
+    story.append(Paragraph("<b>NutriCRM</b>", styles["Footer"]))
+    story.append(Paragraph("Relatório cumulativo — ciclo fenológico", styles["Footer"]))
+
+    doc.build(story, onFirstPage=draw_cover_background, onLaterPages=draw_dark_background)
+    buffer.seek(0)
+
+    for p in temp_jpgs:
+        try:
+            os.remove(p)
+        except:
+            pass
+
+    filename = f"{client.name if client else 'Cliente'} - {visit.variety or ''} - Relatório.pdf"
+    return buffer, filename
+
+
+
+
+def interpret_user_message_with_ai(message_text: str, current_state: str = ""):
+    """
+    Interpreta mensagem livre do usuário com OpenAI.
+    Retorna um dict estruturado ou None.
+    Muito mais tolerante a erro de digitação e linguagem natural.
+    """
+    try:
+        client = OpenAI()
+
+        cleaned_text = compact_user_text_for_ai(message_text)
+
+        system_prompt = """
+Você é um interpretador de intenções para um chatbot agrícola do AgroCRM.
+
+Seu papel é transformar a mensagem do usuário em JSON ESTRITAMENTE válido.
+Nunca explique nada.
+Nunca escreva texto fora do JSON.
+Nunca use markdown.
+Nunca use crases.
+Nunca escreva comentários.
+
+Você deve ser extremamente tolerante a:
+- erros de digitação
+- falta de acento
+- abreviações
+- frases incompletas
+- português informal
+- ordem bagunçada dos dados
+
+Contexto do sistema:
+O chatbot é usado por consultores agrícolas para:
+1) consultar agenda semanal
+2) lançar visita de uma agenda já listada
+3) concluir visita rapidamente
+4) criar nova visita
+5) corrigir campos do resumo antes de confirmar
+6) pedir PDF da última visita
+7) pedir lista de PDFs recentes
+8) confirmar ou cancelar fluxos
+
+Estados possíveis do chatbot:
+- awaiting_week_visit_selection
+- awaiting_final_confirmation
+- awaiting_confirmation
+- awaiting_fenologia
+- awaiting_date
+- awaiting_observations
+- awaiting_pdf_visit_selection
+- awaiting_pdf_confirmation
+- awaiting_client_confirmation
+- awaiting_culture
+- awaiting_planting_confirmation
+- awaiting_avulsa_confirmation
+- none
+
+Regras gerais:
+- Se o usuário pedir agenda semanal, retorne intent = week_schedule_request
+- Se o usuário quiser abrir/lançar/fazer/realizar uma visita da agenda e citar um número, retorne intent = launch_week_visit
+- Se o usuário quiser concluir/fechar/finalizar uma visita da agenda e citar um número, retorne intent = complete_week_visit
+- Se o usuário quiser PDF da última visita, retorne intent = pdf_last_visit
+- Se o usuário quiser lista de PDFs ou gerar PDF sem especificar qual, retorne intent = pdf_recent_visits
+- Se o usuário quiser confirmar, retorne intent = confirm
+- Se o usuário quiser cancelar, retorne intent = cancel
+- Se o usuário quiser alterar um campo do resumo, retorne intent = edit_summary
+- Se a mensagem parecer um lançamento completo de visita, retorne intent = create_visit_like_message
+- Se não souber, retorne intent = unknown
+
+Campos possíveis no JSON:
+- intent
+- confidence
+- visit_index
+- field
+- value
+- parsed_visit
+
+Campos permitidos em field:
+- fenologia_real
+- date
+- recommendation
+- culture
+- variety
+
+Campos permitidos em parsed_visit:
+- client_name
+- property_name
+- plot_name
+- culture
+- fenologia_real
+- date
+- recommendation
+
+Regras para edit_summary:
+- "corrija a fenologia para v10" -> field fenologia_real, value V10
+- "muda a data pra hoje" -> field date, value hoje
+- "ajusta observacao para baixa incidencia de pragas" -> field recommendation
+- "troca cultura pra soja" -> field culture
+- "muda variedade para as 1868 pro4" -> field variety
+
+Regras para datas:
+- preserve exatamente termos como "hoje", "amanha", "amanhã"
+- preserve datas digitadas como "24/02/2026", "24/02", "2026-02-24"
+- preserve números simples como "15" se parecerem data do mês
+
+Regras para visita da agenda:
+- "visita 7" normalmente significa launch_week_visit
+- "lança a 7", "lancar visita 7", "realizar 7", "fazer a 3" => launch_week_visit
+- "concluir 7", "fechar visita 7", "finalizar a 4" => complete_week_visit
+
+Regras para PDF:
+- "pdf da ultima", "manda o pdf da ultima visita", "ultimo pdf" => pdf_last_visit
+- "gera pdf", "me manda um pdf", "quero pdf" => pdf_recent_visits
+
+Regras para agenda:
+- "agenda da semana", "minha agenda", "visitas da semana", "o que tenho essa semana" => week_schedule_request
+
+Regras para confirmação:
+- "confirmar", "ok", "pode confirmar", "fechou", "isso", "certo" => confirm
+- "cancelar", "cancela", "para", "desconsidera", "esquece" => cancel
+
+Regras para mensagens completas de visita:
+Se a mensagem parecer um lançamento completo, extraia parsed_visit.
+Exemplo:
+"cliente Marcelo Alonso soja v4 hoje aplicar fungicida"
+=> intent create_visit_like_message
+
+Se houver erro de digitação em cultura ou fenologia, tente inferir o mais provável.
+Exemplos:
+- "sojja" -> "Soja"
+- "milhho" -> "Milho"
+- "algodao" -> "Algodão"
+- "penduamento" pode aparecer como recomendação/fenologia textual
+- "fenolojia v10" -> field fenologia_real value V10
+
+Formato de saída:
+Retorne SEMPRE JSON válido.
+Confidence deve ser: high, medium ou low.
+
+Exemplos de saída:
+
+{"intent":"week_schedule_request","confidence":"high"}
+
+{"intent":"launch_week_visit","confidence":"high","visit_index":7}
+
+{"intent":"complete_week_visit","confidence":"high","visit_index":3}
+
+{"intent":"pdf_last_visit","confidence":"high"}
+
+{"intent":"pdf_recent_visits","confidence":"high"}
+
+{"intent":"confirm","confidence":"medium"}
+
+{"intent":"cancel","confidence":"high"}
+
+{"intent":"edit_summary","confidence":"high","field":"fenologia_real","value":"V10"}
+
+{"intent":"edit_summary","confidence":"high","field":"date","value":"hoje"}
+
+{"intent":"edit_summary","confidence":"high","field":"recommendation","value":"baixa incidencia de pragas"}
+
+{"intent":"create_visit_like_message","confidence":"medium","parsed_visit":{"client_name":"Marcelo Alonso","property_name":"","plot_name":"","culture":"Soja","fenologia_real":"V4","date":"hoje","recommendation":"aplicar fungicida"}}
+
+{"intent":"unknown","confidence":"low"}
+""".strip()
+
+        user_prompt = f"""
+Estado atual do chatbot: {current_state or "none"}
+
+Mensagem do usuário:
+{cleaned_text}
+""".strip()
+
+        response = client.responses.create(
+            model="gpt-4.1-mini",
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+
+        output_text = (response.output_text or "").strip()
+        if not output_text:
+            return None
+
+        # tentativa direta
+        try:
+            data = json.loads(output_text)
+        except Exception:
+            # fallback: tenta extrair primeiro bloco JSON da resposta
+            match = re.search(r"\{.*\}", output_text, re.DOTALL)
+            if not match:
+                return None
+            data = json.loads(match.group(0))
+
+        # saneamento mínimo
+        if not isinstance(data, dict):
+            return None
+
+        intent = data.get("intent")
+        if not intent:
+            return None
+
+        allowed_intents = {
+            "week_schedule_request",
+            "launch_week_visit",
+            "complete_week_visit",
+            "pdf_last_visit",
+            "pdf_recent_visits",
+            "confirm",
+            "cancel",
+            "edit_summary",
+            "create_visit_like_message",
+            "unknown",
+        }
+
+        if intent not in allowed_intents:
+            return None
+
+        confidence = (data.get("confidence") or "low").lower()
+        if confidence not in {"high", "medium", "low"}:
+            data["confidence"] = "low"
+
+        if "visit_index" in data and data["visit_index"] is not None:
+            try:
+                data["visit_index"] = int(data["visit_index"])
+            except Exception:
+                data["visit_index"] = None
+
+        if "field" in data and data["field"] is not None:
+            allowed_fields = {"fenologia_real", "date", "recommendation", "culture", "variety"}
+            if data["field"] not in allowed_fields:
+                data["field"] = None
+
+        return data
+
+    except Exception as e:
+        print(f"⚠️ IA fallback falhou: {e}")
+        return None
+
+
+
+
+
 
 # ============================================================
 # 🌾 CULTURAS, VARIEDADES, CONSULTOR
@@ -1041,83 +2652,13 @@ def is_confirmation_reply(text: str) -> bool:
 
 
 
-def build_name_confirmation_text(entity_label: str, candidates: list) -> str:
-    if not candidates:
-        return f"Não consegui identificar {entity_label}."
-
-    lines = [f"Encontrei estes {entity_label}s parecidos:"]
-    for idx, item in enumerate(candidates[:3], start=1):
-        lines.append(f"{idx}. {item.name}")
-
-    lines.append("")
-    lines.append("Responda com o número correto.")
-    return "\n".join(lines)
-
-def parse_pending_reply(text: str):
-    if not text:
-        return None
-
-    value = text.strip().upper()
-
-    if value == "NOVA":
-        return {"mode": "create_new", "index": None}
-
-    if value.isdigit():
-        return {"mode": "update_existing", "index": int(value) - 1}
-
-    match = re.match(r"^CONCLUIR\s+(\d+)$", value)
-    if match:
-        return {"mode": "close_only", "index": int(match.group(1)) - 1}
-
-    match = re.match(r"^(\d+)\s+CONCLUIR$", value)
-    if match:
-        return {"mode": "close_only", "index": int(match.group(1)) - 1}
-
-    if value == "CONFIRMAR":
-        return {"mode": "confirm_final", "index": None}
-
-    if value == "CANCELAR":
-        return {"mode": "cancel_final", "index": None}
-
-    return None
 
 
 
-def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pending_visit: dict = None, close_only: bool = False) -> str:
-    fenologia = final_visit_payload.get("fenologia_real") or "—"
-    date_value = final_visit_payload.get("date") or "—"
-    observations = final_visit_payload.get("recommendation") or "—"
-    client_id = final_visit_payload.get("client_id") or "—"
 
-    lines = ["📝 Resumo da visita", ""]
 
-    if action == "use_existing_pending_visit" and selected_pending_visit:
-        lines.append(f"🔧 Tipo: {'Concluir visita pendente' if close_only else 'Atualizar visita pendente'}")
-        lines.append(f"🆔 ID da visita: {selected_pending_visit.get('id')}")
-        lines.append(f"👤 ID do cliente: {client_id}")
-        lines.append(f"📌 Recomendação pendente: {selected_pending_visit.get('recommendation') or '—'}")
-        lines.append(f"🌿 Fenologia observada: {fenologia}")
-        lines.append(f"📅 Data da visita: {date_value}")
-        lines.append(f"💬 Observações: {observations}")
 
-    elif action == "create_new_visit":
-        lines.append("🆕 Tipo: Nova visita")
-        lines.append("🆔 ID da visita: nova")
-        lines.append(f"👤 ID do cliente: {client_id}")
-        lines.append("📌 Recomendação pendente: —")
-        lines.append(f"🌿 Fenologia observada: {fenologia}")
-        lines.append(f"📅 Data da visita: {date_value}")
-        lines.append(f"💬 Observações: {observations}")
 
-    lines.append("")
-    lines.append("Responda com:")
-    lines.append("✅ CONFIRMAR")
-    lines.append("❌ CANCELAR")
-    lines.append("✏️ ALTERAR FENOLOGIA V10")
-    lines.append("📅 ALTERAR DATA hoje")
-    lines.append("💬 ALTERAR OBSERVACAO baixa incidência de pragas")
-
-    return "\n".join(lines)
 
 
 def parse_date_flexible(value: str):
@@ -1171,46 +2712,14 @@ def parse_date_flexible(value: str):
     return None
 
 
-def build_guided_state_payload(action: str, final_visit_payload: dict, selected_pending_visit: dict = None, close_only: bool = False) -> dict:
-    return {
-        "action": action,
-        "final_visit_payload": final_visit_payload,
-        "selected_pending_visit": selected_pending_visit,
-        "close_only": close_only,
-    }
-
-
-def normalize_culture_input(value: str):
-    if not value:
-        return None
-
-    raw = value.strip().lower()
-    normalized = normalize_lookup_text(raw)
-
-    if normalized == "milho":
-        return "Milho"
-    if normalized == "soja":
-        return "Soja"
-    if normalized in ("algodao", "algodão"):
-        return "Algodão"
-
-    return None
 
 
 
-def resolve_telegram_consultant(chat_message):
-    if not chat_message:
-        return None
 
-    binding = TelegramContactBinding.query.filter_by(
-        telegram_chat_id=str(chat_message.chat_id),
-        is_active=True
-    ).first()
 
-    if binding and binding.consultant:
-        return binding.consultant
 
-    return None
+
+
 
 
 
@@ -2201,7 +3710,42 @@ def telegram_webhook():
                     "message": "cultura recebida, aguardando confirmação de plantio"
                 }), 200
 
-            
+
+            parsed_date = parse_human_date(nova_data_texto)
+
+            if not parsed_date:
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text=(
+                        "Data inválida. Envie algo como:\n"
+                        "- hoje\n"
+                        "- ontem\n"
+                        "- 2 dias atrás\n"
+                        "- semana passada\n"
+                        "- 15\n"
+                        "- 24/02/2026\n"
+                        "- 2026-02-24"
+                    )
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "data invalida para alteracao"
+                }), 200
+
+            state.pending_visit_date = parsed_date.isoformat()
+            db.session.commit()
+
+            send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=build_pending_visit_summary(state)
+            )
+
+            return jsonify({
+                "ok": True,
+                "message": "data alterada com sucesso"
+            }), 200
+
+
             if state.status == "awaiting_planting_confirmation":
                 yes_no = parse_yes_no(message_text)
 
@@ -2786,7 +4330,7 @@ def telegram_webhook():
 
 
 
-
+        
 
 
 
@@ -2945,14 +4489,7 @@ def telegram_webhook():
 
 
 
-def find_telegram_binding(chat_message):
-    if not chat_message:
-        return None
 
-    return TelegramContactBinding.query.filter_by(
-        telegram_chat_id=str(chat_message.chat_id),
-        is_active=True
-    ).first()
 
 
 def compact_user_text_for_ai(text: str) -> str:
@@ -2964,590 +4501,56 @@ def compact_user_text_for_ai(text: str) -> str:
     return text
 
 
-def extract_telegram_audio_info(payload: dict):
-    if not payload:
-        return None
-
-    message = payload.get("message") or {}
-
-    voice = message.get("voice")
-    if voice and voice.get("file_id"):
-        return {
-            "file_id": voice.get("file_id"),
-            "filename": "voice.ogg",
-            "suffix": ".ogg",
-            "mime_type": voice.get("mime_type") or "audio/ogg",
-            "kind": "voice",
-        }
-
-    audio = message.get("audio")
-    if audio and audio.get("file_id"):
-        filename = audio.get("file_name") or "audio.mp3"
-        suffix = os.path.splitext(filename)[1] or ".mp3"
-        return {
-            "file_id": audio.get("file_id"),
-            "filename": filename,
-            "suffix": suffix,
-            "mime_type": audio.get("mime_type") or "audio/mpeg",
-            "kind": "audio",
-        }
-
-    return None
-
-
-
-def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.wav"):
-    """
-    Transcreve áudio usando OpenAI.
-    Retorna: (texto_transcrito, erro)
-    """
-    try:
-        client = OpenAI()  # usa OPENAI_API_KEY
-
-        audio_file = io.BytesIO(audio_bytes)
-        audio_file.name = filename
 
-        transcript = client.audio.transcriptions.create(
-            model="gpt-4o-mini-transcribe",
-            file=audio_file,
-        )
 
-        text = getattr(transcript, "text", None) or ""
-        text = text.strip()
 
-        if not text:
-            return None, "transcrição vazia"
 
-        return text, None
 
-    except Exception as e:
-        return None, str(e)
-
-
-
-def convert_audio_bytes_to_wav(audio_bytes: bytes, input_suffix: str = ".ogg"):
-    """
-    Converte áudio recebido em bytes para WAV usando ffmpeg.
-    Retorna: (wav_bytes, erro)
-    """
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=input_suffix) as src:
-            src.write(audio_bytes)
-            src_path = src.name
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as dst:
-            dst_path = dst.name
-
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i", src_path,
-            "-ar", "16000",
-            "-ac", "1",
-            dst_path,
-        ]
 
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=120
-        )
 
-        if result.returncode != 0:
-            return None, result.stderr.decode("utf-8", errors="ignore")
 
-        with open(dst_path, "rb") as f:
-            wav_bytes = f.read()
 
-        return wav_bytes, None
 
-    except Exception as e:
-        return None, str(e)
 
-    finally:
-        try:
-            os.remove(src_path)
-        except:
-            pass
-        try:
-            os.remove(dst_path)
-        except:
-            pass
 
 
 
-def download_telegram_file_bytes(file_id: str):
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not token or not file_id:
-        return None, "token ou file_id ausente"
 
-    try:
-        # 1) pega file_path
-        get_file_url = f"https://api.telegram.org/bot{token}/getFile"
-        resp = requests.get(get_file_url, params={"file_id": file_id}, timeout=30)
-        data = resp.json()
 
-        if not resp.ok or not data.get("ok"):
-            return None, f"erro ao obter file_path: {data}"
 
-        file_path = data["result"]["file_path"]
 
-        # 2) baixa o arquivo
-        download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
-        file_resp = requests.get(download_url, timeout=60)
 
-        if not file_resp.ok:
-            return None, f"erro ao baixar arquivo: status {file_resp.status_code}"
 
-        return file_resp.content, None
 
-    except Exception as e:
-        return None, str(e)
 
 
 
-def is_pdf_request(text: str) -> bool:
-    if not text:
-        return False
 
-    normalized = normalize_lookup_text(text)
 
-    triggers = [
-        "pdf",
-        "gerar pdf",
-        "me manda o pdf",
-        "mande o pdf",
-        "pdf da ultima visita",
-        "pdf da última visita",
-        "pdf das ultimas visitas",
-        "pdf das últimas visitas",
-        "relatorio pdf",
-        "relatório pdf",
-    ]
 
-    return any(trigger in normalized for trigger in triggers)
 
 
-def find_last_completed_visits_for_consultant(consultant_id: int, limit: int = 6):
-    if not consultant_id:
-        return []
 
-    visits = (
-        Visit.query
-        .filter(Visit.consultant_id == consultant_id)
-        .filter(Visit.status == "done")
-        .order_by(Visit.date.desc().nullslast(), Visit.id.desc())
-        .limit(limit)
-        .all()
-    )
-    return visits
 
 
 
 
-def build_pdf_visit_selection_text(visits: list) -> str:
-    if not visits:
-        return "Não encontrei visitas concluídas recentes para gerar PDF."
 
-    lines = ["📄 Encontrei estas visitas recentes:", ""]
 
-    for idx, v in enumerate(visits, start=1):
-        client_name = v.client.name if getattr(v, "client", None) else f"Cliente {v.client_id}"
-        visit_date = v.date.strftime("%d/%m/%Y") if v.date else "—"
-        culture = v.culture or "—"
-        fenologia = v.fenologia_real or "—"
 
-        lines.append(f"{idx}. {visit_date} - {client_name} - {culture} - {fenologia}")
 
-    lines.append("")
-    lines.append("Responda com:")
-    lines.append("🔢 um número: 1")
-    lines.append("🔢 vários números: 1,3 ou 1 3 5")
-    lines.append("❌ CANCELAR para sair")
 
-    return "\n".join(lines)
 
 
 
 
-def parse_pdf_selection(text: str):
-    if not text:
-        return []
 
-    raw = text.strip()
-    parts = re.split(r"[,\s;]+", raw)
 
-    indexes = []
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        if not part.isdigit():
-            return None
-        indexes.append(int(part) - 1)
 
-    # remove duplicados preservando ordem
-    seen = set()
-    unique_indexes = []
-    for idx in indexes:
-        if idx not in seen:
-            seen.add(idx)
-            unique_indexes.append(idx)
-
-    return unique_indexes
 
-
-
-def parse_summary_edit_command(text: str):
-    if not text:
-        return None
-
-    raw = text.strip()
-    normalized = normalize_lookup_text(raw)
-
-    patterns = [
-        # fenologia
-        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*fenologia(?:\s+observada)?(?:\s+para)?\s+(.+)$", "fenologia_real"),
-        (r"^(?:fenologia|fenologia observada)(?:\s+para)?\s+(.+)$", "fenologia_real"),
-
-        # data
-        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*data(?:\s+da\s+visita)?(?:\s+para)?\s+(.+)$", "date"),
-        (r"^(?:data|data da visita)(?:\s+para)?\s+(.+)$", "date"),
-
-        # observações
-        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*observacao(?:oes)?(?:\s+para)?\s+(.+)$", "recommendation"),
-        (r"^(?:observacao|observacoes)(?:\s+para)?\s+(.+)$", "recommendation"),
-
-        # cultura
-        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*cultura(?:\s+para)?\s+(.+)$", "culture"),
-        (r"^cultura(?:\s+para)?\s+(.+)$", "culture"),
-
-        # variedade
-        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*variedade(?:\s+para)?\s+(.+)$", "variety"),
-        (r"^variedade(?:\s+para)?\s+(.+)$", "variety"),
-    ]
-
-    for pattern, field_name in patterns:
-        match = re.match(pattern, normalized)
-        if match:
-            value = raw[match.start(1):].strip()
-            return {
-                "field": field_name,
-                "value": value
-            }
-
-    return None
-
-
-
-def interpret_user_message_with_ai(message_text: str, current_state: str = ""):
-    """
-    Interpreta mensagem livre do usuário com OpenAI.
-    Retorna um dict estruturado ou None.
-    Muito mais tolerante a erro de digitação e linguagem natural.
-    """
-    try:
-        client = OpenAI()
-
-        cleaned_text = compact_user_text_for_ai(message_text)
-
-        system_prompt = """
-Você é um interpretador de intenções para um chatbot agrícola do AgroCRM.
-
-Seu papel é transformar a mensagem do usuário em JSON ESTRITAMENTE válido.
-Nunca explique nada.
-Nunca escreva texto fora do JSON.
-Nunca use markdown.
-Nunca use crases.
-Nunca escreva comentários.
-
-Você deve ser extremamente tolerante a:
-- erros de digitação
-- falta de acento
-- abreviações
-- frases incompletas
-- português informal
-- ordem bagunçada dos dados
-
-Contexto do sistema:
-O chatbot é usado por consultores agrícolas para:
-1) consultar agenda semanal
-2) lançar visita de uma agenda já listada
-3) concluir visita rapidamente
-4) criar nova visita
-5) corrigir campos do resumo antes de confirmar
-6) pedir PDF da última visita
-7) pedir lista de PDFs recentes
-8) confirmar ou cancelar fluxos
-
-Estados possíveis do chatbot:
-- awaiting_week_visit_selection
-- awaiting_final_confirmation
-- awaiting_confirmation
-- awaiting_fenologia
-- awaiting_date
-- awaiting_observations
-- awaiting_pdf_visit_selection
-- awaiting_pdf_confirmation
-- awaiting_client_confirmation
-- awaiting_culture
-- awaiting_planting_confirmation
-- awaiting_avulsa_confirmation
-- none
-
-Regras gerais:
-- Se o usuário pedir agenda semanal, retorne intent = week_schedule_request
-- Se o usuário quiser abrir/lançar/fazer/realizar uma visita da agenda e citar um número, retorne intent = launch_week_visit
-- Se o usuário quiser concluir/fechar/finalizar uma visita da agenda e citar um número, retorne intent = complete_week_visit
-- Se o usuário quiser PDF da última visita, retorne intent = pdf_last_visit
-- Se o usuário quiser lista de PDFs ou gerar PDF sem especificar qual, retorne intent = pdf_recent_visits
-- Se o usuário quiser confirmar, retorne intent = confirm
-- Se o usuário quiser cancelar, retorne intent = cancel
-- Se o usuário quiser alterar um campo do resumo, retorne intent = edit_summary
-- Se a mensagem parecer um lançamento completo de visita, retorne intent = create_visit_like_message
-- Se não souber, retorne intent = unknown
-
-Campos possíveis no JSON:
-- intent
-- confidence
-- visit_index
-- field
-- value
-- parsed_visit
-
-Campos permitidos em field:
-- fenologia_real
-- date
-- recommendation
-- culture
-- variety
-
-Campos permitidos em parsed_visit:
-- client_name
-- property_name
-- plot_name
-- culture
-- fenologia_real
-- date
-- recommendation
-
-Regras para edit_summary:
-- "corrija a fenologia para v10" -> field fenologia_real, value V10
-- "muda a data pra hoje" -> field date, value hoje
-- "ajusta observacao para baixa incidencia de pragas" -> field recommendation
-- "troca cultura pra soja" -> field culture
-- "muda variedade para as 1868 pro4" -> field variety
-
-Regras para datas:
-- preserve exatamente termos como "hoje", "amanha", "amanhã"
-- preserve datas digitadas como "24/02/2026", "24/02", "2026-02-24"
-- preserve números simples como "15" se parecerem data do mês
-
-Regras para visita da agenda:
-- "visita 7" normalmente significa launch_week_visit
-- "lança a 7", "lancar visita 7", "realizar 7", "fazer a 3" => launch_week_visit
-- "concluir 7", "fechar visita 7", "finalizar a 4" => complete_week_visit
-
-Regras para PDF:
-- "pdf da ultima", "manda o pdf da ultima visita", "ultimo pdf" => pdf_last_visit
-- "gera pdf", "me manda um pdf", "quero pdf" => pdf_recent_visits
-
-Regras para agenda:
-- "agenda da semana", "minha agenda", "visitas da semana", "o que tenho essa semana" => week_schedule_request
-
-Regras para confirmação:
-- "confirmar", "ok", "pode confirmar", "fechou", "isso", "certo" => confirm
-- "cancelar", "cancela", "para", "desconsidera", "esquece" => cancel
-
-Regras para mensagens completas de visita:
-Se a mensagem parecer um lançamento completo, extraia parsed_visit.
-Exemplo:
-"cliente Marcelo Alonso soja v4 hoje aplicar fungicida"
-=> intent create_visit_like_message
-
-Se houver erro de digitação em cultura ou fenologia, tente inferir o mais provável.
-Exemplos:
-- "sojja" -> "Soja"
-- "milhho" -> "Milho"
-- "algodao" -> "Algodão"
-- "penduamento" pode aparecer como recomendação/fenologia textual
-- "fenolojia v10" -> field fenologia_real value V10
-
-Formato de saída:
-Retorne SEMPRE JSON válido.
-Confidence deve ser: high, medium ou low.
-
-Exemplos de saída:
-
-{"intent":"week_schedule_request","confidence":"high"}
-
-{"intent":"launch_week_visit","confidence":"high","visit_index":7}
-
-{"intent":"complete_week_visit","confidence":"high","visit_index":3}
-
-{"intent":"pdf_last_visit","confidence":"high"}
-
-{"intent":"pdf_recent_visits","confidence":"high"}
-
-{"intent":"confirm","confidence":"medium"}
-
-{"intent":"cancel","confidence":"high"}
-
-{"intent":"edit_summary","confidence":"high","field":"fenologia_real","value":"V10"}
-
-{"intent":"edit_summary","confidence":"high","field":"date","value":"hoje"}
-
-{"intent":"edit_summary","confidence":"high","field":"recommendation","value":"baixa incidencia de pragas"}
-
-{"intent":"create_visit_like_message","confidence":"medium","parsed_visit":{"client_name":"Marcelo Alonso","property_name":"","plot_name":"","culture":"Soja","fenologia_real":"V4","date":"hoje","recommendation":"aplicar fungicida"}}
-
-{"intent":"unknown","confidence":"low"}
-""".strip()
-
-        user_prompt = f"""
-Estado atual do chatbot: {current_state or "none"}
-
-Mensagem do usuário:
-{cleaned_text}
-""".strip()
-
-        response = client.responses.create(
-            model="gpt-4.1-mini",
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-
-        output_text = (response.output_text or "").strip()
-        if not output_text:
-            return None
-
-        # tentativa direta
-        try:
-            data = json.loads(output_text)
-        except Exception:
-            # fallback: tenta extrair primeiro bloco JSON da resposta
-            match = re.search(r"\{.*\}", output_text, re.DOTALL)
-            if not match:
-                return None
-            data = json.loads(match.group(0))
-
-        # saneamento mínimo
-        if not isinstance(data, dict):
-            return None
-
-        intent = data.get("intent")
-        if not intent:
-            return None
-
-        allowed_intents = {
-            "week_schedule_request",
-            "launch_week_visit",
-            "complete_week_visit",
-            "pdf_last_visit",
-            "pdf_recent_visits",
-            "confirm",
-            "cancel",
-            "edit_summary",
-            "create_visit_like_message",
-            "unknown",
-        }
-
-        if intent not in allowed_intents:
-            return None
-
-        confidence = (data.get("confidence") or "low").lower()
-        if confidence not in {"high", "medium", "low"}:
-            data["confidence"] = "low"
-
-        if "visit_index" in data and data["visit_index"] is not None:
-            try:
-                data["visit_index"] = int(data["visit_index"])
-            except Exception:
-                data["visit_index"] = None
-
-        if "field" in data and data["field"] is not None:
-            allowed_fields = {"fenologia_real", "date", "recommendation", "culture", "variety"}
-            if data["field"] not in allowed_fields:
-                data["field"] = None
-
-        return data
-
-    except Exception as e:
-        print(f"⚠️ IA fallback falhou: {e}")
-        return None
-
-
-
-
-def get_current_chatbot_state(platform: str, chat_id: str):
-    return ChatbotConversationState.query.filter_by(
-        platform=platform,
-        chat_id=chat_id
-    ).first()
-
-
-
-
-def bind_telegram_consultant_by_code(chat_message, code: str):
-    if not chat_message or not code:
-        return None, "dados inválidos"
-
-    normalized_code = code.strip().upper()
-
-    consultant = Consultant.query.filter(
-        db.func.upper(Consultant.telegram_link_code) == normalized_code
-    ).first()
-
-    if not consultant:
-        return None, "código inválido"
-
-    existing = TelegramContactBinding.query.filter_by(
-        telegram_chat_id=str(chat_message.chat_id)
-    ).first()
-
-    if existing:
-        existing.telegram_user_id = str(chat_message.user_id) if chat_message.user_id else existing.telegram_user_id
-        existing.telegram_username = chat_message.user_name or existing.telegram_username
-        existing.display_name = chat_message.user_name or existing.display_name
-        existing.consultant_id = consultant.id
-        existing.is_active = True
-        db.session.commit()
-        return existing, None
-
-    binding = TelegramContactBinding(
-        telegram_chat_id=str(chat_message.chat_id),
-        telegram_user_id=str(chat_message.user_id) if chat_message.user_id else None,
-        telegram_username=chat_message.user_name or None,
-        display_name=chat_message.user_name or None,
-        consultant_id=consultant.id,
-        is_active=True
-    )
-
-    db.session.add(binding)
-    db.session.commit()
-    return binding, None
-
-
-def is_week_schedule_request(text: str) -> bool:
-    if not text:
-        return False
-
-    normalized = normalize_lookup_text(text)
-
-    triggers = [
-        "visitas pendentes dessa semana",
-        "visitas pendentes da semana",
-        "minhas visitas da semana",
-        "agenda da semana",
-        "visitas da semana",
-        "pendentes da semana",
-        "agenda semanal",
-    ]
-
-    return any(trigger in normalized for trigger in triggers)
+
+
 
 
 def get_week_date_range(reference_date=None):
@@ -3557,58 +4560,11 @@ def get_week_date_range(reference_date=None):
     return start, end
 
 
-def find_consultant_pending_visits_for_week(consultant_id: int, reference_date=None, limit: int = 50):
-    if not consultant_id:
-        return []
-
-    start_date, end_date = get_week_date_range(reference_date)
-
-    visits = (
-        Visit.query
-        .filter(Visit.consultant_id == consultant_id)
-        .filter(Visit.date >= start_date)
-        .filter(Visit.date <= end_date)
-        .filter(Visit.status != "done")
-        .order_by(Visit.date.asc(), Visit.id.asc())
-        .limit(limit)
-        .all()
-    )
-
-    return visits
 
 
 
-def build_week_schedule_text(consultant_name: str, visits: list) -> str:
-    start_date, end_date = get_week_date_range()
 
-    if not visits:
-        return (
-            f"📅 Agenda da semana de {consultant_name}\n"
-            f"Período: {start_date.isoformat()} até {end_date.isoformat()}\n\n"
-            "Nenhuma visita pendente encontrada para esta semana."
-        )
 
-    lines = [
-        f"📅 Agenda da semana de {consultant_name}",
-        f"Período: {start_date.isoformat()} até {end_date.isoformat()}",
-        "",
-    ]
-
-    for idx, visit in enumerate(visits, start=1):
-        client_name = visit.client.name if getattr(visit, "client", None) else f"Cliente {visit.client_id}"
-        recommendation = (visit.recommendation or "—").strip()
-        culture = visit.culture or "—"
-        visit_date = visit.date.isoformat() if visit.date else "—"
-
-        lines.append(f"{idx}. {visit_date} - {client_name} - {culture} - {recommendation}")
-
-    lines.append("")
-    lines.append("Responda com:")
-    lines.append("🔢 LANCAR VISITA X para atualizar uma visita da agenda")
-    lines.append("✅ CONCLUIR VISITA X para apenas concluir")
-    lines.append("❌ CANCELAR para sair")
-
-    return "\n".join(lines)
 
 
 
@@ -3688,268 +4644,39 @@ def create_telegram_binding():
 
 
 
-def normalize_lookup_text(value: str) -> str:
-    if not value:
-        return ""
-    value = unicodedata.normalize("NFD", value.strip().lower())
-    return "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
 
 
-def normalize_intent_text(text: str) -> str:
-    return normalize_lookup_text(text or "").strip()
 
 
-def parse_week_visit_action(text: str):
-    if not text:
-        return None
-
-    normalized = normalize_intent_text(text)
-
-    patterns = [
-        (r"^(?:lanca|lancar|vamos lancar|quero lancar|realizar|fazer|abre|abrir)\s+(?:a\s+)?(?:visita\s+)?(\d+)$", "launch_week_visit"),
-        (r"^(?:concluir|conclui|finalizar|finaliza|fechar|fecha)\s+(?:a\s+)?(?:visita\s+)?(\d+)$", "complete_week_visit"),
-        (r"^(?:visita\s+)?(\d+)$", "launch_week_visit"),
-    ]
-
-    for pattern, intent in patterns:
-        match = re.match(pattern, normalized)
-        if match:
-            return {
-                "intent": intent,
-                "index": int(match.group(1)) - 1
-            }
-
-    return None
 
 
-def is_week_schedule_request(text: str) -> bool:
-    normalized = normalize_intent_text(text)
-
-    triggers = [
-        "agenda da semana",
-        "visitas da semana",
-        "visitas pendentes da semana",
-        "chat agenda da semana",
-        "me passa agenda",
-        "me passe agenda",
-        "me passa as visitas da semana",
-        "me passe as visitas da semana",
-        "quais visitas tenho essa semana",
-        "quais visitas tenho na semana",
-        "minha agenda da semana",
-    ]
-
-    return any(trigger in normalized for trigger in triggers)
 
 
-def is_pdf_request(text: str) -> bool:
-    normalized = normalize_intent_text(text)
-
-    triggers = [
-        "pdf",
-        "gerar pdf",
-        "gera pdf",
-        "me manda o pdf",
-        "mande o pdf",
-        "quero o pdf",
-        "relatorio pdf",
-        "relatorio em pdf",
-        "pdf das visitas",
-        "pdf das ultimas visitas",
-        "pdf das últimas visitas",
-    ]
-
-    return any(trigger in normalized for trigger in triggers)
 
 
-def is_last_pdf_request(text: str) -> bool:
-    normalized = normalize_intent_text(text)
 
-    triggers = [
-        "pdf da ultima visita",
-        "pdf da última visita",
-        "pdf ultima visita",
-        "ultimo pdf",
-        "último pdf",
-        "pdf da visita mais recente",
-        "me manda o pdf da ultima visita",
-        "me manda o pdf da última visita",
-    ]
 
-    return any(trigger in normalized for trigger in triggers)
+
+
 
 
     
-def parse_yes_no(value: str):
-    if not value:
-        return None
-
-    normalized = normalize_lookup_text(value)
-
-    if normalized in ("sim", "s", "yes", "y"):
-        return True
-
-    if normalized in ("nao", "não", "n", "no"):
-        return False
-
-    return None   
 
 
-def find_client_by_name(client_name: str):
-    if not client_name:
-        return None, [], False
-
-    target = normalize_lookup_text(client_name)
-    if not target:
-        return None, [], False
-
-    clients = Client.query.all()
-
-    # 1) match exato normalizado
-    for client in clients:
-        current = normalize_lookup_text(client.name)
-        if current == target:
-            return client, [client], False
-
-    # 2) match parcial simples
-    partial_candidates = []
-    for client in clients:
-        current = normalize_lookup_text(client.name)
-        if target in current or current in target:
-            partial_candidates.append(client)
-
-    if len(partial_candidates) == 1:
-        return partial_candidates[0], partial_candidates, False
-
-    if len(partial_candidates) > 1:
-        best_client = None
-        best_score = 0.0
-
-        for client in partial_candidates:
-            current = normalize_lookup_text(client.name)
-            score = SequenceMatcher(None, target, current).ratio()
-            if score > best_score:
-                best_score = score
-                best_client = client
-
-        if best_client and best_score >= 0.86:
-            return best_client, partial_candidates[:3], False
-
-        return best_client, partial_candidates[:3], True
-
-    # 3) similaridade geral
-    scored = []
-    for client in clients:
-        current = normalize_lookup_text(client.name)
-        score = SequenceMatcher(None, target, current).ratio()
-        scored.append((client, score))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
-
-    if not scored:
-        return None, [], True
-
-    best_client, best_score = scored[0]
-    top_candidates = [item[0] for item in scored[:3] if item[1] >= 0.55]
-
-    if best_client and best_score >= 0.86:
-        return best_client, top_candidates, False
-
-    if best_client and best_score >= 0.65:
-        return best_client, top_candidates, True
-
-    return None, top_candidates, True
 
 
-def find_property_by_name(property_name: str, client_id: int = None):
-    if not property_name:
-        return None, [], False
 
-    target = normalize_lookup_text(property_name)
-    if not target:
-        return None, [], False
-
-    query = Property.query
-    if client_id:
-        query = query.filter_by(client_id=client_id)
-
-    properties = query.all()
-
-    # 1) match exato
-    for prop in properties:
-        current = normalize_lookup_text(prop.name)
-        if current == target:
-            return prop, [prop], False
-
-    # 2) match parcial
-    partial_candidates = []
-    for prop in properties:
-        current = normalize_lookup_text(prop.name)
-        if target in current or current in target:
-            partial_candidates.append(prop)
-
-    if len(partial_candidates) == 1:
-        return partial_candidates[0], partial_candidates, False
-
-    if len(partial_candidates) > 1:
-        best_prop = None
-        best_score = 0.0
-
-        for prop in partial_candidates:
-            current = normalize_lookup_text(prop.name)
-            score = SequenceMatcher(None, target, current).ratio()
-            if score > best_score:
-                best_score = score
-                best_prop = prop
-
-        if best_prop and best_score >= 0.86:
-            return best_prop, partial_candidates[:3], False
-
-        return best_prop, partial_candidates[:3], True
-
-    # 3) similaridade geral
-    scored = []
-    for prop in properties:
-        current = normalize_lookup_text(prop.name)
-        score = SequenceMatcher(None, target, current).ratio()
-        scored.append((prop, score))
-
-    scored.sort(key=lambda x: x[1], reverse=True)
-
-    if not scored:
-        return None, [], True
-
-    best_prop, best_score = scored[0]
-    top_candidates = [item[0] for item in scored[:3] if item[1] >= 0.55]
-
-    if best_prop and best_score >= 0.86:
-        return best_prop, top_candidates, False
-
-    if best_prop and best_score >= 0.65:
-        return best_prop, top_candidates, True
-
-    return None, top_candidates, True
+    
 
 
-def is_valid_fenologia(value: str) -> bool:
-    if not value:
-        return False
 
-    value = value.strip().upper()
 
-    valid_patterns = [
-        r"^V\d{1,2}$",   # V1, V4, V10
-        r"^R\d{1,2}$",   # R1, R2, R6
-        r"^VE$",
-        r"^VC$",
-        r"^VT$",
-    ]
 
-    for pattern in valid_patterns:
-        if re.match(pattern, value):
-            return True
 
-    return False
+
+
+
+
 
 
 
@@ -3973,42 +4700,7 @@ def is_last_pdf_request(text: str) -> bool:
     return any(trigger in normalized for trigger in triggers)
 
 
-def find_pending_visits(
-    client_id: int,
-    property_id: int = None,
-    culture: str = None,
-    limit: int = 5
-):
-    """
-    Busca visitas pendentes do cliente e, se houver, da propriedade.
-    Retorna:
-    - visits: lista de visitas
-    - same_culture_found: se encontrou visitas da mesma cultura
-    """
-    base_query = Visit.query.filter(Visit.client_id == client_id)
-    base_query = base_query.filter(Visit.status.in_(["planned", "pendente", "planejada", "planejado"]))
 
-    if property_id:
-        base_query = base_query.filter(Visit.property_id == property_id)
-
-    if culture:
-        same_culture = (
-            base_query
-            .filter(Visit.culture == culture)
-            .order_by(Visit.date.asc().nullslast())
-            .limit(limit)
-            .all()
-        )
-        if same_culture:
-            return same_culture, True
-
-    fallback = (
-        base_query
-        .order_by(Visit.date.asc().nullslast())
-        .limit(limit)
-        .all()
-    )
-    return fallback, False
 
 
 @bp.route('/chatbot/preview-visit', methods=['POST'])
@@ -4072,39 +4764,7 @@ def chatbot_preview_visit():
             "error": str(e)
         }), 500
 
-def build_pending_visits_confirmation_text(client_name: str, requested_culture: str, suggestions: list, same_culture_found: bool) -> str:
-    lines = []
 
-    if suggestions:
-        if requested_culture and same_culture_found:
-            lines.append(f"📋 Encontrei visitas pendentes de {requested_culture} para {client_name}:")
-        elif requested_culture and not same_culture_found:
-            lines.append(f"Não encontrei visitas pendentes de {requested_culture} para {client_name}.")
-            lines.append("")
-            lines.append(f"📋 Encontrei outras visitas pendentes deste cliente:")
-        else:
-            lines.append(f"📋 Encontrei visitas pendentes para {client_name}:")
-
-        for idx, item in enumerate(suggestions, start=1):
-            lines.append(f"{idx}. {item.get('culture') or '—'} - {item.get('recommendation') or '—'} - {item.get('date') or '—'}")
-
-        lines.append("")
-        lines.append("Responda com:")
-        lines.append("🔢 número da visita para atualizar")
-        lines.append("✅ CONCLUIR X para apenas concluir a visita pendente")
-        lines.append("🆕 NOVA para criar uma nova visita")
-        return "\n".join(lines)
-
-    if requested_culture:
-        return (
-            f"Não encontrei visitas pendentes de {requested_culture} para {client_name}.\n\n"
-            "Você pode responder com NOVA para criar uma nova visita."
-        )
-
-    return (
-        f"Não encontrei visitas pendentes para {client_name}.\n\n"
-        "Você pode responder com NOVA para criar uma nova visita."
-    )
 
 @bp.route('/chatbot/suggest-pending-visits', methods=['POST'])
 def chatbot_suggest_pending_visits():
@@ -4692,362 +5352,7 @@ def create_visit():
     return jsonify(message="visita criada", visit=v.to_dict()), 201
 
 
-def build_visit_pdf_file(visit_id: int):
-    """
-    Gera o mesmo PDF da visita e retorna:
-    - buffer (BytesIO)
-    - filename (str)
-    """
-    visit = Visit.query.get_or_404(visit_id)
-    client = Client.query.get(visit.client_id)
-    property_ = Property.query.get(visit.property_id) if visit.property_id else None
-    plot = Plot.query.get(visit.plot_id) if visit.plot_id else None
 
-    consultant = Consultant.query.get(visit.consultant_id) if visit.consultant_id else None
-    consultant_name = consultant.name if consultant else (f"Consultor {visit.consultant_id}" if visit.consultant_id else "")
-
-    if visit.planting_id:
-        visits_to_include = (
-            Visit.query.filter(Visit.planting_id == visit.planting_id)
-            .order_by(Visit.date.desc()).all()
-        )
-    else:
-        visits_to_include = (
-            Visit.query.filter(
-                Visit.client_id == visit.client_id,
-                Visit.property_id == visit.property_id,
-                Visit.plot_id == visit.plot_id,
-                Visit.culture == visit.culture,
-            )
-            .order_by(Visit.date.desc()).all()
-        )
-
-    filtered = []
-    for v in visits_to_include:
-        valid = [p for p in getattr(v, "photos", []) if getattr(p, "url", None)]
-        if valid:
-            v._valid_photos = valid
-            filtered.append(v)
-
-    visits_to_include = filtered[:MAX_VISITS]
-
-    def nl2br(text: str) -> str:
-        if not text:
-            return ""
-        t = text.replace("\r\n", "\n").replace("\r", "\n")
-        t = html_escape(t)
-        return t.replace("\n", "<br/>")
-
-    static_dir = os.path.join(os.path.dirname(__file__), "static")
-    nutriverde_logo_path = os.path.join(static_dir, "nutriverde_logo_pdf.png")
-
-    def slugify_variety(name: str) -> str:
-        if not name:
-            return ""
-        s = unicodedata.normalize("NFD", name)
-        s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-        s = s.strip().lower()
-        s = re.sub(r"\s+", "_", s)
-        s = re.sub(r"[^a-z0-9_]+", "", s)
-        return s
-
-    variety_slug = slugify_variety(visit.variety or "")
-    variety_logo_path = os.path.join(static_dir, "variety_logos", f"{variety_slug}.png")
-
-    def draw_footer(canvas, doc):
-        canvas.saveState()
-        y = 22
-        pad = 50
-
-        if variety_slug and os.path.exists(variety_logo_path):
-            try:
-                img = PILImage.open(variety_logo_path)
-                aspect = img.height / float(img.width)
-                w = 110
-                h = w * aspect
-                x = pad
-                canvas.drawImage(variety_logo_path, x, y, width=w, height=h, mask="auto")
-            except:
-                pass
-
-        if os.path.exists(nutriverde_logo_path):
-            try:
-                img = PILImage.open(nutriverde_logo_path)
-                aspect = img.height / float(img.width)
-                w = 70
-                h = w * aspect
-                x = A4[0] - pad - w
-                canvas.drawImage(nutriverde_logo_path, x, y, width=w, height=h, mask="auto")
-            except:
-                pass
-
-        canvas.restoreState()
-
-    buffer = BytesIO()
-    temp_jpgs = []
-
-    def smart_params(total_photos_all: int):
-        if total_photos_all <= 4:  return (1280, 75)
-        if total_photos_all <= 8:  return (1200, 70)
-        if total_photos_all <= 16: return (1100, 62)
-        return (1000, 55)
-
-    def download_to_temp(url: str, timeout=20, max_bytes=12_000_000):
-        tmp = None
-        try:
-            req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urlopen(req, timeout=timeout) as r:
-                try:
-                    cl = r.headers.get("Content-Length")
-                    if cl and int(cl) > max_bytes:
-                        return None
-                except:
-                    pass
-
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".img")
-                total = 0
-
-                while True:
-                    chunk = r.read(64 * 1024)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > max_bytes:
-                        tmp.close()
-                        try:
-                            os.remove(tmp.name)
-                        except:
-                            pass
-                        return None
-                    tmp.write(chunk)
-
-                tmp.close()
-                return tmp.name
-        except Exception:
-            try:
-                if tmp and tmp.name:
-                    tmp.close()
-                    os.remove(tmp.name)
-            except:
-                pass
-            return None
-
-    def compress_to_jpeg_temp(src_path: str, max_px: int, quality: int):
-        try:
-            img = PILImage.open(src_path)
-            img = ImageOps.exif_transpose(img)
-            img.thumbnail((max_px, max_px), PILImage.LANCZOS)
-
-            out = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
-            out_path = out.name
-            out.close()
-
-            img.convert("RGB").save(out_path, "JPEG", optimize=True, quality=quality)
-            try:
-                img.close()
-            except:
-                pass
-            return out_path
-        except Exception:
-            return None
-        finally:
-            try:
-                os.remove(src_path)
-            except:
-                pass
-
-    def draw_dark_background(canvas, doc):
-        canvas.saveState()
-        canvas.setFillColor(colors.HexColor("#101010"))
-        canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
-        canvas.restoreState()
-        draw_footer(canvas, doc)
-
-    def draw_cover_background(canvas, doc):
-        canvas.saveState()
-        canvas.setFillColor(colors.HexColor("#0E0E0E"))
-        canvas.rect(0, 0, A4[0], A4[1], fill=True, stroke=False)
-        canvas.setFillColor(colors.HexColor("#00E676"))
-        canvas.rect(0, 0, 28, A4[1], fill=True, stroke=False)
-        canvas.restoreState()
-        draw_footer(canvas, doc)
-
-    doc = SimpleDocTemplate(
-        buffer, pagesize=A4,
-        leftMargin=50, rightMargin=40,
-        topMargin=60, bottomMargin=40
-    )
-
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="VisitTitleSmall", fontSize=12, leading=14, alignment=TA_CENTER, textColor=colors.HexColor("#BBF7D0"), spaceAfter=8))
-    styles.add(ParagraphStyle(name="VisitStageBig", fontSize=22, leading=26, alignment=TA_CENTER, textColor=colors.HexColor("#FFFFFF"), spaceAfter=14))
-    styles.add(ParagraphStyle(name="VisitDateCenter", fontSize=12, leading=14, alignment=TA_CENTER, textColor=colors.HexColor("#E0E0E0"), spaceAfter=14))
-    styles.add(ParagraphStyle(name="VisitSectionLabel", fontSize=14, leading=16, alignment=TA_CENTER, textColor=colors.HexColor("#A5D6A7"), spaceBefore=10, spaceAfter=4))
-    styles.add(ParagraphStyle(name="VisitSectionValue", fontSize=16, leading=20, alignment=TA_CENTER, textColor=colors.HexColor("#FFFFFF"), spaceAfter=14))
-    styles.add(ParagraphStyle(name="HrLine", alignment=TA_CENTER, fontSize=10, textColor=colors.HexColor("#333333"), spaceBefore=10, spaceAfter=16))
-    styles.add(ParagraphStyle(name="Caption", alignment=TA_CENTER, fontSize=9, textColor=colors.HexColor("#BDBDBD"), spaceBefore=4, spaceAfter=10))
-    styles.add(ParagraphStyle(name="Footer", alignment=TA_CENTER, fontSize=9, textColor=colors.HexColor("#9E9E9E"), spaceBefore=20))
-
-    story = []
-    story.append(Spacer(1, 80))
-
-    title_style = ParagraphStyle(name="CoverTitle", fontSize=22, leading=26, alignment=TA_CENTER, textColor=colors.HexColor("#E0F2F1"), spaceAfter=6)
-    subtitle_style = ParagraphStyle(name="CoverSubtitle", fontSize=14, leading=18, alignment=TA_CENTER, textColor=colors.HexColor("#80CBC4"), spaceAfter=25)
-
-    story.append(Paragraph("RELATÓRIO TÉCNICO DE", title_style))
-    story.append(Paragraph("ACOMPANHAMENTO", title_style))
-    story.append(Paragraph("Ciclo Fenológico", subtitle_style))
-
-    client_style = ParagraphStyle(name="ClientBig", fontSize=22, leading=28, alignment=TA_CENTER, textColor=colors.HexColor("#FFFFFF"), spaceAfter=35)
-    story.append(Paragraph((client.name or "Cliente").strip(), client_style))
-
-    try:
-        logo_path = os.path.join(static_dir, "nutricrm_logo_pdf.png")
-        if os.path.exists(logo_path):
-            img = PILImage.open(logo_path)
-            aspect = img.height / float(img.width)
-            width = 160
-            story.append(Image(logo_path, width=width, height=width * aspect))
-            story.append(Spacer(1, 20))
-    except:
-        pass
-
-    info_label = ParagraphStyle(name="InfoLabel", fontSize=12, alignment=TA_LEFT, textColor=colors.HexColor("#A5D6A7"))
-    info_value = ParagraphStyle(name="InfoValue", fontSize=12, alignment=TA_LEFT, textColor=colors.HexColor("#E0E0E0"), spaceAfter=6)
-
-    def add_info(label, value):
-        if value:
-            story.append(Paragraph(label, info_label))
-            story.append(Paragraph(str(value), info_value))
-
-    add_info("Propriedade:", property_.name if property_ else "")
-    add_info("Talhão:", plot.name if plot else "")
-    add_info("Cultura:", visit.culture or "")
-    add_info("Variedade:", visit.variety or "")
-    add_info("Consultor:", consultant_name or "")
-
-    if visits_to_include:
-        start_date = visits_to_include[-1].date.strftime("%d/%m/%Y")
-        end_date = visits_to_include[0].date.strftime("%d/%m/%Y")
-    else:
-        start_date = end_date = visit.date.strftime("%d/%m/%Y")
-
-    add_info("Período de acompanhamento:", f"{start_date} → {end_date}")
-
-    story.append(Spacer(1, 40))
-    story.append(PageBreak())
-
-    total_visits = len(visits_to_include)
-    for pos, v in enumerate(visits_to_include):
-        idx = total_visits - pos
-
-        story.append(Paragraph(f"VISITA {idx}", styles["VisitTitleSmall"]))
-        story.append(Paragraph(v.fenologia_real or "—", styles["VisitStageBig"]))
-
-        try:
-            dtext = v.date.strftime("%d/%m/%Y")
-        except:
-            dtext = str(v.date)
-        story.append(Paragraph(dtext, styles["VisitDateCenter"]))
-        story.append(Spacer(1, 20))
-
-        if v.recommendation:
-            story.append(Paragraph("Observações", styles["VisitSectionLabel"]))
-            story.append(Paragraph(nl2br(v.recommendation), styles["VisitSectionValue"]))
-
-        story.append(Paragraph("<hr/>", styles["HrLine"]))
-
-        photos = list(getattr(v, "_valid_photos", []) or [])
-        if photos:
-            photos = photos[:MAX_PHOTOS_V]
-            total = len(photos)
-
-            cols = 1 if total <= 3 else (2 if total <= 6 else 3)
-            max_width = 220 if cols == 1 else 160
-            col_width = (A4[0] - 100) / cols
-
-            total_all = sum(min(len(getattr(x, "photos", []) or []), MAX_PHOTOS_V) for x in visits_to_include)
-            max_px, quality = smart_params(total_all)
-
-            row = []
-            count = 0
-
-            for i, photo in enumerate(photos, 1):
-                photo_url = resolve_photo_url(photo.url)
-                if not photo_url:
-                    continue
-
-                try:
-                    src_path = download_to_temp(photo_url, timeout=20, max_bytes=12_000_000)
-                    if not src_path:
-                        continue
-
-                    jpg_path = compress_to_jpeg_temp(src_path, max_px=max_px, quality=quality)
-                    if not jpg_path:
-                        continue
-
-                    temp_jpgs.append(jpg_path)
-
-                    probe = PILImage.open(jpg_path)
-                    w, h = probe.size
-                    try:
-                        probe.close()
-                    except:
-                        pass
-
-                    aspect = (h / w) if w else 1
-                    img_obj = Image(jpg_path, width=max_width, height=max_width * aspect)
-
-                    base_caption = getattr(photo, "caption", "") or ""
-                    lat = getattr(photo, "latitude", None)
-                    lon = getattr(photo, "longitude", None)
-
-                    gps_caption = ""
-                    if lat is not None and lon is not None:
-                        gps_caption = f"📍 {lat:.5f}, {lon:.5f}"
-
-                    final_caption = html_escape(base_caption)
-                    if gps_caption:
-                        final_caption += f"<br/><small>{html_escape(gps_caption)}</small>"
-
-                    caption_par = Paragraph(final_caption, styles["Caption"])
-
-                    row.append([img_obj, caption_par])
-                    count += 1
-
-                    if count == cols or i == total:
-                        story.append(
-                            Table(
-                                [row],
-                                colWidths=[col_width] * len(row),
-                                hAlign="CENTER",
-                                style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")])
-                            )
-                        )
-                        story.append(Spacer(1, 14))
-                        row = []
-                        count = 0
-
-                except Exception:
-                    continue
-
-            if pos < total_visits - 1:
-                story.append(PageBreak())
-
-    story.append(Paragraph("<b>NutriCRM</b>", styles["Footer"]))
-    story.append(Paragraph("Relatório cumulativo — ciclo fenológico", styles["Footer"]))
-
-    doc.build(story, onFirstPage=draw_cover_background, onLaterPages=draw_dark_background)
-    buffer.seek(0)
-
-    for p in temp_jpgs:
-        try:
-            os.remove(p)
-        except:
-            pass
-
-    filename = f"{client.name if client else 'Cliente'} - {visit.variety or ''} - Relatório.pdf"
-    return buffer, filename
 
 
 
