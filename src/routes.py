@@ -1300,13 +1300,15 @@ def telegram_webhook():
                 text=f"🎤 Áudio transcrito:\n{message_text}"
             )
 
+        # normaliza texto para evitar .strip() em None
+        message_text = (message_text or "").strip()
 
         # =========================================================
         # Auto-vínculo Telegram
         # =========================================================
         current_binding = find_telegram_binding(chat_message)
 
-        if message_text.strip().lower() == "/start":
+        if message_text.lower() == "/start":
             if current_binding:
                 send_result = send_telegram_message(
                     chat_id=chat_message.chat_id,
@@ -1335,8 +1337,8 @@ def telegram_webhook():
                 "send_result": send_result,
             }), 200
 
-        if message_text.strip().lower().startswith("/vincular "):
-            code = message_text.strip()[10:].strip()
+        if message_text.lower().startswith("/vincular "):
+            code = message_text[10:].strip()
 
             binding, error = bind_telegram_consultant_by_code(chat_message, code)
 
@@ -1372,7 +1374,6 @@ def telegram_webhook():
                 "message": "mensagem sem texto/caption"
             }), 200
 
-
         # =========================================================
         # Cancelar a qualquer momento
         # =========================================================
@@ -1396,9 +1397,6 @@ def telegram_webhook():
                 "message": "operação cancelada globalmente",
                 "send_result": send_result,
             }), 200
-
-
-    
 
         # =========================================================
         # PDF da última visita
@@ -1454,13 +1452,12 @@ def telegram_webhook():
                     "ok": False,
                     "error": str(e)
                 }), 500
-        
 
-        
         # =========================================================
         # Ação sobre visita da agenda semanal
         # =========================================================
         week_action = parse_week_visit_action(message_text)
+        print("DEBUG week_action:", message_text, "=>", week_action)
 
         if week_action:
             state = ChatbotConversationState.query.filter_by(
@@ -1469,106 +1466,130 @@ def telegram_webhook():
                 status="awaiting_week_visit_selection"
             ).first()
 
-            if state:
-                week_candidates = json.loads(state.pending_visit_suggestions_json or "[]")
-                idx = week_action["index"]
+            print("DEBUG current_state:", state.status if state else None)
 
-                if idx < 0 or idx >= len(week_candidates):
-                    send_result = send_telegram_message(
-                        chat_id=chat_message.chat_id,
-                        text="Número inválido da agenda. Revise a lista e tente novamente."
-                    )
-                    return jsonify({
-                        "ok": True,
-                        "message": "índice inválido da agenda",
-                        "send_result": send_result,
-                    }), 200
+            if not state:
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Não encontrei uma agenda semanal ativa. Peça primeiro sua agenda da semana."
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "nenhum estado ativo para seleção da agenda",
+                    "send_result": send_result,
+                }), 200
 
-                selected_visit = week_candidates[idx]
+            week_candidates = json.loads(state.pending_visit_suggestions_json or "[]")
+            idx = week_action["index"]
 
-                action = "use_existing_pending_visit"
-                final_visit_payload = {
-                    "client_id": selected_visit.get("client_id"),
-                    "property_id": selected_visit.get("property_id"),
-                    "plot_id": selected_visit.get("plot_id"),
-                    "consultant_id": resolved_consultant_id,
-                    "date": selected_visit.get("date"),
-                    "status": "done",
-                    "culture": selected_visit.get("culture") or "",
-                    "variety": selected_visit.get("variety") or "",
-                    "fenologia_real": selected_visit.get("fenologia_real"),
-                    "recommendation": selected_visit.get("recommendation") or "",
-                    "products": [],
-                    "latitude": None,
-                    "longitude": None,
-                    "generate_schedule": False,
-                    "source": "chatbot",
-                    "linked_pending_visit_id": selected_visit.get("id"),
-                }
+            print("DEBUG week_candidates:", len(week_candidates))
+            print("DEBUG selected idx:", idx)
 
-                # conclusão simples
-                if week_action["intent"] == "complete_week_visit":
-                    summary_text = build_visit_summary_text(
-                        action=action,
-                        final_visit_payload=final_visit_payload,
-                        selected_pending_visit=selected_visit,
-                        close_only=True
-                    )
+            if idx < 0 or idx >= len(week_candidates):
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Número inválido da agenda. Revise a lista e tente novamente."
+                )
+                return jsonify({
+                    "ok": True,
+                    "message": "índice inválido da agenda",
+                    "send_result": send_result,
+                }), 200
 
-                    state.visit_preview_json = json.dumps(
-                        build_guided_state_payload(
-                            action=action,
-                            final_visit_payload=final_visit_payload,
-                            selected_pending_visit=selected_visit,
-                            close_only=True,
-                        ),
-                        ensure_ascii=False
-                    )
-                    state.confirmation_text = summary_text
-                    state.status = "awaiting_final_confirmation"
-                    db.session.commit()
+            selected_visit = week_candidates[idx]
 
-                    send_result = send_telegram_message(
-                        chat_id=chat_message.chat_id,
-                        text=summary_text
-                    )
+            if not selected_visit:
+                send_result = send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="Não consegui identificar a visita selecionada."
+                )
+                return jsonify({
+                    "ok": False,
+                    "message": "visita selecionada inválida",
+                    "send_result": send_result,
+                }), 400
 
-                    return jsonify({
-                        "ok": True,
-                        "message": "resumo enviado para conclusão da visita da agenda",
-                        "summary_text": summary_text,
-                        "send_result": send_result,
-                    }), 200
+            action = "use_existing_pending_visit"
+            final_visit_payload = {
+                "client_id": selected_visit.get("client_id"),
+                "property_id": selected_visit.get("property_id"),
+                "plot_id": selected_visit.get("plot_id"),
+                "consultant_id": resolved_consultant_id,  # garantir que exista antes
+                "date": selected_visit.get("date"),
+                "status": "done",
+                "culture": selected_visit.get("culture") or "",
+                "variety": selected_visit.get("variety") or "",
+                "fenologia_real": selected_visit.get("fenologia_real"),
+                "recommendation": selected_visit.get("recommendation") or "",
+                "products": [],
+                "latitude": None,
+                "longitude": None,
+                "generate_schedule": False,
+                "source": "chatbot",
+                "linked_pending_visit_id": selected_visit.get("id"),
+            }
 
-                # atualização completa
-                final_visit_payload["fenologia_real"] = None
-                final_visit_payload["date"] = None
-                final_visit_payload["recommendation"] = ""
+            # conclusão simples
+            if week_action["intent"] == "complete_week_visit":
+                summary_text = build_visit_summary_text(
+                    action=action,
+                    final_visit_payload=final_visit_payload,
+                    selected_pending_visit=selected_visit,
+                    close_only=True
+                )
 
                 state.visit_preview_json = json.dumps(
                     build_guided_state_payload(
                         action=action,
                         final_visit_payload=final_visit_payload,
                         selected_pending_visit=selected_visit,
-                        close_only=False,
+                        close_only=True,
                     ),
                     ensure_ascii=False
                 )
-                state.status = "awaiting_fenologia"
+                state.confirmation_text = summary_text
+                state.status = "awaiting_final_confirmation"
                 db.session.commit()
 
                 send_result = send_telegram_message(
                     chat_id=chat_message.chat_id,
-                    text="🌿 Informe a fenologia observada.\nExemplo: V4, V5, R1"
+                    text=summary_text
                 )
 
                 return jsonify({
                     "ok": True,
-                    "message": "iniciado fluxo para atualizar visita da agenda",
+                    "message": "resumo enviado para conclusão da visita da agenda",
+                    "summary_text": summary_text,
                     "send_result": send_result,
                 }), 200
 
+            # atualização completa
+            final_visit_payload["fenologia_real"] = None
+            final_visit_payload["date"] = None
+            final_visit_payload["recommendation"] = ""
 
+            state.visit_preview_json = json.dumps(
+                build_guided_state_payload(
+                    action=action,
+                    final_visit_payload=final_visit_payload,
+                    selected_pending_visit=selected_visit,
+                    close_only=False,
+                ),
+                ensure_ascii=False
+            )
+            state.status = "awaiting_fenologia"
+            db.session.commit()
+
+            send_result = send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text="🌿 Informe a fenologia observada.\nExemplo: V4, V5, R1"
+            )
+
+            return jsonify({
+                "ok": True,
+                "message": "iniciado fluxo para atualizar visita da agenda",
+                "send_result": send_result,
+            }), 200
 
         # =========================================================
         # Agenda / visitas pendentes da semana
@@ -1647,6 +1668,7 @@ def telegram_webhook():
                 "response_text": response_text,
                 "send_result": send_result,
             }), 200
+
 
 
 
