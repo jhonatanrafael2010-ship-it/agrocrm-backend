@@ -2693,7 +2693,7 @@ def telegram_webhook():
         ai_result = interpret_user_message_with_ai(
             message_text=message_text,
             current_state=current_state
-        )
+        ) or {}
 
         if ai_result and ai_result.get("confidence") in ("high", "medium"):
             ai_intent = ai_result.get("intent")
@@ -3678,28 +3678,14 @@ def normalize_intent_text(text: str) -> str:
 
 
 def parse_week_visit_action(text: str):
-    """
-    Interpreta comandos como:
-    - lança visita 7
-    - lancar visita 7
-    - concluir visita 7
-    - realizar 7
-    - visita 7
-    Retorna:
-    {
-        "intent": "launch_week_visit" | "complete_week_visit",
-        "index": int
-    }
-    ou None
-    """
     if not text:
         return None
 
     normalized = normalize_intent_text(text)
 
     patterns = [
-        (r"^(?:lanca|lancar|realizar|fazer|abre|abrir)\s+(?:visita\s+)?(\d+)$", "launch_week_visit"),
-        (r"^(?:concluir|conclui|finalizar|fechar)\s+(?:visita\s+)?(\d+)$", "complete_week_visit"),
+        (r"^(?:lanca|lancar|vamos lancar|quero lancar|realizar|fazer|abre|abrir)\s+(?:a\s+)?(?:visita\s+)?(\d+)$", "launch_week_visit"),
+        (r"^(?:concluir|conclui|finalizar|finaliza|fechar|fecha)\s+(?:a\s+)?(?:visita\s+)?(\d+)$", "complete_week_visit"),
         (r"^(?:visita\s+)?(\d+)$", "launch_week_visit"),
     ]
 
