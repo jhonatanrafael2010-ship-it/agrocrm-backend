@@ -1840,6 +1840,110 @@ def guess_telegram_photo_filename(photo_info: dict | None) -> str:
 
 
 
+def extract_telegram_photo_info(payload: dict) -> dict | None:
+    """
+    Extrai a melhor foto enviada no update do Telegram.
+    """
+    if not payload:
+        return None
+
+    message = payload.get("message") or payload.get("edited_message") or {}
+    photos = message.get("photo") or []
+    caption = (message.get("caption") or "").strip()
+
+    if not photos:
+        return None
+
+    best = photos[-1] if photos else None
+    if not best:
+        return None
+
+    return {
+        "file_id": best.get("file_id"),
+        "file_unique_id": best.get("file_unique_id"),
+        "width": best.get("width"),
+        "height": best.get("height"),
+        "file_size": best.get("file_size"),
+        "caption": caption,
+        "mime_group": "photo",
+    }
+
+
+
+def guess_telegram_photo_filename(photo_info: dict | None) -> str:
+    if not photo_info:
+        return "telegram_photo.jpg"
+
+    file_unique_id = photo_info.get("file_unique_id") or "photo"
+    return f"telegram_{file_unique_id}.jpg"
+
+
+
+def attach_photo_to_visit_from_telegram(
+    visit,
+    photo_bytes: bytes | None,
+    filename: str | None,
+    caption: str | None = None,
+):
+    """
+    Faz upload da foto recebida do Telegram para o Cloudflare R2
+    e cria o registro Photo vinculado à visita.
+    """
+    if not visit:
+        return None, "visita ausente"
+
+    if not photo_bytes:
+        return None, "foto ausente"
+
+    try:
+        bucket = os.environ.get("R2_BUCKET")
+        public_base = (os.environ.get("R2_PUBLIC_BASE_URL") or "").rstrip("/")
+
+        if not bucket or not public_base:
+            return None, "R2 não configurado: faltam variáveis de ambiente"
+
+        r2 = get_r2_client()
+
+        original = secure_filename(filename or "telegram_photo.jpg")
+        if "." not in original:
+            original = f"{original}.jpg"
+
+        unique = uuid.uuid4().hex
+        key = f"visits/{visit.id}/{unique}_{original}"
+
+        import io
+        file_obj = io.BytesIO(photo_bytes)
+
+        r2.upload_fileobj(
+            Fileobj=file_obj,
+            Bucket=bucket,
+            Key=key,
+            ExtraArgs={
+                "ContentType": "image/jpeg",
+            },
+        )
+
+        url = f"{public_base}/{key}"
+
+        photo = Photo(
+            visit_id=visit.id,
+            url=url,
+            caption=(caption or "").strip() or None
+        )
+
+        db.session.add(photo)
+        db.session.commit()
+
+        return photo, None
+
+    except Exception as e:
+        db.session.rollback()
+        return None, str(e)
+
+
+
+
+
 
 # ============================================================
 # 🌾 CULTURAS, VARIEDADES, CONSULTOR
@@ -2828,19 +2932,25 @@ def telegram_webhook():
         chatbot_service = ChatbotService()
         chat_message = chatbot_service.normalize_telegram_update(payload)
 
-        consultant = resolve_telegram_consultant(chat_message)
-        resolved_consultant_id = consultant.id if consultant else 1
-
         if not chat_message:
             return jsonify({
                 "ok": True,
                 "message": "update sem mensagem utilizável"
             }), 200
 
+        consultant = resolve_telegram_consultant(chat_message)
+        resolved_consultant_id = consultant.id if consultant else 1
+
         message_text = (chat_message.text or chat_message.caption or "").strip()
 
         audio_info = extract_telegram_audio_info(payload)
         photo_info = extract_telegram_photo_info(payload)
+
+        downloaded_photo_bytes = None
+        downloaded_photo_name = None
+
+
+        
 
 
         # Se não veio texto/caption, mas veio áudio, tenta transcrever
@@ -2897,31 +3007,14 @@ def telegram_webhook():
                 text=f"🎤 Áudio transcrito:\n{message_text}"
             )
 
+        # Normaliza texto para evitar .strip() em None
+        message_text = (message_text or "").strip()
+        message_text_lower = message_text.lower()
 
-
-        # Se não veio texto/caption, mas veio foto, orienta o usuário a complementar
-        if not message_text and photo_info:
-            send_telegram_message(
-                chat_id=chat_message.chat_id,
-                text=(
-                    "Recebi sua foto. Agora me envie junto uma descrição curta para eu entender o lançamento.\n\n"
-                    "Exemplos:\n"
-                    "- lançar visita no cliente Fazenda Modelo\n"
-                    "- visita de milho V4 com boa uniformidade\n"
-                    "- alterar visita 2 e anexar esta foto"
-                )
-            )
-            return jsonify({
-                "ok": True,
-                "message": "foto recebida sem descricao"
-            }), 200
-
-
-        downloaded_photo_bytes = None
-        downloaded_photo_name = None
-
+        # Se veio foto, tenta baixar desde já para possível uso posterior
         if photo_info:
             downloaded_photo_name = guess_telegram_photo_filename(photo_info)
+            photo_download_error = None
 
             downloaded_photo_bytes, photo_download_error = download_telegram_file_bytes(photo_info["file_id"])
 
@@ -2929,15 +3022,29 @@ def telegram_webhook():
                 print("DEBUG telegram photo download error:", photo_download_error)
                 downloaded_photo_bytes = None
 
-        # normaliza texto para evitar .strip() em None
-        message_text = (message_text or "").strip()
+        # Se não veio texto/caption, mas veio foto, pede contexto ao usuário
+        if not message_text and photo_info:
+            send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=(
+                    "Recebi sua foto. Me envie junto uma descrição curta para eu entender o lançamento.\n\n"
+                    "Exemplos:\n"
+                    "- lançar visita no cliente Fazenda Modelo\n"
+                    "- visita de milho V4 com boa uniformidade\n"
+                    "- concluir visita 2 e anexar esta foto"
+                )
+            )
+            return jsonify({
+                "ok": True,
+                "message": "foto recebida sem descricao"
+            }), 200
 
         # =========================================================
         # Auto-vínculo Telegram
         # =========================================================
         current_binding = find_telegram_binding(chat_message)
 
-        if message_text.lower() == "/start":
+        if message_text_lower == "/start":
             if current_binding:
                 send_result = send_telegram_message(
                     chat_id=chat_message.chat_id,
@@ -2966,7 +3073,7 @@ def telegram_webhook():
                 "send_result": send_result,
             }), 200
 
-        if message_text.lower().startswith("/vincular "):
+        if message_text_lower.startswith("/vincular "):
             code = message_text[10:].strip()
 
             binding, error = bind_telegram_consultant_by_code(chat_message, code)
@@ -3599,6 +3706,18 @@ def telegram_webhook():
 
                     db.session.commit()
 
+
+                    if downloaded_photo_bytes:
+                        attached_photo, attach_error = attach_photo_to_visit_from_telegram(
+                            visit=visit,
+                            photo_bytes=downloaded_photo_bytes,
+                            filename=downloaded_photo_name,
+                            caption=photo_info.get("caption") if photo_info else None,
+                        )
+
+                        if attach_error:
+                            print("DEBUG attach photo error:", attach_error)
+
                     state.status = "completed"
                     db.session.commit()
 
@@ -3623,6 +3742,8 @@ def telegram_webhook():
                         "message": "confirmação final processada com visita existente",
                         "visit": visit.to_dict()
                     }), 200
+                
+
 
                 if action == "create_new_visit":
                     if not final_visit_payload.get("client_id"):
@@ -3659,6 +3780,17 @@ def telegram_webhook():
 
                     db.session.add(new_visit)
                     db.session.commit()
+
+                    if downloaded_photo_bytes:
+                        attached_photo, attach_error = attach_photo_to_visit_from_telegram(
+                            visit=new_visit,
+                            photo_bytes=downloaded_photo_bytes,
+                            filename=downloaded_photo_name,
+                            caption=photo_info.get("caption") if photo_info else None,
+                        )
+
+                        if attach_error:
+                            print("DEBUG attach photo error:", attach_error)
 
                     state.status = "completed"
                     db.session.commit()
@@ -5131,6 +5263,8 @@ def chatbot_commit_visit():
                 "visit": visit.to_dict()
             }), 200
 
+
+
         # =========================================================
         # 2) Criar nova visita
         # =========================================================
@@ -5470,8 +5604,6 @@ def create_visit():
     db.session.add(v)
     db.session.commit()
     return jsonify(message="visita criada", visit=v.to_dict()), 201
-
-
 
 
 
