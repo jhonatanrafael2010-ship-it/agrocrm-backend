@@ -1870,14 +1870,6 @@ def extract_telegram_photo_info(payload: dict) -> dict | None:
 
 
 
-def guess_telegram_photo_filename(photo_info: dict | None) -> str:
-    if not photo_info:
-        return "telegram_photo.jpg"
-
-    file_unique_id = photo_info.get("file_unique_id") or "photo"
-    return f"telegram_{file_unique_id}.jpg"
-
-
 
 def attach_photo_to_visit_from_telegram(
     visit,
