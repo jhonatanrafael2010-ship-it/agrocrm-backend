@@ -322,29 +322,6 @@ def normalize_intent_text(text: str) -> str:
 
 
 
-
-
-def is_pdf_request(text: str) -> bool:
-    normalized = normalize_intent_text(text)
-
-    triggers = [
-        "pdf",
-        "gerar pdf",
-        "gera pdf",
-        "me manda o pdf",
-        "mande o pdf",
-        "quero o pdf",
-        "relatorio pdf",
-        "relatorio em pdf",
-        "pdf das visitas",
-        "pdf das ultimas visitas",
-        "pdf das últimas visitas",
-    ]
-
-    return any(trigger in normalized for trigger in triggers)
-
-
-
 def parse_yes_no(value: str):
     if not value:
         return None
@@ -831,49 +808,71 @@ def find_client_by_name(client_name: str):
         return None, [], False
 
     target = normalize_lookup_text(client_name)
+    target = re.sub(r"\s+", " ", target).strip()
+
     if not target:
         return None, [], False
 
+    stopwords = {
+        "cliente", "fazenda", "faz", "propriedade", "talhao", "talhão",
+        "visita", "visitar", "lancar", "lançar", "concluir", "nova",
+        "hoje", "amanha", "amanhã", "ontem", "observacao", "observação",
+        "fenologia", "cultura"
+    }
+
+    target_tokens = [t for t in target.split() if t not in stopwords]
+    target_clean = " ".join(target_tokens).strip() or target
+
     clients = Client.query.all()
 
-    # 1) match exato normalizado
-    for client in clients:
-        current = normalize_lookup_text(client.name)
-        if current == target:
-            return client, [client], False
-
-    # 2) match parcial simples
-    partial_candidates = []
-    for client in clients:
-        current = normalize_lookup_text(client.name)
-        if target in current or current in target:
-            partial_candidates.append(client)
-
-    if len(partial_candidates) == 1:
-        return partial_candidates[0], partial_candidates, False
-
-    if len(partial_candidates) > 1:
-        best_client = None
-        best_score = 0.0
-
-        for client in partial_candidates:
-            current = normalize_lookup_text(client.name)
-            score = SequenceMatcher(None, target, current).ratio()
-            if score > best_score:
-                best_score = score
-                best_client = client
-
-        if best_client and best_score >= 0.86:
-            return best_client, partial_candidates[:3], False
-
-        return best_client, partial_candidates[:3], True
-
-    # 3) similaridade geral
+    exact = []
+    partial = []
     scored = []
+
     for client in clients:
         current = normalize_lookup_text(client.name)
-        score = SequenceMatcher(None, target, current).ratio()
-        scored.append((client, score))
+        current_clean = re.sub(r"\s+", " ", current).strip()
+
+        if current_clean == target_clean:
+            exact.append(client)
+            continue
+
+        if target_clean and (target_clean in current_clean or current_clean in target_clean):
+            partial.append(client)
+
+        score_full = SequenceMatcher(None, target_clean, current_clean).ratio()
+
+        token_hits = 0
+        current_words = set(current_clean.split())
+        for token in target_clean.split():
+            if token in current_words:
+                token_hits += 1
+
+        token_score = token_hits / max(len(target_clean.split()), 1)
+        final_score = max(score_full, token_score * 0.95)
+
+        scored.append((client, final_score))
+
+    if len(exact) == 1:
+        return exact[0], exact, False
+
+    if len(exact) > 1:
+        return exact[0], exact[:3], True
+
+    if len(partial) == 1:
+        return partial[0], partial, False
+
+    if len(partial) > 1:
+        ranked_partial = sorted(
+            partial,
+            key=lambda c: SequenceMatcher(None, target_clean, normalize_lookup_text(c.name)).ratio(),
+            reverse=True
+        )
+        best = ranked_partial[0]
+        best_score = SequenceMatcher(None, target_clean, normalize_lookup_text(best.name)).ratio()
+        if best_score >= 0.72:
+            return best, ranked_partial[:3], False
+        return best, ranked_partial[:3], True
 
     scored.sort(key=lambda x: x[1], reverse=True)
 
@@ -881,12 +880,12 @@ def find_client_by_name(client_name: str):
         return None, [], True
 
     best_client, best_score = scored[0]
-    top_candidates = [item[0] for item in scored[:3] if item[1] >= 0.55]
+    top_candidates = [item[0] for item in scored[:3] if item[1] >= 0.45]
 
-    if best_client and best_score >= 0.86:
+    if best_score >= 0.78:
         return best_client, top_candidates, False
 
-    if best_client and best_score >= 0.65:
+    if best_score >= 0.58:
         return best_client, top_candidates, True
 
     return None, top_candidates, True
@@ -961,6 +960,47 @@ def find_property_by_name(property_name: str, client_id: int = None):
         return best_prop, top_candidates, True
 
     return None, top_candidates, True
+
+
+def try_extract_client_from_free_text(message_text: str):
+    if not message_text:
+        return None
+
+    normalized = normalize_lookup_text(message_text)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    if not normalized:
+        return None
+
+    blocked_prefixes = (
+        "/start",
+        "/vincular",
+        "pdf",
+        "agenda da semana",
+        "visitas da semana",
+        "me passa agenda",
+        "gerar pdf",
+        "confirmar",
+        "cancelar",
+        "concluir visita",
+        "lancar visita",
+        "lançar visita",
+    )
+
+    if any(normalized.startswith(p) for p in blocked_prefixes):
+        return None
+
+    client, candidates, needs_confirmation = find_client_by_name(normalized)
+    if client:
+        return {
+            "client": client,
+            "candidates": candidates,
+            "needs_confirmation": needs_confirmation,
+        }
+
+    return None
+
+
 
 def find_pending_visits(
     client_id: int,
@@ -1040,34 +1080,6 @@ def extract_telegram_audio_info(payload: dict):
     return None
 
 
-
-def download_telegram_file_bytes(file_id: str):
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    if not token or not file_id:
-        return None, "token ou file_id ausente"
-
-    try:
-        # 1) pega file_path
-        get_file_url = f"https://api.telegram.org/bot{token}/getFile"
-        resp = requests.get(get_file_url, params={"file_id": file_id}, timeout=30)
-        data = resp.json()
-
-        if not resp.ok or not data.get("ok"):
-            return None, f"erro ao obter file_path: {data}"
-
-        file_path = data["result"]["file_path"]
-
-        # 2) baixa o arquivo
-        download_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
-        file_resp = requests.get(download_url, timeout=60)
-
-        if not file_resp.ok:
-            return None, f"erro ao baixar arquivo: status {file_resp.status_code}"
-
-        return file_resp.content, None
-
-    except Exception as e:
-        return None, str(e)
 
 
 
@@ -1837,36 +1849,6 @@ def guess_telegram_photo_filename(photo_info: dict | None) -> str:
 
     file_unique_id = photo_info.get("file_unique_id") or "photo"
     return f"telegram_{file_unique_id}.jpg"
-
-
-
-def extract_telegram_photo_info(payload: dict) -> dict | None:
-    """
-    Extrai a melhor foto enviada no update do Telegram.
-    """
-    if not payload:
-        return None
-
-    message = payload.get("message") or payload.get("edited_message") or {}
-    photos = message.get("photo") or []
-    caption = (message.get("caption") or "").strip()
-
-    if not photos:
-        return None
-
-    best = photos[-1] if photos else None
-    if not best:
-        return None
-
-    return {
-        "file_id": best.get("file_id"),
-        "file_unique_id": best.get("file_unique_id"),
-        "width": best.get("width"),
-        "height": best.get("height"),
-        "file_size": best.get("file_size"),
-        "caption": caption,
-        "mime_group": "photo",
-    }
 
 
 
@@ -3182,9 +3164,18 @@ def telegram_webhook():
                 }), 500
 
         # =========================================================
-        # Ação sobre visita da agenda semanal
+        # Prioridade para respostas numéricas do estado atual
         # =========================================================
-        week_action = parse_week_visit_action(message_text)
+        active_state = ChatbotConversationState.query.filter_by(
+            platform="telegram",
+            chat_id=chat_message.chat_id
+        ).first()
+
+        if active_state and active_state.status in ("awaiting_confirmation", "awaiting_client_confirmation"):
+            week_action = None
+        else:
+            week_action = parse_week_visit_action(message_text)
+
         print("DEBUG week_action:", message_text, "=>", week_action)
 
         if week_action:
@@ -3955,27 +3946,6 @@ def telegram_webhook():
                 }), 200
 
 
-            parsed_date = parse_human_date(nova_data_texto)
-
-            if not parsed_date:
-                send_telegram_message(
-                    chat_id=chat_message.chat_id,
-                    text=(
-                        "Data inválida. Envie algo como:\n"
-                        "- hoje\n"
-                        "- ontem\n"
-                        "- 2 dias atrás\n"
-                        "- semana passada\n"
-                        "- 15\n"
-                        "- 24/02/2026\n"
-                        "- 2026-02-24"
-                    )
-                )
-                return jsonify({
-                    "ok": True,
-                    "message": "data invalida para alteracao"
-                }), 200
-
             state.pending_visit_date = parsed_date.isoformat()
             db.session.commit()
 
@@ -4140,18 +4110,18 @@ def telegram_webhook():
                 }), 200
 
             if state.status == "awaiting_date":
-                parsed_date = parse_date_flexible(message_text.strip())
-                if not parsed_date:
+                parsed_date_obj = parse_human_date(message_text.strip())
+                if not parsed_date_obj:
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
-                        text="Data inválida. Envie algo como: hoje, amanhã, 15, 24/02/2026 ou 2026-02-24."
+                        text="Data inválida. Envie algo como: hoje, amanhã, ontem, 2 dias atrás, 15, 24/02/2026 ou 2026-02-24."
                     )
                     return jsonify({
                         "ok": True,
                         "message": "data inválida"
                     }), 200
 
-                final_visit_payload["date"] = parsed_date
+                final_visit_payload["date"] = parsed_date_obj.isoformat()
 
                 state.visit_preview_json = json.dumps(
                     build_guided_state_payload(
@@ -4575,7 +4545,95 @@ def telegram_webhook():
 
 
         
+        free_client_guess = try_extract_client_from_free_text(message_text)
 
+        if free_client_guess and not any([
+            is_week_schedule_request(message_text),
+            is_pdf_request(message_text),
+            is_last_pdf_request(message_text),
+            parse_pending_reply(message_text),
+            parse_summary_edit_command(message_text),
+        ]):
+            guessed_client = free_client_guess["client"]
+
+            pending_visits, same_culture_found = find_pending_visits(
+                client_id=guessed_client.id,
+                property_id=None,
+                culture=None,
+                limit=5
+            )
+
+            suggestions = []
+            for visit in pending_visits:
+                suggestions.append({
+                    "id": visit.id,
+                    "date": visit.date.isoformat() if visit.date else None,
+                    "status": visit.status,
+                    "culture": visit.culture,
+                    "variety": visit.variety,
+                    "fenologia_real": visit.fenologia_real,
+                    "recommendation": (visit.recommendation or "").strip(),
+                    "client_id": visit.client_id,
+                    "property_id": visit.property_id,
+                    "plot_id": visit.plot_id,
+                    "display_text": visit.to_dict().get("display_text"),
+                })
+
+            confirmation_text = build_pending_visits_confirmation_text(
+                client_name=guessed_client.name,
+                requested_culture=None,
+                suggestions=suggestions,
+                same_culture_found=same_culture_found
+            )
+
+            state = ChatbotConversationState.query.filter_by(
+                platform="telegram",
+                chat_id=chat_message.chat_id
+            ).first()
+
+            if not state:
+                state = ChatbotConversationState(
+                    platform="telegram",
+                    chat_id=chat_message.chat_id,
+                )
+                db.session.add(state)
+
+            state.last_message = f"cliente {guessed_client.name}"
+            state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
+            state.visit_preview_json = json.dumps({
+                "client_id": guessed_client.id,
+                "property_id": None,
+                "plot_id": None,
+                "consultant_id": resolved_consultant_id,
+                "date": None,
+                "status": "planned",
+                "culture": "",
+                "variety": "",
+                "fenologia_real": None,
+                "recommendation": "",
+                "products": [],
+                "latitude": None,
+                "longitude": None,
+                "generate_schedule": False,
+                "source": "chatbot",
+            }, ensure_ascii=False)
+            state.confirmation_text = confirmation_text
+            state.status = "awaiting_confirmation"
+            db.session.commit()
+
+            send_result = send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=confirmation_text
+            )
+
+            return jsonify({
+                "ok": True,
+                "message": "cliente identificado por texto livre",
+                "matched_client": guessed_client.to_dict(),
+                "pending_visit_suggestions": suggestions,
+                "confirmation_text": confirmation_text,
+                "send_result": send_result,
+            }), 200
 
 
 
@@ -4752,60 +4810,11 @@ def compact_user_text_for_ai(text: str) -> str:
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def get_week_date_range(reference_date=None):
     today = reference_date or _date.today()
     start = today - _timedelta(days=today.weekday())
     end = start + _timedelta(days=6)
     return start, end
-
-
-
-
 
 
 
@@ -4888,60 +4897,6 @@ def create_telegram_binding():
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
-
-
-
-
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-def is_last_pdf_request(text: str) -> bool:
-    if not text:
-        return False
-
-    normalized = normalize_lookup_text(text)
-
-    triggers = [
-        "pdf da ultima visita",
-        "pdf da última visita",
-        "pdf ultima visita",
-        "ultimo pdf",
-        "último pdf",
-        "pdf da visita mais recente",
-        "me manda o pdf da ultima visita",
-        "me manda o pdf da última visita",
-    ]
-
-    return any(trigger in normalized for trigger in triggers)
 
 
 
@@ -5575,6 +5530,9 @@ def create_visit():
     # ===========================================
     # 🌿 SALVAR PRODUTOS NA CRIAÇÃO DA VISITA
     # ===========================================
+    db.session.add(v)
+    db.session.commit()
+
     products = data.get("products", [])
     from models import VisitProduct
 
@@ -5585,17 +5543,16 @@ def create_visit():
             dose=p.get("dose", ""),
             unit=p.get("unit", ""),
             application_date=(
-                datetime.strptime(p["application_date"], "%Y-%m-%d")
+                datetime.strptime(p["application_date"], "%Y-%m-%d").date()
                 if p.get("application_date")
                 else None
             ),
         )
         db.session.add(vp)
 
-
-    db.session.add(v)
     db.session.commit()
     return jsonify(message="visita criada", visit=v.to_dict()), 201
+
 
 
 
