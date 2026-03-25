@@ -5025,6 +5025,136 @@ def telegram_webhook():
 
 
 
+        month_action = parse_month_visit_action(message_text)
+
+        if month_action:
+            state = ChatbotConversationState.query.filter_by(
+                platform="telegram",
+                chat_id=chat_message.chat_id,
+                status="awaiting_month_visit_selection"
+            ).first()
+
+            if state:
+                if month_action["mode"] == "cancel":
+                    state.status = "cancelled"
+                    db.session.commit()
+
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="Operação cancelada com sucesso."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "seleção mensal cancelada"
+                    }), 200
+
+                candidates = json.loads(state.pending_visit_suggestions_json or "[]")
+                idx = month_action.get("index", -1)
+
+                if idx < 0 or idx >= len(candidates):
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="Número inválido da lista do mês. Revise a lista e tente novamente."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "índice inválido da lista do mês"
+                    }), 200
+
+                selected = candidates[idx]
+                visit = Visit.query.get(selected["id"])
+
+                if not visit:
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text="Não consegui localizar essa visita."
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "visita da lista mensal não encontrada"
+                    }), 200
+
+                if month_action["mode"] == "pdf":
+                    pdf_buffer, filename = build_visit_pdf_file(visit.id)
+                    pdf_bytes = pdf_buffer.getvalue()
+
+                    send_result = send_telegram_document(
+                        chat_id=chat_message.chat_id,
+                        file_bytes=pdf_bytes,
+                        filename=filename,
+                        caption=f"📄 PDF da visita {visit.id}"
+                    )
+
+                    return jsonify({
+                        "ok": True,
+                        "message": "pdf enviado para visita da lista mensal",
+                        "visit_id": visit.id,
+                        "send_result": send_result,
+                    }), 200
+
+                summary_text = build_visit_summary_text(
+                    action="use_existing_pending_visit",
+                    final_visit_payload={
+                        "linked_pending_visit_id": visit.id,
+                        "client_id": visit.client_id,
+                        "property_id": visit.property_id,
+                        "plot_id": visit.plot_id,
+                        "consultant_id": visit.consultant_id,
+                        "date": visit.date.isoformat() if visit.date else None,
+                        "status": visit.status,
+                        "culture": visit.culture or "",
+                        "variety": visit.variety or "",
+                        "fenologia_real": visit.fenologia_real,
+                        "recommendation": visit.recommendation or "",
+                        "products": [p.to_dict() for p in (visit.products or [])],
+                        "latitude": visit.latitude,
+                        "longitude": visit.longitude,
+                        "source": "chatbot",
+                    },
+                    selected_pending_visit=selected,
+                    close_only=False
+                )
+
+                state.visit_preview_json = json.dumps({
+                    "action": "use_existing_pending_visit",
+                    "final_visit_payload": {
+                        "linked_pending_visit_id": visit.id,
+                        "client_id": visit.client_id,
+                        "property_id": visit.property_id,
+                        "plot_id": visit.plot_id,
+                        "consultant_id": visit.consultant_id,
+                        "date": visit.date.isoformat() if visit.date else None,
+                        "status": visit.status,
+                        "culture": visit.culture or "",
+                        "variety": visit.variety or "",
+                        "fenologia_real": visit.fenologia_real,
+                        "recommendation": visit.recommendation or "",
+                        "products": [p.to_dict() for p in (visit.products or [])],
+                        "latitude": visit.latitude,
+                        "longitude": visit.longitude,
+                        "source": "chatbot",
+                    },
+                    "selected_pending_visit": selected,
+                    "close_only": False,
+                }, ensure_ascii=False)
+                state.confirmation_text = summary_text
+                state.status = "awaiting_final_confirmation"
+                db.session.commit()
+
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text=summary_text
+                )
+
+                return jsonify({
+                    "ok": True,
+                    "message": "visita da lista mensal carregada para edição",
+                    "visit": visit.to_dict()
+                }), 200
+
+
+
+
         normalized_help = normalize_lookup_text(message_text)
 
         if normalized_help in {
