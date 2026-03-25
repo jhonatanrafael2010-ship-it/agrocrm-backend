@@ -1915,7 +1915,43 @@ def attach_photo_to_visit_from_telegram(
         return None, str(e)
 
 
+def try_extract_client_from_free_text(message_text: str):
+    if not message_text:
+        return None
 
+    normalized = normalize_lookup_text(message_text)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    if not normalized:
+        return None
+
+    blocked_prefixes = (
+        "/start",
+        "/vincular",
+        "pdf",
+        "agenda da semana",
+        "visitas da semana",
+        "me passa agenda",
+        "gerar pdf",
+        "confirmar",
+        "cancelar",
+        "concluir visita",
+        "lancar visita",
+        "lançar visita",
+    )
+
+    if any(normalized.startswith(p) for p in blocked_prefixes):
+        return None
+
+    client, candidates, needs_confirmation = find_client_by_name(normalized)
+    if client:
+        return {
+            "client": client,
+            "candidates": candidates,
+            "needs_confirmation": needs_confirmation,
+        }
+
+    return None
 
 
 
@@ -4545,6 +4581,97 @@ def telegram_webhook():
 
 
         
+        free_client_guess = try_extract_client_from_free_text(message_text)
+
+        if free_client_guess and not any([
+            is_week_schedule_request(message_text),
+            is_pdf_request(message_text),
+            is_last_pdf_request(message_text),
+            parse_pending_reply(message_text),
+            parse_summary_edit_command(message_text),
+        ]):
+            guessed_client = free_client_guess["client"]
+
+            pending_visits, same_culture_found = find_pending_visits(
+                client_id=guessed_client.id,
+                property_id=None,
+                culture=None,
+                limit=5
+            )
+
+            suggestions = []
+            for visit in pending_visits:
+                suggestions.append({
+                    "id": visit.id,
+                    "date": visit.date.isoformat() if visit.date else None,
+                    "status": visit.status,
+                    "culture": visit.culture,
+                    "variety": visit.variety,
+                    "fenologia_real": visit.fenologia_real,
+                    "recommendation": (visit.recommendation or "").strip(),
+                    "client_id": visit.client_id,
+                    "property_id": visit.property_id,
+                    "plot_id": visit.plot_id,
+                    "display_text": visit.to_dict().get("display_text"),
+                })
+
+            confirmation_text = build_pending_visits_confirmation_text(
+                client_name=guessed_client.name,
+                requested_culture=None,
+                suggestions=suggestions,
+                same_culture_found=same_culture_found
+            )
+
+            state = ChatbotConversationState.query.filter_by(
+                platform="telegram",
+                chat_id=chat_message.chat_id
+            ).first()
+
+            if not state:
+                state = ChatbotConversationState(
+                    platform="telegram",
+                    chat_id=chat_message.chat_id,
+                )
+                db.session.add(state)
+
+            state.last_message = f"cliente {guessed_client.name}"
+            state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
+            state.visit_preview_json = json.dumps({
+                "client_id": guessed_client.id,
+                "property_id": None,
+                "plot_id": None,
+                "consultant_id": resolved_consultant_id,
+                "date": None,
+                "status": "planned",
+                "culture": "",
+                "variety": "",
+                "fenologia_real": None,
+                "recommendation": "",
+                "products": [],
+                "latitude": None,
+                "longitude": None,
+                "generate_schedule": False,
+                "source": "chatbot",
+            }, ensure_ascii=False)
+            state.confirmation_text = confirmation_text
+            state.status = "awaiting_confirmation"
+            db.session.commit()
+
+            send_result = send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=confirmation_text
+            )
+
+            return jsonify({
+                "ok": True,
+                "message": "cliente identificado por texto livre",
+                "matched_client": guessed_client.to_dict(),
+                "pending_visit_suggestions": suggestions,
+                "confirmation_text": confirmation_text,
+                "send_result": send_result,
+            }), 200
+
+
         free_client_guess = try_extract_client_from_free_text(message_text)
 
         if free_client_guess and not any([
