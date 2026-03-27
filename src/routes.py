@@ -962,44 +962,6 @@ def find_property_by_name(property_name: str, client_id: int = None):
     return None, top_candidates, True
 
 
-def try_extract_client_from_free_text(message_text: str):
-    if not message_text:
-        return None
-
-    normalized = normalize_lookup_text(message_text)
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-
-    if not normalized:
-        return None
-
-    blocked_prefixes = (
-        "/start",
-        "/vincular",
-        "pdf",
-        "agenda da semana",
-        "visitas da semana",
-        "me passa agenda",
-        "gerar pdf",
-        "confirmar",
-        "cancelar",
-        "concluir visita",
-        "lancar visita",
-        "lançar visita",
-    )
-
-    if any(normalized.startswith(p) for p in blocked_prefixes):
-        return None
-
-    client, candidates, needs_confirmation = find_client_by_name(normalized)
-    if client:
-        return {
-            "client": client,
-            "candidates": candidates,
-            "needs_confirmation": needs_confirmation,
-        }
-
-    return None
-
 
 
 def find_pending_visits(
@@ -2111,11 +2073,44 @@ def extract_prefill_from_message_text(message_text: str):
 
     parsed = parse_chatbot_message(message_text) or {}
 
+    recommendation = (parsed.get("recommendation") or "").strip()
+
+    # fallback simples para observações em texto natural
+    if not recommendation:
+        normalized = normalize_lookup_text(message_text)
+
+        patterns = [
+            r"observacoes[:,]?\s*(.+)$",
+            r"observacao[:,]?\s*(.+)$",
+            r"obs[:,]?\s*(.+)$",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, normalized, re.IGNORECASE)
+            if match:
+                raw_match = match.group(1).strip()
+                if raw_match:
+                    recommendation = raw_match
+                    break
+
+    # fallback ainda mais amplo:
+    # se existir "fenologia" e "data", pega o texto após a data/observações
+    if not recommendation:
+        raw = message_text.strip()
+
+        match = re.search(
+            r"(?:observacoes?|obs)\s*,?\s*(.+)$",
+            raw,
+            re.IGNORECASE
+        )
+        if match:
+            recommendation = match.group(1).strip()
+
     return {
         "date": parsed.get("date"),
         "culture": parsed.get("culture") or "",
         "fenologia_real": parsed.get("fenologia_real"),
-        "recommendation": (parsed.get("recommendation") or "").strip(),
+        "recommendation": recommendation,
     }
 
 
