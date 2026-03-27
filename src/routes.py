@@ -112,7 +112,7 @@ from services.chatbot_service import (
 import io
 import subprocess
 from openai import OpenAI
-
+from zoneinfo import ZoneInfo
 
 
 
@@ -210,7 +210,7 @@ def parse_human_date(text: str, base_date: date | None = None) -> date | None:
     if not text:
         return None
 
-    today = base_date or datetime.now().date()
+    today = base_date or get_local_today()
     normalized = _normalize_text(text)
 
     # Remove pontuação lateral comum
@@ -2106,6 +2106,14 @@ def extract_recommendation_fallback(message_text: str) -> str:
 
     return ""
 
+
+
+def get_local_today() -> date:
+    """
+    Retorna a data local do usuário/negócio.
+    Para Lucas do Rio Verde (MT), use America/Cuiaba.
+    """
+    return _dt.now(ZoneInfo("America/Cuiaba")).date()
 
 # ============================================================
 # 🌾 CULTURAS, VARIEDADES, CONSULTOR
@@ -4368,7 +4376,10 @@ def telegram_webhook():
                 }), 200
 
             if state.status == "awaiting_date":
-                parsed_date_obj = parse_human_date(message_text.strip())
+                parsed_date_obj = parse_human_date(
+                    message_text.strip(),
+                    base_date=get_local_today()
+                )
                 if not parsed_date_obj:
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
