@@ -2075,36 +2075,8 @@ def extract_prefill_from_message_text(message_text: str):
 
     recommendation = (parsed.get("recommendation") or "").strip()
 
-    # fallback simples para observações em texto natural
     if not recommendation:
-        normalized = normalize_lookup_text(message_text)
-
-        patterns = [
-            r"observacoes[:,]?\s*(.+)$",
-            r"observacao[:,]?\s*(.+)$",
-            r"obs[:,]?\s*(.+)$",
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, normalized, re.IGNORECASE)
-            if match:
-                raw_match = match.group(1).strip()
-                if raw_match:
-                    recommendation = raw_match
-                    break
-
-    # fallback ainda mais amplo:
-    # se existir "fenologia" e "data", pega o texto após a data/observações
-    if not recommendation:
-        raw = message_text.strip()
-
-        match = re.search(
-            r"(?:observacoes?|obs)\s*,?\s*(.+)$",
-            raw,
-            re.IGNORECASE
-        )
-        if match:
-            recommendation = match.group(1).strip()
+        recommendation = extract_recommendation_fallback(message_text)
 
     return {
         "date": parsed.get("date"),
@@ -2113,6 +2085,26 @@ def extract_prefill_from_message_text(message_text: str):
         "recommendation": recommendation,
     }
 
+
+def extract_recommendation_fallback(message_text: str) -> str:
+    if not message_text:
+        return ""
+
+    raw = message_text.strip()
+
+    patterns = [
+        r"(?:observacoes|observação|observacao|obs)\s*[:,\-]?\s*(.+)$",
+        r"(?:plantas|planta)\s+(.+)$",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, raw, re.IGNORECASE)
+        if match:
+            value = match.group(1).strip(" .,-;:")
+            if value:
+                return value
+
+    return ""
 
 
 # ============================================================
@@ -5502,6 +5494,10 @@ def chatbot_suggest_pending_visits():
                 limit=5
             )
 
+        parsed_recommendation = (parsed.get("recommendation") or "").strip()
+        if not parsed_recommendation:
+            parsed_recommendation = extract_recommendation_fallback(message_text)
+
         visit_preview = {
             "client_id": matched_client.id if matched_client else None,
             "property_id": matched_property.id if matched_property else None,
@@ -5512,7 +5508,7 @@ def chatbot_suggest_pending_visits():
             "culture": parsed.get("culture") or "",
             "variety": "",
             "fenologia_real": parsed.get("fenologia_real"),
-            "recommendation": parsed.get("recommendation") or "",
+            "recommendation": parsed_recommendation,
             "products": [],
             "latitude": None,
             "longitude": None,
