@@ -1136,20 +1136,6 @@ def extract_telegram_audio_info(payload: dict):
     return None
 
 
-def extract_client_name(message: str) -> Optional[str]:
-    patterns = [
-        r"cliente[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar|produto|produtos|id|visita)\b|$)",
-        r"produtor[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar|produto|produtos|id|visita)\b|$)",
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, message, flags=re.IGNORECASE)
-        if match:
-            value = match.group(1).strip(" .,-")
-            if value:
-                return value
-
-    return None
 
 
 def convert_audio_bytes_to_wav(audio_bytes: bytes, input_suffix: str = ".ogg"):
