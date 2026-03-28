@@ -113,7 +113,7 @@ import io
 import subprocess
 from openai import OpenAI
 from zoneinfo import ZoneInfo
-
+from pathlib import Path
 
 
 
@@ -1730,22 +1730,6 @@ Mensagem do usuário:
 
 
 def extract_telegram_photo_info(payload: dict) -> dict | None:
-    """
-    Extrai informações da melhor foto enviada no update do Telegram.
-
-    Retorna algo como:
-    {
-        "file_id": "...",
-        "file_unique_id": "...",
-        "width": 1280,
-        "height": 960,
-        "file_size": 123456,
-        "caption": "texto da legenda",
-        "mime_group": "photo"
-    }
-
-    Se não houver foto, retorna None.
-    """
     if not payload:
         return None
 
@@ -1756,8 +1740,6 @@ def extract_telegram_photo_info(payload: dict) -> dict | None:
     if not photos:
         return None
 
-    # Telegram envia vários tamanhos da mesma foto.
-    # Vamos pegar a maior, normalmente a última.
     best = photos[-1] if photos else None
     if not best:
         return None
@@ -1770,6 +1752,8 @@ def extract_telegram_photo_info(payload: dict) -> dict | None:
         "file_size": best.get("file_size"),
         "caption": caption,
         "mime_group": "photo",
+        "media_group_id": message.get("media_group_id"),
+        "telegram_message_id": message.get("message_id"),
     }
 
 
@@ -2114,6 +2098,151 @@ def get_local_today() -> date:
     Para Lucas do Rio Verde (MT), use America/Cuiaba.
     """
     return _dt.now(ZoneInfo("America/Cuiaba")).date()
+
+
+
+
+def get_pending_media_dir(chat_id: str) -> Path:
+    base_dir = Path("/tmp") / "telegram_pending_media" / str(chat_id)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return base_dir
+
+
+def get_pending_media_manifest_path(chat_id: str) -> Path:
+    return get_pending_media_dir(chat_id) / "pending_media.json"
+
+
+def load_pending_media_manifest(chat_id: str) -> dict:
+    manifest_path = get_pending_media_manifest_path(chat_id)
+    if not manifest_path.exists():
+        return {"photos": []}
+
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"photos": []}
+
+
+def save_pending_media_manifest(chat_id: str, data: dict) -> None:
+    manifest_path = get_pending_media_manifest_path(chat_id)
+    manifest_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8"
+    )
+
+
+def save_pending_telegram_photo(chat_id: str, photo_bytes: bytes, filename: str, caption: str = "") -> dict:
+    media_dir = get_pending_media_dir(chat_id)
+    ext = Path(filename).suffix or ".jpg"
+    unique_name = f"{uuid.uuid4().hex}{ext}"
+    file_path = media_dir / unique_name
+
+    with open(file_path, "wb") as f:
+        f.write(photo_bytes)
+
+    manifest = load_pending_media_manifest(chat_id)
+    row = {
+        "filename": unique_name,
+        "original_filename": filename,
+        "caption": caption or "",
+    }
+    manifest["photos"].append(row)
+    save_pending_media_manifest(chat_id, manifest)
+    print("DEBUG save_pending_telegram_photo manifest_count:", len(manifest.get("photos", [])))
+    return row
+
+
+def get_pending_telegram_photos(chat_id: str) -> list:
+    manifest = load_pending_media_manifest(chat_id)
+    media_dir = get_pending_media_dir(chat_id)
+
+    photos = []
+    for item in manifest.get("photos", []):
+        file_path = media_dir / item["filename"]
+        if file_path.exists():
+            photos.append({
+                "path": str(file_path),
+                "filename": item["original_filename"] or item["filename"],
+                "caption": item.get("caption") or "",
+            })
+    print("DEBUG get_pending_telegram_photos count:", len(photos))
+    return photos
+
+
+def clear_pending_telegram_photos(chat_id: str) -> None:
+    media_dir = get_pending_media_dir(chat_id)
+    if not media_dir.exists():
+        return
+
+    for child in media_dir.iterdir():
+        try:
+            if child.is_file():
+                child.unlink()
+        except Exception:
+            pass
+
+    try:
+        media_dir.rmdir()
+    except Exception:
+        pass
+
+
+def attach_pending_telegram_photos_to_visit(chat_id: str, visit):
+    pending = get_pending_telegram_photos(chat_id)
+    print("DEBUG attach_pending_telegram_photos_to_visit visit_id:", getattr(visit, "id", None))
+    print("DEBUG attach_pending_telegram_photos_to_visit pending_count:", len(pending))
+    attached = 0
+    errors = []
+
+    for item in pending:
+        try:
+            with open(item["path"], "rb") as f:
+                photo_bytes = f.read()
+
+            _, attach_error = attach_photo_to_visit_from_telegram(
+                visit=visit,
+                photo_bytes=photo_bytes,
+                filename=item["filename"],
+                caption=item["caption"],
+            )
+
+            if attach_error:
+                errors.append(attach_error)
+            else:
+                attached += 1
+
+        except Exception as e:
+            errors.append(str(e))
+
+    if attached > 0:
+        clear_pending_telegram_photos(chat_id)
+    print("DEBUG attach_pending_telegram_photos_to_visit attached:", attached)
+    print("DEBUG attach_pending_telegram_photos_to_visit errors:", errors)
+    return attached, errors
+
+
+
+
+def get_pending_media_group_marker_path(chat_id: str, media_group_id: str) -> Path:
+    media_dir = get_pending_media_dir(chat_id)
+    return media_dir / f"media_group_{media_group_id}.marker"
+
+
+def should_send_photo_prompt(chat_id: str, photo_info: dict | None) -> bool:
+    if not photo_info:
+        return False
+
+    media_group_id = photo_info.get("media_group_id")
+    if not media_group_id:
+        return True
+
+    marker = get_pending_media_group_marker_path(chat_id, str(media_group_id))
+    if marker.exists():
+        return False
+
+    marker.write_text("sent", encoding="utf-8")
+    return True
+
 
 # ============================================================
 # 🌾 CULTURAS, VARIEDADES, CONSULTOR
@@ -3191,22 +3320,35 @@ def telegram_webhook():
             if photo_download_error:
                 print("DEBUG telegram photo download error:", photo_download_error)
                 downloaded_photo_bytes = None
+            elif downloaded_photo_bytes:
+                try:
+                    saved_media = save_pending_telegram_photo(
+                        chat_id=chat_message.chat_id,
+                        photo_bytes=downloaded_photo_bytes,
+                        filename=downloaded_photo_name,
+                        caption=photo_info.get("caption") or "",
+                    )
+                    print("DEBUG pending telegram photo saved:", saved_media)
+                except Exception as e:
+                    print("DEBUG save_pending_telegram_photo error:", str(e))
 
         # Se não veio texto/caption, mas veio foto, pede contexto ao usuário
         if not message_text and photo_info:
-            send_telegram_message(
-                chat_id=chat_message.chat_id,
-                text=(
-                    "Recebi sua foto. Me envie junto uma descrição curta para eu entender o lançamento.\n\n"
-                    "Exemplos:\n"
-                    "- lançar visita no cliente Fazenda Modelo\n"
-                    "- visita de milho V4 com boa uniformidade\n"
-                    "- concluir visita 2 e anexar esta foto"
+            if should_send_photo_prompt(chat_message.chat_id, photo_info):
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text=(
+                        "Recebi sua foto e já deixei ela separada para esta conversa.\n\n"
+                        "Agora me envie o texto ou áudio da visita.\n\n"
+                        "Exemplo:\n"
+                        "- Cliente Rogério Remor, fenologia observada V11, data hoje, observações plantas sadias\n"
+                        "- Ou envie um áudio com essas informações"
+                    )
                 )
-            )
+
             return jsonify({
                 "ok": True,
-                "message": "foto recebida sem descricao"
+                "message": "foto recebida e salva temporariamente"
             }), 200
 
         # =========================================================
@@ -3919,6 +4061,8 @@ def telegram_webhook():
                     state.status = "cancelled"
                     db.session.commit()
 
+                    clear_pending_telegram_photos(chat_message.chat_id)
+
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
                         text="Operação cancelada com sucesso."
@@ -3979,6 +4123,17 @@ def telegram_webhook():
 
                         if attach_error:
                             print("DEBUG attach photo error:", attach_error)
+
+                    attached_count, attach_errors = attach_pending_telegram_photos_to_visit(
+                        chat_id=chat_message.chat_id,
+                        visit=visit
+                    )
+                    if attached_count == 0:
+                        print("DEBUG nenhuma foto pendente foi anexada para este chat:", chat_message.chat_id)
+                    if attach_errors:
+                        print("DEBUG attach_pending_photos existing visit errors:", attach_errors)
+                    else:
+                        print("DEBUG attach_pending_photos existing visit attached_count:", attached_count)
 
                     state.status = "completed"
                     db.session.commit()
@@ -4053,6 +4208,17 @@ def telegram_webhook():
 
                         if attach_error:
                             print("DEBUG attach photo error:", attach_error)
+
+                    attached_count, attach_errors = attach_pending_telegram_photos_to_visit(
+                        chat_id=chat_message.chat_id,
+                        visit=new_visit
+                    )
+                    if attached_count == 0:
+                        print("DEBUG nenhuma foto pendente foi anexada para este chat:", chat_message.chat_id)
+                    if attach_errors:
+                        print("DEBUG attach_pending_photos new visit errors:", attach_errors)
+                    else:
+                        print("DEBUG attach_pending_photos new visit attached_count:", attached_count)
 
                     state.status = "completed"
                     db.session.commit()
