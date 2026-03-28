@@ -97,6 +97,8 @@ from models import (
     ChatbotConversationState,
     TelegramContactBinding,
     Consultant,
+    CONSULTANTS,
+    VisitProduct,
 )
 from utils.r2_client import get_r2_client
 
@@ -916,6 +918,73 @@ def find_client_by_name(client_name: str):
     return None, top_candidates, True
 
 
+def find_known_product_names(limit: int = 300) -> list[str]:
+    try:
+        rows = (
+            db.session.query(VisitProduct.product_name)
+            .filter(VisitProduct.product_name.isnot(None))
+            .distinct()
+            .limit(limit)
+            .all()
+        )
+        names = []
+        for row in rows:
+            value = row[0]
+            if value:
+                names.append(value.strip())
+        return names
+    except Exception:
+        return []
+
+
+def find_similar_product_name(raw_name: str, candidates: list[str] | None = None):
+    if not raw_name:
+        return None, 0.0
+
+    candidates = candidates or find_known_product_names()
+    if not candidates:
+        return None, 0.0
+
+    target = normalize_lookup_text(raw_name)
+    best_name = None
+    best_score = 0.0
+
+    for candidate in candidates:
+        current = normalize_lookup_text(candidate)
+        score = SequenceMatcher(None, target, current).ratio()
+        if score > best_score:
+            best_score = score
+            best_name = candidate
+
+    return best_name, best_score
+
+
+def normalize_products_from_parsed(products: list[dict] | None):
+    products = products or []
+    known_names = find_known_product_names()
+
+    normalized_items = []
+
+    for item in products:
+        product_name = (item.get("product_name") or "").strip()
+        if not product_name:
+            continue
+
+        best_name, score = find_similar_product_name(product_name, known_names)
+
+        normalized_name = product_name
+        if best_name and score >= 0.72:
+            normalized_name = best_name
+
+        normalized_items.append({
+            "product_name": normalized_name,
+            "dose": (item.get("dose") or "").strip(),
+            "unit": (item.get("unit") or "").strip(),
+            "application_date": item.get("application_date"),
+        })
+
+    return normalized_items
+
 
 def find_property_by_name(property_name: str, client_id: int = None):
     if not property_name:
@@ -1067,7 +1136,20 @@ def extract_telegram_audio_info(payload: dict):
     return None
 
 
+def extract_client_name(message: str) -> Optional[str]:
+    patterns = [
+        r"cliente[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar|produto|produtos|id|visita)\b|$)",
+        r"produtor[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar|produto|produtos|id|visita)\b|$)",
+    ]
 
+    for pattern in patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if match:
+            value = match.group(1).strip(" .,-")
+            if value:
+                return value
+
+    return None
 
 
 def convert_audio_bytes_to_wav(audio_bytes: bytes, input_suffix: str = ".ogg"):
@@ -2092,7 +2174,7 @@ def extract_prefill_from_message_text(message_text: str):
         "culture": parsed.get("culture") or "",
         "fenologia_real": parsed.get("fenologia_real"),
         "recommendation": recommendation,
-        "products": parsed.get("products") or [],
+        "products": normalize_products_from_parsed(parsed.get("products") or []),
     }
 
 
@@ -2332,6 +2414,19 @@ def replace_visit_products_from_payload(visit, final_visit_payload: dict):
         )
         db.session.add(vp)
 
+
+
+
+def find_visit_by_explicit_id(visit_id: int, consultant_id: int | None = None):
+    if not visit_id:
+        return None
+
+    q = Visit.query.filter_by(id=visit_id)
+
+    if consultant_id:
+        q = q.filter_by(consultant_id=consultant_id)
+
+    return q.first()
 
 
 
@@ -3401,6 +3496,126 @@ def telegram_webhook():
         # Normaliza texto para evitar .strip() em None
         message_text = (message_text or "").strip()
         message_text_lower = message_text.lower()
+
+
+        parsed_direct = parse_chatbot_message(message_text)
+        explicit_visit_id = parsed_direct.get("visit_id")
+
+        if explicit_visit_id:
+            visit = find_visit_by_explicit_id(
+                visit_id=explicit_visit_id,
+                consultant_id=resolved_consultant_id
+            )
+
+            if visit:
+                parsed_recommendation = (parsed_direct.get("recommendation") or "").strip()
+                if not parsed_recommendation:
+                    parsed_recommendation = extract_recommendation_fallback(message_text)
+
+                parsed_products = normalize_products_from_parsed(parsed_direct.get("products") or [])
+
+                final_visit_payload = {
+                    "linked_pending_visit_id": visit.id,
+                    "client_id": visit.client_id,
+                    "property_id": visit.property_id,
+                    "plot_id": visit.plot_id,
+                    "consultant_id": resolved_consultant_id or visit.consultant_id,
+                    "date": parsed_direct.get("date") or (visit.date.isoformat() if visit.date else None),
+                    "status": "done",
+                    "culture": parsed_direct.get("culture") or visit.culture or "",
+                    "variety": visit.variety or "",
+                    "fenologia_real": parsed_direct.get("fenologia_real"),
+                    "recommendation": parsed_recommendation,
+                    "products": parsed_products,
+                    "latitude": visit.latitude,
+                    "longitude": visit.longitude,
+                    "source": "chatbot",
+                }
+
+                selected_pending_visit = {
+                    "id": visit.id,
+                    "client_id": visit.client_id,
+                    "property_id": visit.property_id,
+                    "plot_id": visit.plot_id,
+                    "culture": visit.culture,
+                    "variety": visit.variety,
+                    "date": visit.date.isoformat() if visit.date else None,
+                    "recommendation": visit.recommendation or "",
+                    "fenologia_real": visit.fenologia_real,
+                    "status": visit.status,
+                }
+
+                has_prefilled_fenologia = bool((final_visit_payload.get("fenologia_real") or "").strip())
+                has_prefilled_date = bool(final_visit_payload.get("date"))
+                has_prefilled_observation = bool((final_visit_payload.get("recommendation") or "").strip())
+
+                state = ChatbotConversationState.query.filter_by(
+                    platform="telegram",
+                    chat_id=chat_message.chat_id
+                ).first()
+
+                if not state:
+                    state = ChatbotConversationState(
+                        platform="telegram",
+                        chat_id=chat_message.chat_id,
+                    )
+                    db.session.add(state)
+
+                if has_prefilled_fenologia and has_prefilled_date and has_prefilled_observation:
+                    summary_text = build_visit_summary_text(
+                        action="use_existing_pending_visit",
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=False
+                    )
+
+                    state.visit_preview_json = json.dumps(
+                        build_guided_state_payload(
+                            action="use_existing_pending_visit",
+                            final_visit_payload=final_visit_payload,
+                            selected_pending_visit=selected_pending_visit,
+                            close_only=False,
+                        ),
+                        ensure_ascii=False
+                    )
+                    state.confirmation_text = summary_text
+                    state.status = "awaiting_final_confirmation"
+                    db.session.commit()
+
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text=summary_text
+                    )
+
+                    return jsonify({
+                        "ok": True,
+                        "message": "visita carregada diretamente por id",
+                        "visit_id": visit.id
+                    }), 200
+
+                state.visit_preview_json = json.dumps(
+                    build_guided_state_payload(
+                        action="use_existing_pending_visit",
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=False,
+                    ),
+                    ensure_ascii=False
+                )
+                state.status = "awaiting_fenologia"
+                db.session.commit()
+
+                send_telegram_message(
+                    chat_id=chat_message.chat_id,
+                    text="🌿 Informe a fenologia observada.\nExemplo: V4, V5, R1"
+                )
+
+                return jsonify({
+                    "ok": True,
+                    "message": "visita carregada por id, aguardando complemento",
+                    "visit_id": visit.id
+                }), 200
+
 
         # Se veio foto, tenta baixar desde já para possível uso posterior
         if photo_info:
@@ -4768,6 +4983,12 @@ def telegram_webhook():
                 original_message = state.last_message or ""
                 parsed = parse_chatbot_message(original_message)
 
+                parsed_recommendation = (parsed.get("recommendation") or "").strip()
+                if not parsed_recommendation:
+                    parsed_recommendation = extract_recommendation_fallback(original_message)
+
+                parsed_products = normalize_products_from_parsed(parsed.get("products") or [])
+
                 # força o cliente confirmado
                 matched_property, property_candidates, property_needs_confirmation = find_property_by_name(
                     parsed.get("property_name"),
@@ -4818,8 +5039,8 @@ def telegram_webhook():
                     "culture": parsed.get("culture") or "",
                     "variety": "",
                     "fenologia_real": parsed.get("fenologia_real"),
-                    "recommendation": parsed.get("recommendation") or "",
-                    "products": [],
+                    "recommendation": parsed_recommendation,
+                    "products": parsed_products,
                     "latitude": None,
                     "longitude": None,
                     "generate_schedule": False,
@@ -5482,6 +5703,14 @@ def telegram_webhook():
                 "display_text": visit.to_dict().get("display_text"),
             })
 
+        
+        parsed_recommendation = (parsed.get("recommendation") or "").strip()
+        if not parsed_recommendation:
+            parsed_recommendation = extract_recommendation_fallback(message_text)
+
+        parsed_products = normalize_products_from_parsed(parsed.get("products") or [])
+
+
         if matched_client:
             confirmation_text = build_pending_visits_confirmation_text(
                 client_name=matched_client.name,
@@ -5506,8 +5735,8 @@ def telegram_webhook():
             "culture": parsed.get("culture") or "",
             "variety": "",
             "fenologia_real": parsed.get("fenologia_real"),
-            "recommendation": parsed.get("recommendation") or "",
-            "products": [],
+            "recommendation": parsed_recommendation,
+            "products": parsed_products,
             "latitude": None,
             "longitude": None,
             "generate_schedule": False,

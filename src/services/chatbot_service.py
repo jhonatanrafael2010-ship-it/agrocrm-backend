@@ -216,6 +216,28 @@ def extract_products(message: str) -> List[Dict[str, Any]]:
     return found
 
 
+def extract_visit_id(message: str) -> Optional[int]:
+    if not message:
+        return None
+
+    patterns = [
+        r"\bid\s+da\s+visita\s+(\d+)\b",
+        r"\bvisita\s+id\s+(\d+)\b",
+        r"\bid\s+visita\s+(\d+)\b",
+        r"\bvisita\s+(\d{3,})\b",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, message, flags=re.IGNORECASE)
+        if match:
+            try:
+                return int(match.group(1))
+            except Exception:
+                return None
+
+    return None
+
+
 def parse_chatbot_message(message: str) -> Dict[str, Any]:
     intent = detect_intent(message)
 
@@ -233,6 +255,7 @@ def parse_chatbot_message(message: str) -> Dict[str, Any]:
         "source": "chatbot",
         "confidence": "low",
         "products": extract_products(message),
+        "visit_id": extract_visit_id(message),
     }
 
     filled_fields = sum(
