@@ -342,6 +342,7 @@ def parse_pending_reply(text: str):
         return None
 
     value = text.strip().upper()
+    normalized = normalize_lookup_text(text).strip()
 
     if value == "NOVA":
         return {"mode": "create_new", "index": None}
@@ -357,10 +358,17 @@ def parse_pending_reply(text: str):
     if match:
         return {"mode": "close_only", "index": int(match.group(1)) - 1}
 
-    if value == "CONFIRMAR":
+    confirm_words = {
+        "confirmar", "confirma", "confirmo", "ok", "certo", "isso", "fechou"
+    }
+    cancel_words = {
+        "cancelar", "cancela", "cancel", "desconsidera", "esquece"
+    }
+
+    if normalized in confirm_words:
         return {"mode": "confirm_final", "index": None}
 
-    if value == "CANCELAR":
+    if normalized in cancel_words:
         return {"mode": "cancel_final", "index": None}
 
     return None
@@ -661,14 +669,20 @@ def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pe
     fenologia = final_visit_payload.get("fenologia_real") or "—"
     date_value = final_visit_payload.get("date") or "—"
     observations = final_visit_payload.get("recommendation") or "—"
-    client_id = final_visit_payload.get("client_id") or "—"
+    client_id = final_visit_payload.get("client_id")
+
+    client_name = "—"
+    if client_id:
+        client = Client.query.get(client_id)
+        if client:
+            client_name = client.name
 
     lines = ["📝 Resumo da visita", ""]
 
     if action == "use_existing_pending_visit" and selected_pending_visit:
         lines.append(f"🔧 Tipo: {'Concluir visita pendente' if close_only else 'Atualizar visita pendente'}")
         lines.append(f"🆔 ID da visita: {selected_pending_visit.get('id')}")
-        lines.append(f"👤 ID do cliente: {client_id}")
+        lines.append(f"👤 Cliente: {client_name}")
         lines.append(f"📌 Recomendação pendente: {selected_pending_visit.get('recommendation') or '—'}")
         lines.append(f"🌿 Fenologia observada: {fenologia}")
         lines.append(f"📅 Data da visita: {date_value}")
@@ -677,7 +691,7 @@ def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pe
     elif action == "create_new_visit":
         lines.append("🆕 Tipo: Nova visita")
         lines.append("🆔 ID da visita: nova")
-        lines.append(f"👤 ID do cliente: {client_id}")
+        lines.append(f"👤 Cliente: {client_name}")
         lines.append("📌 Recomendação pendente: —")
         lines.append(f"🌿 Fenologia observada: {fenologia}")
         lines.append(f"📅 Data da visita: {date_value}")
