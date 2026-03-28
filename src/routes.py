@@ -697,6 +697,17 @@ def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pe
         lines.append(f"📅 Data da visita: {date_value}")
         lines.append(f"💬 Observações: {observations}")
 
+    products = final_visit_payload.get("products") or []
+    if products:
+        lines.append("")
+        lines.append("🧪 Produtos:")
+        for p in products:
+            product_name = p.get("product_name") or "—"
+            dose = p.get("dose") or "—"
+            unit = p.get("unit") or ""
+            application_date = p.get("application_date") or "sem data"
+            lines.append(f"- {product_name} — {dose} {unit} — {application_date}")
+
     lines.append("")
     lines.append("Responda com:")
     lines.append("✅ CONFIRMAR")
@@ -2067,12 +2078,12 @@ def extract_prefill_from_message_text(message_text: str):
             "culture": "",
             "fenologia_real": None,
             "recommendation": "",
+            "products": [],
         }
 
     parsed = parse_chatbot_message(message_text) or {}
 
     recommendation = (parsed.get("recommendation") or "").strip()
-
     if not recommendation:
         recommendation = extract_recommendation_fallback(message_text)
 
@@ -2081,6 +2092,7 @@ def extract_prefill_from_message_text(message_text: str):
         "culture": parsed.get("culture") or "",
         "fenologia_real": parsed.get("fenologia_real"),
         "recommendation": recommendation,
+        "products": parsed.get("products") or [],
     }
 
 
@@ -2256,6 +2268,115 @@ def should_send_photo_prompt(chat_id: str, photo_info: dict | None) -> bool:
 
     marker.write_text("sent", encoding="utf-8")
     return True
+
+
+
+def resolve_audio_message_text(chat_message, payload, current_text: str):
+    # move todo o bloco:
+    # - extract_telegram_audio_info
+    # - download_telegram_file_bytes
+    # - convert_audio_bytes_to_wav
+    # - transcribe_audio_bytes
+    # - send_telegram_message com "Áudio transcrito"
+    # retorno:
+    #   return final_message_text, handled_response_json_or_none
+
+
+def resolve_pending_photo_for_message(chat_message, payload, current_text: str):
+    # move o bloco:
+    # - extract_telegram_photo_info
+    # - download_telegram_file_bytes
+    # - save_pending_telegram_photo
+    # - mensagem "Recebi sua foto e já deixei ela separada..."
+    # retorno:
+    #   photo_info, downloaded_photo_bytes, downloaded_photo_name, handled_response_json_or_none
+
+
+def handle_help_commands(chat_message, message_text: str):
+    # move o bloco de ajuda/menu/comandos
+    # retorno:
+    #   jsonify(...) ou None
+
+
+def handle_month_visits_flow(chat_message, consultant, message_text: str):
+    # move:
+    # - is_month_visits_request
+    # - parse_month_visit_filter
+    # - build_month_visits_text
+    # - save state awaiting_month_visit_selection
+    # retorno:
+    #   jsonify(...) ou None
+
+def handle_month_visit_selection(chat_message, message_text: str):
+    # move:
+    # - parse_month_visit_action
+    # - PDF X
+    # - abrir visita para edição
+    # retorno:
+    #   jsonify(...) ou None
+
+
+
+def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
+    # move:
+    # - parse_pending_reply confirm_final/cancel_final
+    # - action use_existing_pending_visit / create_new_visit
+    # - PDF question after success
+    # retorno:
+    #   jsonify(...) ou None
+
+
+
+def build_final_visit_payload(base_preview: dict, selected_pending_visit: dict | None, resolved_consultant_id: int, close_only: bool = False):
+    return {
+        ...
+    }
+
+def apply_payload_to_existing_visit(visit, final_visit_payload: dict, close_only: bool = False):
+    # atualiza:
+    # - date
+    # - consultant_id
+    # - latitude/longitude
+    # - fenologia_real
+    # - recommendation
+    # - culture
+    # - variety
+    # - source
+    # - products
+
+def create_visit_from_payload(final_visit_payload: dict):
+    # cria Visit
+    # salva products
+    # retorna new_visit
+
+
+
+def replace_visit_products_from_payload(visit, final_visit_payload: dict):
+    from models import VisitProduct
+
+    VisitProduct.query.filter_by(visit_id=visit.id).delete()
+
+    for p in final_visit_payload.get("products") or []:
+        raw_date = p.get("application_date")
+        application_date = None
+
+        if raw_date:
+            try:
+                application_date = _date.fromisoformat(raw_date)
+            except Exception:
+                application_date = None
+
+        vp = VisitProduct(
+            visit_id=visit.id,
+            product_name=(p.get("product_name") or "").strip(),
+            dose=(p.get("dose") or "").strip(),
+            unit=(p.get("unit") or "").strip(),
+            application_date=application_date,
+        )
+        db.session.add(vp)
+
+
+
 
 
 # ============================================================
@@ -4124,6 +4245,8 @@ def telegram_webhook():
                     if hasattr(visit, "source"):
                         visit.source = final_visit_payload.get("source", "chatbot")
 
+                    replace_visit_products_from_payload(visit, final_visit_payload)
+
                     db.session.commit()
 
 
@@ -4210,7 +4333,13 @@ def telegram_webhook():
                         new_visit.source = final_visit_payload.get("source", "chatbot")
 
                     db.session.add(new_visit)
+                    # primeiro commit da visita
                     db.session.commit()
+
+                    replace_visit_products_from_payload(new_visit, final_visit_payload)
+                    db.session.commit()
+
+                    
 
                     if downloaded_photo_bytes:
                         attached_photo, attach_error = attach_photo_to_visit_from_telegram(
@@ -5109,7 +5238,7 @@ def telegram_webhook():
                 "variety": "",
                 "fenologia_real": prefill.get("fenologia_real"),
                 "recommendation": prefill.get("recommendation") or "",
-                "products": [],
+                "products": prefill.get("products") or [],
                 "latitude": None,
                 "longitude": None,
                 "generate_schedule": False,

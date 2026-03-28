@@ -170,6 +170,52 @@ def extract_recommendation(message: str) -> str:
     return ""
 
 
+PRODUCT_UNITS = ["L/ha", "mL/ha", "kg/ha", "g/ha", "%", "p.c"]
+
+
+def normalize_decimal_str(value: str) -> str:
+    if not value:
+        return ""
+    return value.replace(",", ".").strip()
+
+
+def extract_products(message: str) -> List[Dict[str, Any]]:
+    if not message:
+        return []
+
+    text = message.strip()
+
+    patterns = [
+        r"([A-Za-zÀ-ÿ0-9\-\+\./ ]{2,}?)\s+(\d+[\.,]?\d*)\s*(L/ha|mL/ha|kg/ha|g/ha|%|p\.c)\b",
+    ]
+
+    found = []
+    seen = set()
+
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            product_name = match.group(1).strip(" .,-;:")
+            dose = normalize_decimal_str(match.group(2))
+            unit = match.group(3).strip()
+
+            if not product_name or not dose or not unit:
+                continue
+
+            key = (product_name.lower(), dose, unit.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+
+            found.append({
+                "product_name": product_name,
+                "dose": dose,
+                "unit": unit,
+                "application_date": extract_date_iso(message),
+            })
+
+    return found
+
+
 def parse_chatbot_message(message: str) -> Dict[str, Any]:
     intent = detect_intent(message)
 
@@ -186,6 +232,7 @@ def parse_chatbot_message(message: str) -> Dict[str, Any]:
         "status": "planned",
         "source": "chatbot",
         "confidence": "low",
+        "products": extract_products(message),
     }
 
     filled_fields = sum(
