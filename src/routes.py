@@ -986,6 +986,23 @@ def normalize_products_from_parsed(products: list[dict] | None):
     return normalized_items
 
 
+def is_products_only_update(parsed: dict | None) -> bool:
+    parsed = parsed or {}
+
+    has_products = bool(parsed.get("products"))
+    has_fenologia = bool((parsed.get("fenologia_real") or "").strip())
+    has_date = bool(parsed.get("date"))
+    has_recommendation = bool((parsed.get("recommendation") or "").strip())
+    has_culture = bool((parsed.get("culture") or "").strip())
+
+    return has_products and not any([
+        has_fenologia,
+        has_date,
+        has_recommendation,
+        has_culture,
+    ])
+
+
 def find_property_by_name(property_name: str, client_id: int = None):
     if not property_name:
         return None, [], False
@@ -3563,7 +3580,6 @@ def telegram_webhook():
                     )
                     db.session.add(state)
 
-                # CASO 1 — usuário só quer atualizar produtos
                 if products_only:
                     summary_text = build_visit_summary_text(
                         action="use_existing_pending_visit",
@@ -3596,7 +3612,6 @@ def telegram_webhook():
                         "visit_id": visit.id
                     }), 200
 
-                # CASO 2 — já veio tudo necessário
                 has_prefilled_fenologia = bool((final_visit_payload.get("fenologia_real") or "").strip())
                 has_prefilled_date = bool(final_visit_payload.get("date"))
                 has_prefilled_observation = bool((final_visit_payload.get("recommendation") or "").strip())
@@ -3633,7 +3648,6 @@ def telegram_webhook():
                         "visit_id": visit.id
                     }), 200
 
-                # CASO 3 — faltam dados mesmo
                 state.visit_preview_json = json.dumps(
                     build_guided_state_payload(
                         action="use_existing_pending_visit",
@@ -4452,7 +4466,7 @@ def telegram_webhook():
                             "message": "visita pendente não encontrada"
                         }), 200
 
-                    iupdate_only_products = bool(final_visit_payload.get("update_only_products"))
+                    update_only_products = bool(final_visit_payload.get("update_only_products"))
 
                     if not update_only_products and final_visit_payload.get("date"):
                         visit.date = _date.fromisoformat(final_visit_payload["date"])
