@@ -179,14 +179,94 @@ def normalize_decimal_str(value: str) -> str:
     return value.replace(",", ".").strip()
 
 
+def normalize_unit_text(unit_raw: str) -> str:
+    if not unit_raw:
+        return ""
+
+    unit = unit_raw.strip().lower()
+    unit = unit.replace(" ", "")
+
+    mapping = {
+        "l/ha": "L/ha",
+        "lha": "L/ha",
+        "litro/ha": "L/ha",
+        "litros/ha": "L/ha",
+        "litroporhectare": "L/ha",
+        "litrosporhectare": "L/ha",
+        "lporhectare": "L/ha",
+
+        "ml/ha": "mL/ha",
+        "mlha": "mL/ha",
+        "mililitro/ha": "mL/ha",
+        "mililitros/ha": "mL/ha",
+        "mlporhectare": "mL/ha",
+        "mililitroporhectare": "mL/ha",
+        "mililitrosporhectare": "mL/ha",
+
+        "kg/ha": "kg/ha",
+        "kgha": "kg/ha",
+        "kgporhectare": "kg/ha",
+
+        "g/ha": "g/ha",
+        "gha": "g/ha",
+        "gporhectare": "g/ha",
+
+        "%": "%",
+        "pc": "p.c",
+        "p.c": "p.c",
+    }
+
+    return mapping.get(unit, unit_raw.strip())
+
+
+def clean_product_name(raw_name: str) -> str:
+    if not raw_name:
+        return ""
+
+    value = raw_name.strip(" .,-;:")
+
+    garbage_prefixes = [
+        "aplicacao de produtos",
+        "aplicação de produtos",
+        "aplicacao de produto",
+        "aplicação de produto",
+        "produto",
+        "produtos",
+        "apliquei",
+        "aplicar",
+        "aplicacao",
+        "aplicação",
+        "de",
+        "e",
+    ]
+
+    normalized = value.lower().strip()
+    changed = True
+    while changed:
+        changed = False
+        for prefix in garbage_prefixes:
+            if normalized.startswith(prefix + " "):
+                value = value[len(prefix):].strip(" .,-;:")
+                normalized = value.lower().strip()
+                changed = True
+
+    return value
+
+
 def extract_products(message: str) -> List[Dict[str, Any]]:
     if not message:
         return []
 
     text = message.strip()
 
+    unit_pattern = (
+        r"(L/ha|mL/ha|kg/ha|g/ha|%|p\.c|"
+        r"l por hectare|ml por hectare|kg por hectare|g por hectare|"
+        r"litro por hectare|litros por hectare|mililitro por hectare|mililitros por hectare)"
+    )
+
     patterns = [
-        r"([A-Za-zÀ-ÿ0-9\-\+\./ ]{2,}?)\s+(\d+[\.,]?\d*)\s*(L/ha|mL/ha|kg/ha|g/ha|%|p\.c)\b",
+        rf"([A-Za-zÀ-ÿ0-9\-\+\./ ]{{2,}}?)\s+(\d+[\.,]?\d*)\s*{unit_pattern}\b",
     ]
 
     found = []
@@ -194,9 +274,10 @@ def extract_products(message: str) -> List[Dict[str, Any]]:
 
     for pattern in patterns:
         for match in re.finditer(pattern, text, flags=re.IGNORECASE):
-            product_name = match.group(1).strip(" .,-;:")
+            raw_name = match.group(1).strip(" .,-;:")
             dose = normalize_decimal_str(match.group(2))
-            unit = match.group(3).strip()
+            unit = normalize_unit_text(match.group(3))
+            product_name = clean_product_name(raw_name)
 
             if not product_name or not dose or not unit:
                 continue

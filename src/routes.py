@@ -2164,6 +2164,24 @@ def extract_prefill_from_message_text(message_text: str):
     }
 
 
+def is_products_only_update(parsed: dict | None) -> bool:
+    parsed = parsed or {}
+
+    has_products = bool(parsed.get("products"))
+    has_fenologia = bool((parsed.get("fenologia_real") or "").strip())
+    has_date = bool(parsed.get("date"))
+    has_recommendation = bool((parsed.get("recommendation") or "").strip())
+    has_culture = bool((parsed.get("culture") or "").strip())
+
+    return has_products and not any([
+        has_fenologia,
+        has_date,
+        has_recommendation,
+        has_culture,
+    ])
+
+
+
 def extract_recommendation_fallback(message_text: str) -> str:
     if not message_text:
         return ""
@@ -3499,6 +3517,7 @@ def telegram_webhook():
                     parsed_recommendation = extract_recommendation_fallback(message_text)
 
                 parsed_products = normalize_products_from_parsed(parsed_direct.get("products") or [])
+                products_only = is_products_only_update(parsed_direct)
 
                 final_visit_payload = {
                     "linked_pending_visit_id": visit.id,
@@ -3510,12 +3529,13 @@ def telegram_webhook():
                     "status": "done",
                     "culture": parsed_direct.get("culture") or visit.culture or "",
                     "variety": visit.variety or "",
-                    "fenologia_real": parsed_direct.get("fenologia_real"),
-                    "recommendation": parsed_recommendation,
+                    "fenologia_real": parsed_direct.get("fenologia_real") or visit.fenologia_real,
+                    "recommendation": parsed_recommendation if parsed_recommendation else (visit.recommendation or ""),
                     "products": parsed_products,
                     "latitude": visit.latitude,
                     "longitude": visit.longitude,
                     "source": "chatbot",
+                    "update_only_products": products_only,
                 }
 
                 selected_pending_visit = {
@@ -3531,10 +3551,6 @@ def telegram_webhook():
                     "status": visit.status,
                 }
 
-                has_prefilled_fenologia = bool((final_visit_payload.get("fenologia_real") or "").strip())
-                has_prefilled_date = bool(final_visit_payload.get("date"))
-                has_prefilled_observation = bool((final_visit_payload.get("recommendation") or "").strip())
-
                 state = ChatbotConversationState.query.filter_by(
                     platform="telegram",
                     chat_id=chat_message.chat_id
@@ -3546,6 +3562,44 @@ def telegram_webhook():
                         chat_id=chat_message.chat_id,
                     )
                     db.session.add(state)
+
+                # CASO 1 — usuário só quer atualizar produtos
+                if products_only:
+                    summary_text = build_visit_summary_text(
+                        action="use_existing_pending_visit",
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=False
+                    )
+
+                    state.visit_preview_json = json.dumps(
+                        build_guided_state_payload(
+                            action="use_existing_pending_visit",
+                            final_visit_payload=final_visit_payload,
+                            selected_pending_visit=selected_pending_visit,
+                            close_only=False,
+                        ),
+                        ensure_ascii=False
+                    )
+                    state.confirmation_text = summary_text
+                    state.status = "awaiting_final_confirmation"
+                    db.session.commit()
+
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text=summary_text
+                    )
+
+                    return jsonify({
+                        "ok": True,
+                        "message": "visita carregada diretamente por id para atualizar apenas produtos",
+                        "visit_id": visit.id
+                    }), 200
+
+                # CASO 2 — já veio tudo necessário
+                has_prefilled_fenologia = bool((final_visit_payload.get("fenologia_real") or "").strip())
+                has_prefilled_date = bool(final_visit_payload.get("date"))
+                has_prefilled_observation = bool((final_visit_payload.get("recommendation") or "").strip())
 
                 if has_prefilled_fenologia and has_prefilled_date and has_prefilled_observation:
                     summary_text = build_visit_summary_text(
@@ -3579,6 +3633,7 @@ def telegram_webhook():
                         "visit_id": visit.id
                     }), 200
 
+                # CASO 3 — faltam dados mesmo
                 state.visit_preview_json = json.dumps(
                     build_guided_state_payload(
                         action="use_existing_pending_visit",
@@ -3588,12 +3643,22 @@ def telegram_webhook():
                     ),
                     ensure_ascii=False
                 )
-                state.status = "awaiting_fenologia"
+
+                if not has_prefilled_fenologia:
+                    state.status = "awaiting_fenologia"
+                    next_message = "🌿 Informe a fenologia observada.\nExemplo: V4, V5, R1"
+                elif not has_prefilled_date:
+                    state.status = "awaiting_date"
+                    next_message = "📅 Informe a data da visita.\nExemplo: hoje, ontem ou 24/02/2026"
+                else:
+                    state.status = "awaiting_observations"
+                    next_message = "💬 Informe as observações da visita."
+
                 db.session.commit()
 
                 send_telegram_message(
                     chat_id=chat_message.chat_id,
-                    text="🌿 Informe a fenologia observada.\nExemplo: V4, V5, R1"
+                    text=next_message
                 )
 
                 return jsonify({
@@ -3601,7 +3666,6 @@ def telegram_webhook():
                     "message": "visita carregada por id, aguardando complemento",
                     "visit_id": visit.id
                 }), 200
-
 
         # Se veio foto, tenta baixar desde já para possível uso posterior
         if photo_info:
@@ -4388,17 +4452,28 @@ def telegram_webhook():
                             "message": "visita pendente não encontrada"
                         }), 200
 
-                    if final_visit_payload.get("date"):
+                    iupdate_only_products = bool(final_visit_payload.get("update_only_products"))
+
+                    if not update_only_products and final_visit_payload.get("date"):
                         visit.date = _date.fromisoformat(final_visit_payload["date"])
 
                     visit.status = "done"
                     visit.consultant_id = final_visit_payload.get("consultant_id") or visit.consultant_id
-                    visit.latitude = final_visit_payload.get("latitude")
-                    visit.longitude = final_visit_payload.get("longitude")
 
-                    if not close_only:
-                        visit.fenologia_real = final_visit_payload.get("fenologia_real")
-                        visit.recommendation = final_visit_payload.get("recommendation") or visit.recommendation
+                    if final_visit_payload.get("latitude") is not None:
+                        visit.latitude = final_visit_payload.get("latitude")
+                    if final_visit_payload.get("longitude") is not None:
+                        visit.longitude = final_visit_payload.get("longitude")
+
+                    if not close_only and not update_only_products:
+                        if final_visit_payload.get("fenologia_real"):
+                            visit.fenologia_real = final_visit_payload.get("fenologia_real")
+                        if final_visit_payload.get("recommendation") is not None:
+                            visit.recommendation = final_visit_payload.get("recommendation") or visit.recommendation
+                        if final_visit_payload.get("culture"):
+                            visit.culture = final_visit_payload.get("culture") or visit.culture
+                        if final_visit_payload.get("variety"):
+                            visit.variety = final_visit_payload.get("variety") or visit.variety
 
                     if hasattr(visit, "source"):
                         visit.source = final_visit_payload.get("source", "chatbot")
@@ -6001,7 +6076,7 @@ def chatbot_suggest_pending_visits():
             "variety": "",
             "fenologia_real": parsed.get("fenologia_real"),
             "recommendation": parsed_recommendation,
-            "products": [],
+            "products": normalize_products_from_parsed(parsed.get("products") or []),
             "latitude": None,
             "longitude": None,
             "generate_schedule": False,
