@@ -3926,6 +3926,7 @@ def is_stale_clients_request(text: str) -> bool:
         "quais clientes estão mais atrasados",
         "visitas do mes atrasadas",
         "visitas do mês atrasadas",
+        "visitas atrasadas",
     ]
 
     return any(trigger in normalized for trigger in triggers)
