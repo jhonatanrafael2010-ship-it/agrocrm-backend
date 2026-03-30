@@ -3989,6 +3989,9 @@ def find_stale_clients_ranking(consultant_id: int | None = None, limit: int = 15
             "client_name": client.name,
             "last_valid_visit_date": last_valid_date,
             "days_without_valid_visit": days_without,
+            "last_valid_culture": (
+                valid_photo_visit.culture if valid_photo_visit and valid_photo_visit.culture else "—"
+            ),
             "last_any_visit_date": last_any_visit.date,
             "last_any_visit_status": last_any_visit.status,
             "last_any_visit_had_photo": visit_has_valid_photo(last_any_visit),
@@ -4015,37 +4018,25 @@ def build_stale_clients_ranking_text(consultant_name: str, items: list) -> str:
         )
 
     lines = [
-        "📊 Ranking de clientes há mais tempo sem visita válida",
+        "📊 Clientes há mais tempo sem visita válida",
         f"Consultor: {consultant_name}",
-        "Critério: conta apenas visita com foto.",
+        "Critério: conta apenas visita realizada com foto.",
         ""
     ]
 
     for idx, item in enumerate(items, start=1):
         client_name = item.get("client_name") or f"Cliente {item.get('client_id')}"
         days_without = item.get("days_without_valid_visit")
+        culture = item.get("last_valid_culture") or "—"
 
-        if item.get("last_valid_visit_date"):
-            last_valid = item["last_valid_visit_date"].strftime("%d/%m/%Y")
-            days_label = f"{days_without} dia(s)"
+        if item.get("last_valid_visit_date") and days_without is not None and days_without != 99999:
+            lines.append(
+                f"{idx}. {client_name} - {days_without} dias desde a última visita - {culture}"
+            )
         else:
-            last_valid = "nenhuma visita válida"
-            days_label = "sem histórico com foto"
-
-        last_any_visit_date = item.get("last_any_visit_date")
-        last_any_status = item.get("last_any_visit_status") or "—"
-        last_any_had_photo = "sim" if item.get("last_any_visit_had_photo") else "não"
-
-        if last_any_visit_date:
-            last_any_label = last_any_visit_date.strftime("%d/%m/%Y")
-            extra = f"última visita geral: {last_any_label} | status: {last_any_status} | foto: {last_any_had_photo}"
-        else:
-            extra = "nenhuma visita geral encontrada"
-
-        lines.append(
-            f"{idx}. {client_name} — {days_label} sem visita válida — última válida: {last_valid}"
-        )
-        lines.append(f"   {extra}")
+            lines.append(
+                f"{idx}. {client_name} - sem visita válida com foto - {culture}"
+            )
 
     return "\n".join(lines)
 
