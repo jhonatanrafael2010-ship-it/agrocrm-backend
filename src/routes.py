@@ -5966,6 +5966,12 @@ def telegram_webhook():
             "send_result": send_result,
         }), 200
 
+    except Exception as e:
+        print(f"❌ Erro em /telegram/webhook: {e}")
+        return jsonify({
+            "ok": False,
+            "error": str(e)
+        }), 500
 
 
 
