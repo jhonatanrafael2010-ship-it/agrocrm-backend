@@ -116,7 +116,7 @@ import subprocess
 from openai import OpenAI
 from zoneinfo import ZoneInfo
 from pathlib import Path
-
+import random
 
 
 
@@ -400,6 +400,10 @@ def parse_pdf_selection(text: str):
             seen.add(idx)
             unique_indexes.append(idx)
 
+    ordinal_idx = parse_human_ordinal_reference(text)
+    if ordinal_idx is not None:
+        return [ordinal_idx]
+
     return unique_indexes
 
 
@@ -679,7 +683,7 @@ def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pe
         if client:
             client_name = client.name
 
-    lines = ["📝 Resumo da visita", ""]
+    lines = [f"📝 {bot_phrase('summary_intro', 'Resumo da visita')}", ""]
 
     if action == "use_existing_pending_visit" and selected_pending_visit:
         lines.append(f"🔧 Tipo: {'Concluir visita pendente' if close_only else 'Atualizar visita pendente'}")
@@ -1653,6 +1657,12 @@ Estados possíveis do chatbot:
 - awaiting_planting_confirmation
 - awaiting_avulsa_confirmation
 - none
+- today_schedule_request
+- daily_routine_request
+- pdf_by_client_reference
+- contextual_visit_reference
+
+
 
 Regras gerais:
 - Se o usuário pedir agenda semanal, retorne intent = week_schedule_request
@@ -1665,6 +1675,12 @@ Regras gerais:
 - Se o usuário quiser alterar um campo do resumo, retorne intent = edit_summary
 - Se a mensagem parecer um lançamento completo de visita, retorne intent = create_visit_like_message
 - Se não souber, retorne intent = unknown
+- "o que tenho hoje", "agenda de hoje", "meu dia", "o que falta hoje" => today_schedule_request ou daily_routine_request
+- "prioridades de hoje", "rotina do dia", "resumo do dia" => daily_routine_request
+- "pdf do evaristo", "manda o pdf do marcelo", "pdf da ultima do ivan" => pdf_by_client_reference
+- "a terceira", "essa", "a do evaristo" => contextual_visit_reference
+
+
 
 Campos possíveis no JSON:
 - intent
@@ -1761,6 +1777,14 @@ Exemplos de saída:
 {"intent":"create_visit_like_message","confidence":"medium","parsed_visit":{"client_name":"Marcelo Alonso","property_name":"","plot_name":"","culture":"Soja","fenologia_real":"V4","date":"hoje","recommendation":"aplicar fungicida"}}
 
 {"intent":"unknown","confidence":"low"}
+
+{"intent":"today_schedule_request","confidence":"high"}
+
+{"intent":"daily_routine_request","confidence":"high"}
+
+{"intent":"pdf_by_client_reference","confidence":"medium","parsed_visit":{"client_name":"Evaristo Barzotto"}}
+
+{"intent":"contextual_visit_reference","confidence":"medium","visit_index":3}
 """.strip()
 
         user_prompt = f"""
@@ -1802,10 +1826,14 @@ Mensagem do usuário:
 
         allowed_intents = {
             "week_schedule_request",
+            "today_schedule_request",
+            "daily_routine_request",
             "launch_week_visit",
             "complete_week_visit",
             "pdf_last_visit",
             "pdf_recent_visits",
+            "pdf_by_client_reference",
+            "contextual_visit_reference",
             "confirm",
             "cancel",
             "edit_summary",
@@ -2147,6 +2175,9 @@ def parse_month_visit_action(text: str):
 
     if normalized.isdigit():
         return {"mode": "select", "index": int(normalized) - 1}
+    ordinal_idx = parse_human_ordinal_reference(text)
+    if ordinal_idx is not None:
+        return {"mode": "select", "index": ordinal_idx}
 
     return None
 
@@ -2397,7 +2428,10 @@ def resolve_audio_message_text(chat_message, payload, current_text: str):
     if transcript_error or not transcript_text:
         send_telegram_message(
             chat_id=chat_message.chat_id,
-            text="Recebi seu áudio, mas não consegui transcrever. Tente novamente ou envie em texto."
+            text=bot_phrase(
+                "audio_fail",
+                "Recebi seu áudio, mas não consegui transcrever. Tente novamente ou envie em texto."
+            )
         )
         return None
 
@@ -2447,11 +2481,14 @@ def resolve_pending_photo_for_message(chat_message, payload, current_text: str):
             send_telegram_message(
                 chat_id=chat_message.chat_id,
                 text=(
-                    "Recebi sua foto e já deixei ela separada para esta conversa.\n\n"
-                    "Agora me envie o texto ou áudio da visita.\n\n"
-                    "Exemplo:\n"
-                    "- Cliente Rogério Remor, fenologia observada V11, data hoje, observações plantas sadias\n"
-                    "- Ou envie um áudio com essas informações"
+                    bot_phrase(
+                        "photo_saved_waiting_context",
+                        "Recebi sua foto e já deixei ela separada para esta conversa."
+                    )
+                    + "\n\n"
+                    + "Exemplo:\n"
+                    + "- Cliente Rogério Remor, fenologia observada V11, data hoje, observações plantas sadias\n"
+                    + "- Ou envie um áudio com essas informações"
                 )
             )
         return "__PHOTO_ONLY_WAITING_CONTEXT__"
@@ -2792,7 +2829,7 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
     if reply["mode"] != "confirm_final":
         send_telegram_message(
             chat_id=chat_message.chat_id,
-            text="Para esta etapa, responda com CONFIRMAR ou CANCELAR."
+            text=bot_phrase("confirm_or_cancel", "Para esta etapa, responda com CONFIRMAR ou CANCELAR.")
         )
         return jsonify({
             "ok": True,
@@ -4297,6 +4334,61 @@ def handle_pdf_flow(chat_message, consultant, message_text: str):
     - escolha da(s) visita(s) para gerar PDF
     - confirmação para gerar PDF da última visita concluída
     """
+    client_reference = parse_pdf_client_reference(message_text)
+    if client_reference:
+        if not consultant:
+            send_result = send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=bot_phrase(
+                    "consultant_not_bound",
+                    "Seu Telegram ainda não está vinculado a um consultor do AgroCRM."
+                )
+            )
+            return jsonify({
+                "ok": False,
+                "message": "consultor não vinculado",
+                "send_result": send_result,
+            }), 400
+
+        visit = find_last_completed_visit_for_client_reference(
+            consultant_id=consultant.id,
+            client_name=client_reference,
+        )
+
+        if not visit:
+            send_result = send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=f"Não achei PDF recente para {client_reference}."
+            )
+            return jsonify({
+                "ok": True,
+                "message": "pdf por cliente não encontrado",
+                "send_result": send_result,
+            }), 200
+
+        try:
+            buffer, filename = build_visit_pdf_file(visit.id)
+            pdf_bytes = buffer.getvalue()
+
+            send_result = send_telegram_document(
+                chat_id=chat_message.chat_id,
+                file_bytes=pdf_bytes,
+                filename=filename,
+                caption=f"📄 PDF da visita {visit.id}"
+            )
+
+            return jsonify({
+                "ok": True,
+                "message": "pdf por cliente enviado",
+                "visit_id": visit.id,
+                "send_result": send_result,
+            }), 200
+
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "error": str(e)
+            }), 500
 
     # =========================================================
     # PDF da última visita
@@ -4812,6 +4904,293 @@ def handle_month_visits_flow(chat_message, consultant, message_text: str):
     return None
 
 
+BOT_TONE_MESSAGES = {
+    "week_not_found": [
+        "Ainda não tenho uma agenda aberta aqui. Me pede primeiro sua agenda da semana.",
+        "Não achei uma agenda ativa agora. Primeiro me chama com agenda da semana.",
+        "Beleza, mas antes preciso abrir sua agenda da semana."
+    ],
+    "consultant_not_bound": [
+        "Seu Telegram ainda não está vinculado a um consultor. Usa /start e depois /vincular SEU_CODIGO.",
+        "Ainda não consegui te ligar a um consultor do sistema. Faz /start e depois /vincular SEU_CODIGO.",
+    ],
+    "audio_fail": [
+        "Recebi seu áudio, mas não consegui transcrever. Tenta de novo ou me manda em texto.",
+        "Peguei seu áudio aqui, mas a transcrição falhou. Pode reenviar ou mandar escrito.",
+    ],
+    "photo_saved_waiting_context": [
+        "Fechado. Já deixei sua foto separada. Agora me manda o texto ou áudio da visita.",
+        "Perfeito, foto recebida. Agora só preciso do texto ou áudio da visita.",
+    ],
+    "invalid_option": [
+        "Essa opção não bateu aqui. Confere e me manda de novo.",
+        "Não consegui usar essa opção. Dá uma revisada e tenta outra vez.",
+    ],
+    "confirm_or_cancel": [
+        "Agora só me responde com CONFIRMAR ou CANCELAR.",
+        "Fechou. Nessa etapa me responde só com CONFIRMAR ou CANCELAR.",
+    ],
+    "operation_cancelled": [
+        "Fechado, cancelei por aqui.",
+        "Certo, operação cancelada.",
+        "Beleza, parei esse fluxo aqui.",
+    ],
+    "help_intro": [
+        "🤖 Posso te ajudar com:",
+    ],
+    "summary_intro": [
+        "Fechou, entendi assim:",
+        "Beleza, ficou assim:",
+        "Montei esse resumo aqui:",
+    ],
+}
+
+def bot_phrase(key: str, default: str = "") -> str:
+    options = BOT_TONE_MESSAGES.get(key) or []
+    if not options:
+        return default
+    return random.choice(options)
+
+
+
+def is_today_schedule_request(text: str) -> bool:
+    normalized = normalize_lookup_text(text or "")
+
+    triggers = [
+        "agenda de hoje",
+        "visitas de hoje",
+        "o que tenho hoje",
+        "o que eu tenho hoje",
+        "hoje pra mim",
+    ]
+    return any(t in normalized for t in triggers)
+
+
+def is_daily_routine_request(text: str) -> bool:
+    normalized = normalize_lookup_text(text or "")
+
+    triggers = [
+        "rotina do dia",
+        "meu dia",
+        "prioridades de hoje",
+        "resumo do dia",
+        "o que falta hoje",
+    ]
+    return any(t in normalized for t in triggers)
+
+
+def find_consultant_visits_for_day(consultant_id: int, reference_date=None, limit: int = 50):
+    if not consultant_id:
+        return []
+
+    day_ref = reference_date or get_local_today()
+
+    visits = (
+        Visit.query
+        .filter(Visit.consultant_id == consultant_id)
+        .filter(Visit.date == day_ref)
+        .order_by(Visit.date.asc(), Visit.id.asc())
+        .limit(limit)
+        .all()
+    )
+    return visits
+
+
+def build_today_schedule_text(consultant_name: str, visits: list, reference_date=None) -> str:
+    today = reference_date or get_local_today()
+
+    if not visits:
+        return (
+            f"📅 Agenda de hoje\n"
+            f"Consultor: {consultant_name}\n"
+            f"Data: {today.strftime('%d/%m/%Y')}\n\n"
+            f"Hoje você não tem visitas cadastradas."
+        )
+
+    lines = [
+        "📅 Agenda de hoje",
+        f"Consultor: {consultant_name}",
+        f"Data: {today.strftime('%d/%m/%Y')}",
+        "",
+    ]
+
+    for idx, visit in enumerate(visits, start=1):
+        client_name = visit.client.name if getattr(visit, "client", None) else f"Cliente {visit.client_id}"
+        culture = visit.culture or "—"
+        stage = visit.fenologia_real or visit.recommendation or "—"
+        status = visit.status or "planned"
+        lines.append(f"{idx}. {client_name} - {culture} - {stage} - {status}")
+
+    return "\n".join(lines)
+
+
+def build_daily_routine_text(consultant_name: str, today_visits: list, overdue_month_visits: list, stale_clients: list) -> str:
+    lines = [
+        "☀️ Rotina do dia",
+        f"Consultor: {consultant_name}",
+        "",
+        f"📅 Visitas de hoje: {len(today_visits)}",
+        f"⏰ Visitas atrasadas no mês: {len(overdue_month_visits)}",
+        "",
+    ]
+
+    if today_visits:
+        lines.append("Hoje:")
+        for v in today_visits[:5]:
+            client_name = v.client.name if getattr(v, "client", None) else f"Cliente {v.client_id}"
+            culture = v.culture or "—"
+            lines.append(f"- {client_name} - {culture}")
+        lines.append("")
+
+    if stale_clients:
+        lines.append("Mais atrasados:")
+        for item in stale_clients[:5]:
+            client_name = item.get("client_name") or "—"
+            days_without = item.get("days_without_valid_visit")
+            culture = item.get("last_valid_culture") or "—"
+            lines.append(f"- {client_name} - {days_without} dias - {culture}")
+
+    return "\n".join(lines)
+
+
+def handle_daily_routine_flow(chat_message, consultant, message_text: str):
+    if not consultant:
+        return None
+
+    if is_today_schedule_request(message_text):
+        today_visits = find_consultant_visits_for_day(consultant.id)
+        response_text = build_today_schedule_text(consultant.name, today_visits)
+
+        send_result = send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text=response_text
+        )
+
+        return jsonify({
+            "ok": True,
+            "message": "agenda de hoje enviada",
+            "response_text": response_text,
+            "send_result": send_result,
+        }), 200
+
+    if is_daily_routine_request(message_text):
+        today_visits = find_consultant_visits_for_day(consultant.id)
+        overdue_month_visits = find_consultant_visits_for_month(
+            consultant_id=consultant.id,
+            filter_mode="overdue"
+        )
+        stale_clients = find_stale_clients_ranking(
+            consultant_id=consultant.id,
+            limit=5
+        )
+
+        response_text = build_daily_routine_text(
+            consultant_name=consultant.name,
+            today_visits=today_visits,
+            overdue_month_visits=overdue_month_visits,
+            stale_clients=stale_clients,
+        )
+
+        send_result = send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text=response_text
+        )
+
+        return jsonify({
+            "ok": True,
+            "message": "rotina do dia enviada",
+            "response_text": response_text,
+            "send_result": send_result,
+        }), 200
+
+    return None
+
+def parse_pdf_client_reference(text: str) -> str | None:
+    raw = (text or "").strip()
+    normalized = normalize_lookup_text(raw)
+
+    patterns = [
+        r"^pdf do cliente (.+)$",
+        r"^pdf do (.+)$",
+        r"^manda o pdf do (.+)$",
+        r"^pdf da ultima do (.+)$",
+        r"^pdf da última do (.+)$",
+    ]
+
+    for pattern in patterns:
+        match = re.match(pattern, normalized)
+        if match:
+            value = raw[match.start(1):].strip(" .,-")
+            if value:
+                return value
+
+    return None
+
+
+def find_last_completed_visit_for_client_reference(consultant_id: int, client_name: str):
+    matched_client, _, _ = find_client_by_name(client_name)
+    if not matched_client:
+        return None
+
+    visit = (
+        Visit.query
+        .filter(Visit.consultant_id == consultant_id)
+        .filter(Visit.client_id == matched_client.id)
+        .filter(Visit.status == "done")
+        .order_by(Visit.date.desc().nullslast(), Visit.id.desc())
+        .first()
+    )
+    return visit
+
+
+def parse_human_ordinal_reference(text: str):
+    normalized = normalize_lookup_text(text or "")
+
+    mapping = {
+        "primeira": 0,
+        "segunda": 1,
+        "terceira": 2,
+        "quarta": 3,
+        "quinta": 4,
+        "sexta": 5,
+        "setima": 6,
+        "sétima": 6,
+        "oitava": 7,
+        "nona": 8,
+        "decima": 9,
+        "décima": 9,
+    }
+
+    for word, idx in mapping.items():
+        if normalized == word or normalized == f"a {word}" or normalized == f"visita {word}":
+            return idx
+
+    return None
+
+
+
+def resolve_single_active_reference(chat_message, message_text: str):
+    normalized = normalize_lookup_text(message_text or "").strip()
+    if normalized not in {"essa", "essa ai", "essa aí", "essa mesma"}:
+        return None
+
+    state = ChatbotConversationState.query.filter_by(
+        platform="telegram",
+        chat_id=chat_message.chat_id
+    ).first()
+
+    if not state:
+        return None
+
+    candidates = json.loads(state.pending_visit_suggestions_json or "[]")
+    if len(candidates) == 1:
+        return "1"
+
+    return None
+
+
+
+
 
 
 
@@ -4860,6 +5239,14 @@ def telegram_webhook():
 
         message_text = (message_text or "").strip()
         message_text_lower = message_text.lower()
+
+        single_reference = resolve_single_active_reference(
+            chat_message=chat_message,
+            message_text=message_text,
+        )
+        if single_reference:
+            message_text = single_reference
+            message_text_lower = message_text.lower()
 
         photo_info = resolve_pending_photo_for_message(
             chat_message=chat_message,
@@ -4959,7 +5346,7 @@ def telegram_webhook():
 
             send_result = send_telegram_message(
                 chat_id=chat_message.chat_id,
-                text="Operação cancelada com sucesso."
+                text=bot_phrase("operation_cancelled", "Operação cancelada com sucesso.")
             )
 
             return jsonify({
@@ -4984,6 +5371,14 @@ def telegram_webhook():
         )
         if stale_clients_response:
             return stale_clients_response
+
+        daily_routine_response = handle_daily_routine_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+        if daily_routine_response:
+            return daily_routine_response
 
         month_visits_response = handle_month_visits_flow(
             chat_message=chat_message,
@@ -5695,6 +6090,22 @@ def telegram_webhook():
 
                 if ai_parts:
                     message_text = " ".join(ai_parts)
+            if ai_intent == "today_schedule_request":
+                message_text = "agenda de hoje"
+
+            elif ai_intent == "daily_routine_request":
+                message_text = "rotina do dia"
+
+            elif ai_intent == "pdf_by_client_reference":
+                parsed_visit = ai_result.get("parsed_visit") or {}
+                client_name = (parsed_visit.get("client_name") or "").strip()
+                if client_name:
+                    message_text = f"pdf do cliente {client_name}"
+
+            elif ai_intent == "contextual_visit_reference":
+                visit_index = ai_result.get("visit_index")
+                if visit_index:
+                    message_text = str(visit_index)
 
         free_client_guess = try_extract_client_from_free_text(message_text)
 
@@ -5801,23 +6212,25 @@ def telegram_webhook():
         }:
             help_text = (
                 "🤖 Posso te ajudar com:\n\n"
-                "1. Cliente por nome\n"
-                "- Ex.: Rogerio Remor\n\n"
-                "2. Agenda semanal\n"
-                "- Ex.: agenda da semana\n\n"
-                "3. Ranking de clientes atrasados\n"
+                "1. Agenda semanal\n"
+                "- Ex.: agenda da semana\n"
+                "- Ex.: lança a 3\n"
+                "- Ex.: conclui a 2\n\n"
+                "2. Rotina do dia\n"
+                "- Ex.: meu dia\n"
+                "- Ex.: agenda de hoje\n"
+                "- Ex.: prioridades de hoje\n\n"
+                "3. Clientes mais atrasados\n"
                 "- Ex.: clientes mais atrasados\n"
-                "- Ex.: clientes há mais tempo sem visita\n\n"
-                "4. Visitas do mês\n"
-                "- Ex.: visitas do mês\n"
-                "- Ex.: visitas do mês concluídas\n"
                 "- Ex.: visitas do mês atrasadas\n\n"
-                "5. PDF\n"
+                "4. PDFs\n"
                 "- Ex.: pdf\n"
-                "- Ex.: pdf ultima visita\n\n"
-                "6. Lançar ou atualizar visita\n"
-                "- Ex.: Cliente Rogerio Remor\n"
-                "- Depois escolha o número da visita ou NOVA"
+                "- Ex.: pdf da ultima visita\n"
+                "- Ex.: pdf do Evaristo\n\n"
+                "5. Lançar visita em linguagem natural\n"
+                "- Ex.: cliente Marcelo Alonso soja v4 hoje aplicar fungicida\n"
+                "- Ex.: a terceira\n"
+                "- Ex.: essa"
             )
 
             send_telegram_message(
