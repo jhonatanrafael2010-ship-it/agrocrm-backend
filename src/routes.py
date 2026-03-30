@@ -2044,8 +2044,6 @@ def is_month_visits_request(text: str) -> bool:
         "visitas do mês concluidas",
         "visitas do mes concluídas",
         "visitas do mês concluídas",
-        "visitas do mes atrasadas",
-        "visitas do mês atrasadas",
     ]
 
     return any(trigger in normalized for trigger in triggers)
@@ -3845,18 +3843,13 @@ def is_confirmation_reply(text: str) -> bool:
 
 
 
-
-
-
-
-
 def parse_date_flexible(value: str):
     if not value:
         return None
 
     raw = value.strip()
     normalized = normalize_lookup_text(raw)
-    today = _date.today()
+    today = get_local_today()
 
     if normalized == "hoje":
         return today.isoformat()
@@ -3901,6 +3894,8 @@ def parse_date_flexible(value: str):
     return None
 
 
+
+
 def visit_has_valid_photo(visit) -> bool:
     if not visit:
         return False
@@ -3929,6 +3924,8 @@ def is_stale_clients_request(text: str) -> bool:
         "me mostra os clientes mais atrasados",
         "quais clientes estao mais atrasados",
         "quais clientes estão mais atrasados",
+        "visitas do mes atrasadas",
+        "visitas do mês atrasadas",
     ]
 
     return any(trigger in normalized for trigger in triggers)
