@@ -3935,15 +3935,15 @@ def is_stale_clients_request(text: str) -> bool:
 def find_stale_clients_ranking(consultant_id: int | None = None, limit: int = 15):
     """
     Ranking do mais atrasado para o menos atrasado.
+
     Regra:
-    - só conta como visita válida a última visita COM FOTO
-    - visitas sem foto não entram como 'última visita válida'
+    - entra no ranking apenas cliente que já tenha pelo menos 1 visita lançada
+    - conta como última visita válida apenas visita COM FOTO
+    - cliente sem visita com foto fica fora do ranking
     """
     today = get_local_today()
 
-    client_query = Client.query
-    clients = client_query.order_by(Client.name.asc()).all()
-
+    clients = Client.query.order_by(Client.name.asc()).all()
     ranking = []
 
     for client in clients:
@@ -3954,19 +3954,9 @@ def find_stale_clients_ranking(consultant_id: int | None = None, limit: int = 15
 
         visits = q.order_by(Visit.date.desc().nullslast(), Visit.id.desc()).all()
 
+        # ✅ cliente sem nenhuma visita lançada não entra no ranking
         if not visits:
-            ranking.append({
-                "client_id": client.id,
-                "client_name": client.name,
-                "last_valid_visit_date": None,
-                "days_without_valid_visit": 99999,
-                "last_any_visit_date": None,
-                "last_any_visit_status": None,
-                "last_any_visit_had_photo": False,
-            })
             continue
-
-        last_any_visit = visits[0]
 
         valid_photo_visit = None
         for visit in visits:
@@ -3974,29 +3964,29 @@ def find_stale_clients_ranking(consultant_id: int | None = None, limit: int = 15
                 valid_photo_visit = visit
                 break
 
-        if valid_photo_visit and valid_photo_visit.date:
-            days_without = (today - valid_photo_visit.date).days
-            last_valid_date = valid_photo_visit.date
-        else:
-            days_without = 99999
-            last_valid_date = None
+        # ✅ cliente com visitas lançadas, mas sem nenhuma visita com foto, fica fora do ranking
+        if not valid_photo_visit:
+            continue
+
+        if not valid_photo_visit.date:
+            continue
+
+        days_without = (today - valid_photo_visit.date).days
 
         ranking.append({
             "client_id": client.id,
             "client_name": client.name,
-            "last_valid_visit_date": last_valid_date,
+            "last_valid_visit_date": valid_photo_visit.date,
             "days_without_valid_visit": days_without,
             "last_valid_culture": (
-                valid_photo_visit.culture if valid_photo_visit and valid_photo_visit.culture else "—"
+                valid_photo_visit.culture if valid_photo_visit.culture else "—"
             ),
-            "last_any_visit_date": last_any_visit.date,
-            "last_any_visit_status": last_any_visit.status,
-            "last_any_visit_had_photo": visit_has_valid_photo(last_any_visit),
+            "last_valid_visit_id": valid_photo_visit.id,
         })
 
     ranking.sort(
         key=lambda x: (
-            x["days_without_valid_visit"] if x["days_without_valid_visit"] is not None else 99999,
+            x["days_without_valid_visit"],
             x["client_name"] or ""
         ),
         reverse=True
@@ -4011,7 +4001,7 @@ def build_stale_clients_ranking_text(consultant_name: str, items: list) -> str:
         return (
             f"📊 Clientes há mais tempo sem visita válida\n"
             f"Consultor: {consultant_name}\n\n"
-            f"Nenhum cliente encontrado."
+            f"Nenhum cliente com visita válida encontrada."
         )
 
     lines = [
@@ -4026,14 +4016,9 @@ def build_stale_clients_ranking_text(consultant_name: str, items: list) -> str:
         days_without = item.get("days_without_valid_visit")
         culture = item.get("last_valid_culture") or "—"
 
-        if item.get("last_valid_visit_date") and days_without is not None and days_without != 99999:
-            lines.append(
-                f"{idx}. {client_name} - {days_without} dias desde a última visita - {culture}"
-            )
-        else:
-            lines.append(
-                f"{idx}. {client_name} - sem visita válida com foto - {culture}"
-            )
+        lines.append(
+            f"{idx}. {client_name} - {days_without} dias desde a última visita - {culture}"
+        )
 
     return "\n".join(lines)
 
