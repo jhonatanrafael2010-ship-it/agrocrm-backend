@@ -5189,6 +5189,215 @@ def resolve_single_active_reference(chat_message, message_text: str):
     return None
 
 
+def is_week_organization_request(text: str) -> bool:
+    normalized = normalize_lookup_text(text or "")
+
+    triggers = [
+        "organiza minha semana",
+        "organizar minha semana",
+        "organize minha semana",
+        "monta minha semana",
+        "planeja minha semana",
+        "planejar minha semana",
+        "como organizar minha semana",
+        "me ajuda a organizar minha semana",
+        "organizar semana",
+    ]
+
+    return any(t in normalized for t in triggers)
+
+def resolve_visit_region_label(visit) -> str:
+    if not visit:
+        return "Sem região definida"
+
+    prop = getattr(visit, "property", None)
+
+    if prop:
+        city_state = (getattr(prop, "city_state", None) or "").strip()
+        if city_state:
+            return city_state
+
+        prop_name = (getattr(prop, "name", None) or "").strip()
+        if prop_name:
+            return prop_name
+
+    return "Sem região definida"
+
+
+def resolve_visit_client_name(visit) -> str:
+    if not visit:
+        return "Cliente indefinido"
+
+    client = getattr(visit, "client", None)
+    if client and getattr(client, "name", None):
+        return client.name
+
+    return f"Cliente {getattr(visit, 'client_id', '—')}"
+
+
+
+def build_week_priority_items(consultant_id: int, reference_date=None):
+    today = reference_date or get_local_today()
+    start_date, end_date = get_week_date_range(today)
+
+    week_visits = (
+        Visit.query
+        .filter(Visit.consultant_id == consultant_id)
+        .filter(Visit.status != "done")
+        .filter(Visit.date >= start_date)
+        .filter(Visit.date <= end_date)
+        .order_by(Visit.date.asc().nullslast(), Visit.id.asc())
+        .all()
+    )
+
+    overdue_visits = (
+        Visit.query
+        .filter(Visit.consultant_id == consultant_id)
+        .filter(Visit.status != "done")
+        .filter(Visit.date < today)
+        .order_by(Visit.date.asc().nullslast(), Visit.id.asc())
+        .all()
+    )
+
+    seen_ids = set()
+    combined = []
+
+    for visit in overdue_visits + week_visits:
+        if visit.id in seen_ids:
+            continue
+        seen_ids.add(visit.id)
+
+        visit_date = visit.date
+        is_overdue = bool(visit_date and visit_date < today)
+
+        if visit_date:
+            days_from_today = (visit_date - today).days
+        else:
+            days_from_today = 9999
+
+        combined.append({
+            "visit": visit,
+            "visit_id": visit.id,
+            "client_name": resolve_visit_client_name(visit),
+            "region_label": resolve_visit_region_label(visit),
+            "culture": visit.culture or "—",
+            "fenologia_real": visit.fenologia_real or "—",
+            "recommendation": (visit.recommendation or "").strip() or "—",
+            "date": visit_date,
+            "is_overdue": is_overdue,
+            "days_from_today": days_from_today,
+        })
+
+    combined.sort(
+        key=lambda item: (
+            0 if item["is_overdue"] else 1,
+            item["date"] or _date.max,
+            item["region_label"] or "",
+            item["client_name"] or "",
+        )
+    )
+
+    return combined
+
+def group_week_items_by_region(items: list):
+    grouped = {}
+
+    for item in items:
+        region = item.get("region_label") or "Sem região definida"
+        grouped.setdefault(region, []).append(item)
+
+    return grouped
+
+
+def build_week_organization_text(consultant_name: str, items: list) -> str:
+    if not items:
+        return (
+            f"🗓️ Organização da semana\n"
+            f"Consultor: {consultant_name}\n\n"
+            f"Não encontrei visitas pendentes/atrasadas para organizar."
+        )
+
+    grouped = group_week_items_by_region(items)
+
+    lines = [
+        "🗓️ Organização sugerida da semana",
+        f"Consultor: {consultant_name}",
+        "Critério: atrasadas primeiro, depois agrupadas por região.",
+        ""
+    ]
+
+    overdue_count = sum(1 for item in items if item.get("is_overdue"))
+    week_count = len(items)
+
+    lines.append(f"📌 Total priorizado: {week_count}")
+    lines.append(f"⏰ Atrasadas: {overdue_count}")
+    lines.append("")
+
+    for region, region_items in grouped.items():
+        lines.append(f"📍 Região: {region}")
+
+        for idx, item in enumerate(region_items, start=1):
+            visit = item["visit"]
+            date_label = visit.date.strftime("%d/%m/%Y") if visit.date else "sem data"
+            overdue_label = "ATRASADA" if item["is_overdue"] else "semana"
+            client_name = item["client_name"]
+            culture = item["culture"]
+            fenologia = item["fenologia_real"]
+
+            lines.append(
+                f"- {client_name} | {date_label} | {culture} | {fenologia} | {overdue_label}"
+            )
+
+        lines.append("")
+
+    lines.append("Sugestão prática:")
+    lines.append("- começar pelas regiões com visitas atrasadas")
+    lines.append("- concentrar clientes próximos no mesmo dia")
+    lines.append("- deixar visitas sem data/sem região para ajuste manual")
+
+    return "\n".join(lines)
+
+def handle_week_organization_flow(chat_message, consultant, message_text: str):
+    if not is_week_organization_request(message_text):
+        return None
+
+    if not consultant:
+        send_result = send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text=bot_phrase(
+                "consultant_not_bound",
+                "Seu Telegram ainda não está vinculado a um consultor do AgroCRM."
+            )
+        )
+        return jsonify({
+            "ok": False,
+            "message": "consultor não vinculado",
+            "send_result": send_result,
+        }), 400
+
+    items = build_week_priority_items(consultant_id=consultant.id)
+
+    response_text = build_week_organization_text(
+        consultant_name=consultant.name,
+        items=items
+    )
+
+    send_result = send_telegram_message(
+        chat_id=chat_message.chat_id,
+        text=response_text
+    )
+
+    return jsonify({
+        "ok": True,
+        "message": "organização da semana enviada",
+        "items_count": len(items),
+        "response_text": response_text,
+        "send_result": send_result,
+    }), 200
+
+
+
+
 
 
 
@@ -5379,6 +5588,15 @@ def telegram_webhook():
         )
         if daily_routine_response:
             return daily_routine_response
+
+        week_organization_response = handle_week_organization_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+        if week_organization_response:
+            return week_organization_response
+
 
         month_visits_response = handle_month_visits_flow(
             chat_message=chat_message,
@@ -6231,6 +6449,10 @@ def telegram_webhook():
                 "- Ex.: cliente Marcelo Alonso soja v4 hoje aplicar fungicida\n"
                 "- Ex.: a terceira\n"
                 "- Ex.: essa"
+                "6. Organização da semana\n"
+                "- Ex.: organiza minha semana\n"
+                "- Ex.: monta minha semana\n"
+                "- Ex.: planeja minha semana\n\n"
             )
 
             send_telegram_message(
