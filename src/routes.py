@@ -1258,18 +1258,26 @@ def build_visit_pdf_file(visit_id: int):
 
     if visit.planting_id:
         visits_to_include = (
-            Visit.query.filter(Visit.planting_id == visit.planting_id)
-            .order_by(Visit.date.desc()).all()
+            Visit.query
+            .filter(Visit.planting_id == visit.planting_id)
+            .order_by(Visit.date.desc(), Visit.id.desc())
+            .all()
         )
     else:
+        q = Visit.query.filter(
+            Visit.client_id == visit.client_id,
+            Visit.property_id == visit.property_id,
+            Visit.plot_id == visit.plot_id,
+            Visit.culture == visit.culture,
+        )
+
+        base_variety = (visit.variety or "").strip()
+        if base_variety:
+            q = q.filter(Visit.variety == base_variety)
+
         visits_to_include = (
-            Visit.query.filter(
-                Visit.client_id == visit.client_id,
-                Visit.property_id == visit.property_id,
-                Visit.plot_id == visit.plot_id,
-                Visit.culture == visit.culture,
-            )
-            .order_by(Visit.date.desc()).all()
+            q.order_by(Visit.date.desc(), Visit.id.desc())
+            .all()
         )
 
     filtered = []
@@ -2693,6 +2701,80 @@ def create_visit_from_payload(final_visit_payload: dict):
     return visit
 
 
+def build_same_cycle_visit_query(base_visit):
+    q = Visit.query.filter(Visit.id != base_visit.id)
+
+    # Critério principal: planting_id
+    if getattr(base_visit, "planting_id", None):
+        q = q.filter(Visit.planting_id == base_visit.planting_id)
+        return q
+
+    # Fallback seguro: cliente + propriedade + talhão + cultura + variedade
+    q = q.filter(Visit.client_id == base_visit.client_id)
+
+    if getattr(base_visit, "property_id", None) is not None:
+        q = q.filter(Visit.property_id == base_visit.property_id)
+    else:
+        q = q.filter(Visit.property_id.is_(None))
+
+    if getattr(base_visit, "plot_id", None) is not None:
+        q = q.filter(Visit.plot_id == base_visit.plot_id)
+    else:
+        q = q.filter(Visit.plot_id.is_(None))
+
+    base_culture = (getattr(base_visit, "culture", None) or "").strip()
+    if base_culture:
+        q = q.filter(Visit.culture == base_culture)
+
+    base_variety = (getattr(base_visit, "variety", None) or "").strip()
+    if base_variety:
+        q = q.filter(Visit.variety == base_variety)
+
+    return q
+
+
+def auto_close_previous_cycle_visits(current_visit):
+    '''
+    Fecha automaticamente visitas anteriores do mesmo ciclo/evento.
+
+    Regra:
+    - usa planting_id como prioridade
+    - fallback: client_id + property_id + plot_id + culture + variety
+    - só fecha visitas com data <= data atual
+    - só fecha visitas ainda não concluídas
+    '''
+    if not current_visit:
+        return []
+
+    if not getattr(current_visit, "date", None):
+        return []
+
+    q = build_same_cycle_visit_query(current_visit)
+
+    previous_visits = (
+        q.filter(Visit.date.isnot(None))
+         .filter(Visit.date <= current_visit.date)
+         .filter(Visit.status != "done")
+         .order_by(Visit.date.asc(), Visit.id.asc())
+         .all()
+    )
+
+    closed_ids = []
+
+    for visit in previous_visits:
+        visit.status = "done"
+        db.session.add(visit)
+        closed_ids.append(visit.id)
+
+    return closed_ids
+
+
+
+
+
+
+
+
 def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
     """
     Trata o estado awaiting_final_confirmation.
@@ -2881,6 +2963,8 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
         else:
             raise ValueError(f"Ação final inválida: {action}")
 
+        auto_closed_ids = auto_close_previous_cycle_visits(visit)
+
         attached_count, attach_errors = attach_pending_telegram_photos_to_visit(
             chat_id=chat_message.chat_id,
             visit=visit
@@ -2897,6 +2981,11 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
             success_lines.append(f"✅ Visita {visit.id} atualizada e concluída com sucesso.")
         else:
             success_lines.append(f"✅ Nova visita criada com sucesso. ID {visit.id}.")
+
+        if auto_closed_ids:
+            success_lines.append(
+                f"🔄 Também concluí automaticamente {len(auto_closed_ids)} visita(s) anterior(es) do mesmo ciclo."
+            )
 
         if attached_count > 0:
             success_lines.append(f"📸 {attached_count} foto(s) vinculada(s) à visita.")
