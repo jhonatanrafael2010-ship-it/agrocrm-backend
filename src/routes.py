@@ -380,6 +380,10 @@ def parse_pdf_selection(text: str):
     if not text:
         return []
 
+    ordinal_idx = parse_human_ordinal_reference(text)
+    if ordinal_idx is not None:
+        return [ordinal_idx]
+
     raw = text.strip()
     parts = re.split(r"[,\s;]+", raw)
 
@@ -392,17 +396,12 @@ def parse_pdf_selection(text: str):
             return None
         indexes.append(int(part) - 1)
 
-    # remove duplicados preservando ordem
     seen = set()
     unique_indexes = []
     for idx in indexes:
         if idx not in seen:
             seen.add(idx)
             unique_indexes.append(idx)
-
-    ordinal_idx = parse_human_ordinal_reference(text)
-    if ordinal_idx is not None:
-        return [ordinal_idx]
 
     return unique_indexes
 
@@ -3855,6 +3854,50 @@ def list_varieties():
     ]), 200
 
 
+
+@bp.route('/telegram/setup-link-codes', methods=['POST'])
+def setup_telegram_link_codes():
+    try:
+        mapping = {
+            "Jhonatan": "JHONATAN123",
+            "Felipe": "FELIPE123",
+            "Everton": "EVERTON123",
+            "Pedro": "PEDRO123",
+            "Alexandre": "ALEXANDRE123",
+        }
+
+        consultants = Consultant.query.all()
+        updated = []
+
+        for consultant in consultants:
+            code = mapping.get((consultant.name or "").strip())
+            if not code:
+                continue
+
+            consultant.telegram_link_code = code
+            updated.append({
+                "id": consultant.id,
+                "name": consultant.name,
+                "telegram_link_code": consultant.telegram_link_code,
+            })
+
+        db.session.commit()
+
+        return jsonify({
+            "ok": True,
+            "updated": updated,
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            "ok": False,
+            "error": str(e),
+        }), 500
+
+
+
+
 @bp.route('/consultants', methods=['GET'])
 def list_consultants():
     return jsonify(CONSULTANTS), 200
@@ -5191,14 +5234,20 @@ def resolve_single_active_reference(chat_message, message_text: str):
 
 def is_week_organization_request(text: str) -> bool:
     normalized = normalize_lookup_text(text or "")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
 
     triggers = [
         "organiza minha semana",
         "organizar minha semana",
         "organize minha semana",
+        "organize a minha semana",
+        "organiza a minha semana",
         "monta minha semana",
+        "monte minha semana",
+        "monta a minha semana",
         "planeja minha semana",
         "planejar minha semana",
+        "planeje minha semana",
         "como organizar minha semana",
         "me ajuda a organizar minha semana",
         "organizar semana",
@@ -5236,48 +5285,80 @@ def resolve_visit_client_name(visit) -> str:
 
 
 
+def choose_best_visit_per_client(visits: list):
+    # Mantém apenas 1 visita por cliente.
+    # Regra:
+    # - se houver visitas atrasadas do cliente, pega a mais antiga
+    # - senão, pega a próxima visita mais próxima da semana
+    grouped = {}
+
+    for visit in visits:
+        client_id = getattr(visit, "client_id", None)
+        if not client_id:
+            continue
+        grouped.setdefault(client_id, []).append(visit)
+
+    chosen = []
+
+    for client_id, client_visits in grouped.items():
+        client_visits.sort(
+            key=lambda v: (
+                v.date or _date.max,
+                v.id or 0,
+            )
+        )
+        chosen.append(client_visits[0])
+
+    return chosen
+
+
+
 def build_week_priority_items(consultant_id: int, reference_date=None):
     today = reference_date or get_local_today()
     start_date, end_date = get_week_date_range(today)
 
-    week_visits = (
+    base_visits = (
         Visit.query
         .filter(Visit.consultant_id == consultant_id)
         .filter(Visit.status != "done")
-        .filter(Visit.date >= start_date)
-        .filter(Visit.date <= end_date)
+        .filter(
+            db.or_(
+                Visit.date < today,
+                db.and_(Visit.date >= start_date, Visit.date <= end_date)
+            )
+        )
         .order_by(Visit.date.asc().nullslast(), Visit.id.asc())
         .all()
     )
 
-    overdue_visits = (
-        Visit.query
-        .filter(Visit.consultant_id == consultant_id)
-        .filter(Visit.status != "done")
-        .filter(Visit.date < today)
-        .order_by(Visit.date.asc().nullslast(), Visit.id.asc())
-        .all()
-    )
+    # mantém só 1 visita por cliente
+    selected_visits = choose_best_visit_per_client(base_visits)
 
-    seen_ids = set()
+    stale_clients = find_stale_clients_ranking(
+        consultant_id=consultant_id,
+        limit=500
+    )
+    stale_map = {
+        item["client_id"]: item["days_without_valid_visit"]
+        for item in stale_clients
+        if item.get("client_id") is not None
+    }
+
     combined = []
 
-    for visit in overdue_visits + week_visits:
-        if visit.id in seen_ids:
-            continue
-        seen_ids.add(visit.id)
-
+    for visit in selected_visits:
         visit_date = visit.date
         is_overdue = bool(visit_date and visit_date < today)
 
-        if visit_date:
-            days_from_today = (visit_date - today).days
-        else:
-            days_from_today = 9999
+        stale_days = stale_map.get(visit.client_id)
+        if stale_days is None:
+            # cliente sem visita válida com foto fica no fim
+            stale_days = -1
 
         combined.append({
             "visit": visit,
             "visit_id": visit.id,
+            "client_id": visit.client_id,
             "client_name": resolve_visit_client_name(visit),
             "region_label": resolve_visit_region_label(visit),
             "culture": visit.culture or "—",
@@ -5285,14 +5366,15 @@ def build_week_priority_items(consultant_id: int, reference_date=None):
             "recommendation": (visit.recommendation or "").strip() or "—",
             "date": visit_date,
             "is_overdue": is_overdue,
-            "days_from_today": days_from_today,
+            "stale_days": stale_days,
         })
 
     combined.sort(
         key=lambda item: (
             0 if item["is_overdue"] else 1,
-            item["date"] or _date.max,
+            -(item["stale_days"] if item["stale_days"] >= 0 else -99999),
             item["region_label"] or "",
+            item["date"] or _date.max,
             item["client_name"] or "",
         )
     )
@@ -5309,7 +5391,7 @@ def group_week_items_by_region(items: list):
     return grouped
 
 
-def build_week_organization_text(consultant_name: str, items: list) -> str:
+def build_week_organization_text(consultant_name: str, items: list, reference_date=None) -> str:
     if not items:
         return (
             f"🗓️ Organização da semana\n"
@@ -5317,43 +5399,50 @@ def build_week_organization_text(consultant_name: str, items: list) -> str:
             f"Não encontrei visitas pendentes/atrasadas para organizar."
         )
 
-    grouped = group_week_items_by_region(items)
+    today = reference_date or get_local_today()
+    agenda = distribute_items_across_week(items, today)
+
+    overdue_count = sum(1 for item in items if item.get("is_overdue"))
 
     lines = [
         "🗓️ Organização sugerida da semana",
         f"Consultor: {consultant_name}",
-        "Critério: atrasadas primeiro, depois agrupadas por região.",
-        ""
+        "Critério: 1 prioridade por cliente, considerando atraso da visita e dias desde a última visita válida com foto.",
+        "",
+        f"📌 Total priorizado: {len(items)}",
+        f"⏰ Clientes com pendência atrasada: {overdue_count}",
+        "",
     ]
 
-    overdue_count = sum(1 for item in items if item.get("is_overdue"))
-    week_count = len(items)
+    for day, day_items in agenda.items():
+        lines.append(f"📅 {format_weekday_br(day)} - {day.strftime('%d/%m/%Y')}")
 
-    lines.append(f"📌 Total priorizado: {week_count}")
-    lines.append(f"⏰ Atrasadas: {overdue_count}")
-    lines.append("")
+        if not day_items:
+            lines.append("- sem prioridade sugerida")
+            lines.append("")
+            continue
 
-    for region, region_items in grouped.items():
-        lines.append(f"📍 Região: {region}")
-
-        for idx, item in enumerate(region_items, start=1):
-            visit = item["visit"]
-            date_label = visit.date.strftime("%d/%m/%Y") if visit.date else "sem data"
-            overdue_label = "ATRASADA" if item["is_overdue"] else "semana"
+        for item in day_items:
             client_name = item["client_name"]
             culture = item["culture"]
-            fenologia = item["fenologia_real"]
+            region = item["region_label"] or "Sem região definida"
+            stale_days = item.get("stale_days", -1)
+
+            if stale_days >= 0:
+                stale_label = f"{stale_days} dias desde a última visita válida"
+            else:
+                stale_label = "sem visita válida com foto"
 
             lines.append(
-                f"- {client_name} | {date_label} | {culture} | {fenologia} | {overdue_label}"
+                f"- {client_name} | {culture} | {stale_label} | região: {region}"
             )
 
         lines.append("")
 
     lines.append("Sugestão prática:")
-    lines.append("- começar pelas regiões com visitas atrasadas")
-    lines.append("- concentrar clientes próximos no mesmo dia")
-    lines.append("- deixar visitas sem data/sem região para ajuste manual")
+    lines.append("- começar pelos clientes mais atrasados")
+    lines.append("- aproveitar a mesma região no mesmo dia")
+    lines.append("- ajustar manualmente os casos sem região definida")
 
     return "\n".join(lines)
 
@@ -5379,7 +5468,8 @@ def handle_week_organization_flow(chat_message, consultant, message_text: str):
 
     response_text = build_week_organization_text(
         consultant_name=consultant.name,
-        items=items
+        items=items,
+        reference_date=get_local_today(),
     )
 
     send_result = send_telegram_message(
@@ -5394,6 +5484,49 @@ def handle_week_organization_flow(chat_message, consultant, message_text: str):
         "response_text": response_text,
         "send_result": send_result,
     }), 200
+
+def get_business_week_days(reference_date=None):
+    today = reference_date or get_local_today()
+    start_date, _ = get_week_date_range(today)
+
+    # segunda a sexta
+    return [start_date + _timedelta(days=i) for i in range(5)]
+
+
+def distribute_items_across_week(items: list, reference_date=None):
+    # Distribui itens ao longo dos 5 dias úteis da semana.
+    # Estratégia simples:
+    # - percorre os itens já priorizados
+    # - vai distribuindo em round-robin entre segunda e sexta
+    week_days = get_business_week_days(reference_date)
+    agenda = {day: [] for day in week_days}
+
+    if not items:
+        return agenda
+
+    idx = 0
+    total_days = len(week_days)
+
+    for item in items:
+        target_day = week_days[idx % total_days]
+        agenda[target_day].append(item)
+        idx += 1
+
+    return agenda
+
+
+def format_weekday_br(d: date) -> str:
+    names = {
+        0: "Segunda",
+        1: "Terça",
+        2: "Quarta",
+        3: "Quinta",
+        4: "Sexta",
+        5: "Sábado",
+        6: "Domingo",
+    }
+    return names.get(d.weekday(), d.strftime("%A"))
+
 
 
 
@@ -6448,11 +6581,12 @@ def telegram_webhook():
                 "5. Lançar visita em linguagem natural\n"
                 "- Ex.: cliente Marcelo Alonso soja v4 hoje aplicar fungicida\n"
                 "- Ex.: a terceira\n"
-                "- Ex.: essa"
+                "- Ex.: essa\n\n"
                 "6. Organização da semana\n"
                 "- Ex.: organiza minha semana\n"
+                "- Ex.: organize a minha semana\n"
                 "- Ex.: monta minha semana\n"
-                "- Ex.: planeja minha semana\n\n"
+                "- Ex.: planeja minha semana\n"
             )
 
             send_telegram_message(
@@ -6642,7 +6776,7 @@ def compact_user_text_for_ai(text: str) -> str:
 
 
 def get_week_date_range(reference_date=None):
-    today = reference_date or _date.today()
+    today = reference_date or get_local_today()
     start = today - _timedelta(days=today.weekday())
     end = start + _timedelta(days=6)
     return start, end
