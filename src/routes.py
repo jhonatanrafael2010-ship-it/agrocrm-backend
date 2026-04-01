@@ -159,7 +159,13 @@ def _normalize_text(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text
 
-
+def parse_optional_float(value):
+    if value in (None, "", "null"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 def normalize_lookup_text(value: str) -> str:
     if not value:
@@ -8430,24 +8436,37 @@ def get_property(prop_id: int):
 @bp.route('/properties', methods=['POST'])
 def create_property():
     data = request.get_json() or {}
+
     client_id = data.get('client_id')
-    name = data.get('name')
+    name = (data.get('name') or '').strip()
+    city_state = (data.get('city_state') or '').strip() or None
+    area_ha = data.get('area_ha')
+    latitude = parse_optional_float(data.get('latitude'))
+    longitude = parse_optional_float(data.get('longitude'))
+
     if not client_id or not name:
         return jsonify(message='client_id and name are required'), 400
-    # ensure client exists
+
     client = Client.query.get(client_id)
     if not client:
         return jsonify(message='client not found'), 404
 
-    prop = Property(
-        client_id=client_id,
-        name=name,
-        city_state=data.get('city_state'),
-        area_ha=(float(data.get('area_ha')) if data.get('area_ha') is not None else None),
-    )
-    db.session.add(prop)
-    db.session.commit()
-    return jsonify(message='property created', property=prop.to_dict()), 201
+    try:
+        prop = Property(
+            client_id=int(client_id),
+            name=name,
+            city_state=city_state,
+            area_ha=(float(area_ha) if area_ha not in (None, "") else None),
+            latitude=latitude,
+            longitude=longitude,
+        )
+        db.session.add(prop)
+        db.session.commit()
+        return jsonify(message='property created', property=prop.to_dict()), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify(message=str(e)), 500
 
 
 @bp.route('/properties/<int:prop_id>', methods=['PUT'])
@@ -8455,22 +8474,35 @@ def update_property(prop_id: int):
     p = Property.query.get(prop_id)
     if not p:
         return jsonify(message='property not found'), 404
-    data = request.get_json() or {}
-    for field in ('name', 'city_state', 'area_ha', 'client_id'):
-        if field in data:
-            # convert area_ha to float when provided
-            if field == 'area_ha':
-                setattr(p, field, float(data.get(field)) if data.get(field) is not None else None)
-            else:
-                setattr(p, field, data.get(field))
 
-    # If client_id was changed, ensure the client exists
-    if 'client_id' in data and data.get('client_id') is not None:
+    data = request.get_json() or {}
+
+    if 'client_id' in data and data.get('client_id') not in (None, ""):
         if not Client.query.get(data.get('client_id')):
             return jsonify(message='client not found'), 404
+        p.client_id = int(data.get('client_id'))
 
-    db.session.commit()
-    return jsonify(message='property updated', property=p.to_dict()), 200
+    if 'name' in data:
+        p.name = (data.get('name') or '').strip()
+
+    if 'city_state' in data:
+        p.city_state = (data.get('city_state') or '').strip() or None
+
+    if 'area_ha' in data:
+        p.area_ha = float(data.get('area_ha')) if data.get('area_ha') not in (None, "") else None
+
+    if 'latitude' in data:
+        p.latitude = parse_optional_float(data.get('latitude'))
+
+    if 'longitude' in data:
+        p.longitude = parse_optional_float(data.get('longitude'))
+
+    try:
+        db.session.commit()
+        return jsonify(message='property updated', property=p.to_dict()), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify(message=str(e)), 500
 
 
 @bp.route('/properties/<int:prop_id>', methods=['DELETE'])

@@ -68,6 +68,8 @@ class Property(db.Model):
     name = db.Column(db.String(200), nullable=False)
     city_state = db.Column(db.String(120), nullable=True)
     area_ha = db.Column(db.Float, nullable=True)
+    latitude = db.Column(db.Float, nullable=True)
+    longitude = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
     plots = db.relationship('Plot', backref='property', lazy='dynamic', cascade='all, delete-orphan')
@@ -81,6 +83,8 @@ class Property(db.Model):
             'name': self.name,
             'city_state': self.city_state,
             'area_ha': self.area_ha,
+            'latitude': self.latitude,
+            'longitude': self.longitude,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 
