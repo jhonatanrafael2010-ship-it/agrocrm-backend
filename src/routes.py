@@ -2591,6 +2591,24 @@ def build_final_visit_payload(
 def apply_payload_to_existing_visit(visit, final_visit_payload: dict, close_only: bool = False):
     """
     Aplica atualização em visita já existente.
+
+    REGRA IMPORTANTE:
+    Quando o bot atualiza uma visita já existente, ele preserva os campos estruturais:
+    - client_id
+    - property_id
+    - plot_id
+    - consultant_id
+    - culture
+    - variety
+
+    O bot deve alterar apenas:
+    - date
+    - status
+    - fenologia_real
+    - recommendation
+    - latitude
+    - longitude
+    - products
     """
     if not visit:
         raise ValueError("Visita não encontrada para atualização")
@@ -2606,46 +2624,40 @@ def apply_payload_to_existing_visit(visit, final_visit_payload: dict, close_only
 
     update_only_products = bool(final_visit_payload.get("update_only_products"))
 
+    # ✅ Atualiza data apenas se veio válida
     if parsed_date:
         visit.date = parsed_date
 
-    if final_visit_payload.get("consultant_id"):
-        visit.consultant_id = final_visit_payload.get("consultant_id")
+    # ✅ Se for apenas atualização de produtos, não mexe no resto
+    if update_only_products:
+        replace_visit_products_from_payload(visit, final_visit_payload)
+        db.session.add(visit)
+        db.session.commit()
+        return visit
 
-    if final_visit_payload.get("client_id"):
-        visit.client_id = final_visit_payload.get("client_id")
+    # ✅ Em visita existente editada pelo bot, preservar campos estruturais
+    visit.status = "done"
 
-    if "property_id" in final_visit_payload:
-        visit.property_id = final_visit_payload.get("property_id")
+    if final_visit_payload.get("fenologia_real"):
+        visit.fenologia_real = final_visit_payload.get("fenologia_real")
 
-    if "plot_id" in final_visit_payload:
-        visit.plot_id = final_visit_payload.get("plot_id")
+    if close_only:
+        if final_visit_payload.get("recommendation"):
+            visit.recommendation = final_visit_payload.get("recommendation")
+    else:
+        # se veio recommendation, substitui; se não veio, preserva o valor atual
+        if "recommendation" in final_visit_payload:
+            new_rec = (final_visit_payload.get("recommendation") or "").strip()
+            if new_rec:
+                visit.recommendation = new_rec
 
-    if not update_only_products:
-        visit.status = "done"
+    if final_visit_payload.get("latitude") is not None:
+        visit.latitude = final_visit_payload.get("latitude")
 
-        if final_visit_payload.get("culture"):
-            visit.culture = final_visit_payload.get("culture")
+    if final_visit_payload.get("longitude") is not None:
+        visit.longitude = final_visit_payload.get("longitude")
 
-        if final_visit_payload.get("variety"):
-            visit.variety = final_visit_payload.get("variety")
-
-        if final_visit_payload.get("fenologia_real"):
-            visit.fenologia_real = final_visit_payload.get("fenologia_real")
-
-        if close_only:
-            if final_visit_payload.get("recommendation"):
-                visit.recommendation = final_visit_payload.get("recommendation")
-        else:
-            visit.recommendation = final_visit_payload.get("recommendation") or visit.recommendation
-
-        if final_visit_payload.get("latitude") is not None:
-            visit.latitude = final_visit_payload.get("latitude")
-
-        if final_visit_payload.get("longitude") is not None:
-            visit.longitude = final_visit_payload.get("longitude")
-
-        visit.source = final_visit_payload.get("source") or "chatbot"
+    visit.source = final_visit_payload.get("source") or "chatbot"
 
     replace_visit_products_from_payload(visit, final_visit_payload)
 
