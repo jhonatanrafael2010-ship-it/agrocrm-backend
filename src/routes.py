@@ -2787,7 +2787,67 @@ def auto_close_previous_cycle_visits(current_visit):
     return closed_ids
 
 
+def start_new_visit_direct_confirmation(
+    state,
+    chat_message,
+    visit_preview: dict,
+    matched_client,
+    matched_property=None,
+):
+    """
+    Quando o bot já identificou que é uma nova visita e não há pendências,
+    pula a etapa de pedir NOVA e vai direto para confirmação final.
+    """
+    action = "create_new_visit"
 
+    final_visit_payload = {
+        **(visit_preview or {}),
+        "linked_pending_visit_id": None,
+    }
+
+    summary_text = build_visit_summary_text(
+        action=action,
+        final_visit_payload=final_visit_payload,
+        selected_pending_visit=None,
+        close_only=False,
+    )
+
+    state.pending_visit_suggestions_json = json.dumps([], ensure_ascii=False)
+    state.visit_preview_json = json.dumps(
+        build_guided_state_payload(
+            action=action,
+            final_visit_payload=final_visit_payload,
+            selected_pending_visit=None,
+            close_only=False,
+        ),
+        ensure_ascii=False
+    )
+    state.confirmation_text = summary_text
+    state.status = "awaiting_final_confirmation"
+    db.session.commit()
+
+    intro_lines = [
+        f"Não encontrei visitas pendentes para {matched_client.name if matched_client else 'este cliente'}.",
+        "Vou considerar isso como NOVA visita.",
+        "",
+        "Confira o resumo abaixo e responda com:",
+        "✅ CONFIRMAR",
+        "❌ CANCELAR",
+        "",
+        summary_text
+    ]
+
+    send_result = send_telegram_message(
+        chat_id=chat_message.chat_id,
+        text="\n".join(intro_lines)
+    )
+
+    return jsonify({
+        "ok": True,
+        "message": "nova visita enviada direto para confirmação final",
+        "confirmation_text": "\n".join(intro_lines),
+        "send_result": send_result,
+    }), 200
 
 
 
@@ -6019,8 +6079,18 @@ def telegram_webhook():
 
                 send_telegram_message(
                     chat_id=chat_message.chat_id,
-                    text="No momento consigo seguir com nova visita de plantio ou visita avulsa.\nSe quiser, responda NOVA novamente e siga uma dessas opções."
+                    text=(
+                        "No momento consigo seguir com dois tipos de nova visita:
+"
+                        "- visita de plantio
+"
+                        "- visita avulsa
+
+"
+                        "Se quiser, me envie novamente os dados da visita e eu sigo por esse caminho."
+                    )
                 )
+
 
                 state.status = "cancelled"
                 db.session.commit()
@@ -6230,13 +6300,6 @@ def telegram_webhook():
                         "display_text": visit.to_dict().get("display_text"),
                     })
 
-                confirmation_text = build_pending_visits_confirmation_text(
-                    client_name=matched_client.name,
-                    requested_culture=parsed.get("culture"),
-                    suggestions=suggestions,
-                    same_culture_found=same_culture_found
-                )
-
                 visit_preview = {
                     "client_id": matched_client.id if matched_client else None,
                     "property_id": matched_property.id if matched_property else None,
@@ -6254,6 +6317,24 @@ def telegram_webhook():
                     "generate_schedule": False,
                     "source": parsed.get("source", "chatbot"),
                 }
+
+                # ✅ NOVO COMPORTAMENTO:
+                # se não há pendências, pula o "NOVA" e já vai para confirmação final
+                if not suggestions:
+                    return start_new_visit_direct_confirmation(
+                        state=state,
+                        chat_message=chat_message,
+                        visit_preview=visit_preview,
+                        matched_client=matched_client,
+                        matched_property=matched_property,
+                    )
+
+                confirmation_text = build_pending_visits_confirmation_text(
+                    client_name=matched_client.name,
+                    requested_culture=parsed.get("culture"),
+                    suggestions=suggestions,
+                    same_culture_found=same_culture_found
+                )
 
                 state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
                 state.visit_preview_json = json.dumps(visit_preview, ensure_ascii=False)
@@ -6599,13 +6680,6 @@ def telegram_webhook():
                     "display_text": visit.to_dict().get("display_text"),
                 })
 
-            confirmation_text = build_pending_visits_confirmation_text(
-                client_name=guessed_client.name,
-                requested_culture=None,
-                suggestions=suggestions,
-                same_culture_found=same_culture_found
-            )
-
             state = ChatbotConversationState.query.filter_by(
                 platform="telegram",
                 chat_id=chat_message.chat_id
@@ -6623,7 +6697,7 @@ def telegram_webhook():
 
             prefill = extract_prefill_from_message_text(message_text)
 
-            state.visit_preview_json = json.dumps({
+            visit_preview = {
                 "client_id": guessed_client.id,
                 "property_id": None,
                 "plot_id": None,
@@ -6639,7 +6713,26 @@ def telegram_webhook():
                 "longitude": None,
                 "generate_schedule": False,
                 "source": "chatbot",
-            }, ensure_ascii=False)
+            }
+
+            # ✅ se não há pendência, já vai direto para confirmação final
+            if not suggestions:
+                return start_new_visit_direct_confirmation(
+                    state=state,
+                    chat_message=chat_message,
+                    visit_preview=visit_preview,
+                    matched_client=guessed_client,
+                    matched_property=None,
+                )
+
+            confirmation_text = build_pending_visits_confirmation_text(
+                client_name=guessed_client.name,
+                requested_culture=None,
+                suggestions=suggestions,
+                same_culture_found=same_culture_found
+            )
+
+            state.visit_preview_json = json.dumps(visit_preview, ensure_ascii=False)
             state.confirmation_text = confirmation_text
             state.status = "awaiting_confirmation"
             db.session.commit()
