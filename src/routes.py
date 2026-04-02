@@ -6080,13 +6080,9 @@ def telegram_webhook():
                 send_telegram_message(
                     chat_id=chat_message.chat_id,
                     text=(
-                        "No momento consigo seguir com dois tipos de nova visita:
-"
-                        "- visita de plantio
-"
-                        "- visita avulsa
-
-"
+                        "No momento consigo seguir com dois tipos de nova visita.\n"
+                        "- visita de plantio\n"
+                        "- visita avulsa\n\n"
                         "Se quiser, me envie novamente os dados da visita e eu sigo por esse caminho."
                     )
                 )
