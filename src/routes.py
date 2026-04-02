@@ -7700,7 +7700,7 @@ def update_visit(visit_id: int):
     print("📩 PAYLOAD RECEBIDO NO PUT:", data)
 
     # Campos simples
-    for tf in ('checklist','diagnosis','fenologia_real'):
+    for tf in ('checklist', 'diagnosis', 'fenologia_real'):
         if tf in data:
             setattr(v, tf, data[tf])
 
@@ -7709,28 +7709,57 @@ def update_visit(visit_id: int):
         if rec not in (None, "", " "):
             v.recommendation = rec.strip()
 
-    if 'client_id' in data and data['client_id']:
-        if not Client.query.get(data['client_id']): 
-            return jsonify(message='client not found'), 404
-        v.client_id = data['client_id']
+    # Só altera client_id se vier explicitamente e válido
+    if 'client_id' in data:
+        cid = data.get('client_id')
+        if cid in (None, "", 0):
+            v.client_id = v.client_id
+        else:
+            if not Client.query.get(cid):
+                return jsonify(message='client not found'), 404
+            v.client_id = cid
 
-    if 'property_id' in data and data['property_id']:
-        if not Property.query.get(data['property_id']): 
-            return jsonify(message='property not found'), 404
-        v.property_id = data['property_id']
+    # Só altera property_id se vier explicitamente
+    if 'property_id' in data:
+        pid = data.get('property_id')
+        if pid in (None, "", 0):
+            v.property_id = None
+        else:
+            if not Property.query.get(pid):
+                return jsonify(message='property not found'), 404
+            v.property_id = pid
 
-    if 'plot_id' in data and data['plot_id']:
-        if not Plot.query.get(data['plot_id']): 
-            return jsonify(message='plot not found'), 404
-        v.plot_id = data['plot_id']
+    # Só altera plot_id se vier explicitamente
+    if 'plot_id' in data:
+        plid = data.get('plot_id')
+        if plid in (None, "", 0):
+            v.plot_id = None
+        else:
+            if not Plot.query.get(plid):
+                return jsonify(message='plot not found'), 404
+            v.plot_id = plid
 
+    # Só altera consultant_id se vier explicitamente
     if 'consultant_id' in data:
-        cid = data['consultant_id']
-        if cid and int(cid) not in CONSULTANT_IDS:
-            return jsonify(message='consultant not found'), 404
-        v.consultant_id = cid
+        cid = data.get('consultant_id')
+        if cid in (None, "", 0):
+            v.consultant_id = None
+        else:
+            if int(cid) not in CONSULTANT_IDS:
+                return jsonify(message='consultant not found'), 404
+            v.consultant_id = int(cid)
 
-    if data.get("preserve_date"):
+    # Só altera culture se vier explicitamente
+    if 'culture' in data:
+        culture = (data.get('culture') or "").strip()
+        v.culture = culture or None
+
+    # Só altera variety se vier explicitamente
+    if 'variety' in data:
+        variety = (data.get('variety') or "").strip()
+        v.variety = variety or None
+
+    if "preserve_date" in data and data.get("preserve_date"):
         data["date"] = v.date.isoformat() if v.date else None
 
     if 'date' in data:
@@ -7745,6 +7774,12 @@ def update_visit(visit_id: int):
 
     if 'status' in data and data['status']:
         v.status = data['status'].strip().lower()
+
+    if 'latitude' in data:
+        v.latitude = parse_optional_float(data.get('latitude'))
+
+    if 'longitude' in data:
+        v.longitude = parse_optional_float(data.get('longitude'))
 
     print("🧠 Atualizando visita", visit_id, "com dados:", data)
 
