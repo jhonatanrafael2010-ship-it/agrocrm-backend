@@ -1479,6 +1479,25 @@ def build_visit_pdf_file(visit_id: int):
     info_label = ParagraphStyle(name="InfoLabel", fontSize=12, alignment=TA_LEFT, textColor=colors.HexColor("#A5D6A7"))
     info_value = ParagraphStyle(name="InfoValue", fontSize=12, alignment=TA_LEFT, textColor=colors.HexColor("#E0E0E0"), spaceAfter=6)
 
+    days_planted_label = ParagraphStyle(
+        name="DaysPlantedLabel",
+        fontSize=12,
+        leading=14,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#A5D6A7"),
+        spaceBefore=10,
+        spaceAfter=4,
+    )
+
+    days_planted_value = ParagraphStyle(
+        name="DaysPlantedValue",
+        fontSize=18,
+        leading=22,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#FFFFFF"),
+        spaceAfter=10,
+    )
+
     def add_info(label, value):
         if value:
             story.append(Paragraph(label, info_label))
@@ -1490,13 +1509,49 @@ def build_visit_pdf_file(visit_id: int):
     add_info("Variedade:", visit.variety or "")
     add_info("Consultor:", consultant_name or "")
 
+    planting_date_obj = None
+
+    # 1) tenta usar planting_date da Planting vinculada
+    if getattr(visit, "planting_id", None):
+        planting_row = Planting.query.get(visit.planting_id)
+        if planting_row and getattr(planting_row, "planting_date", None):
+            planting_date_obj = planting_row.planting_date
+
+    # 2) fallback: usa a visita mais antiga do ciclo cuja fenologia seja Plantio
+    if not planting_date_obj and visits_to_include:
+        for cycle_visit in reversed(visits_to_include):
+            fenologia_norm = (cycle_visit.fenologia_real or "").strip().lower()
+            if fenologia_norm == "plantio" and cycle_visit.date:
+                planting_date_obj = cycle_visit.date
+                break
+
+    # 3) fallback final: se a própria visita atual for Plantio
+    if not planting_date_obj:
+        fenologia_norm = (visit.fenologia_real or "").strip().lower()
+        if fenologia_norm == "plantio" and visit.date:
+            planting_date_obj = visit.date
+
     if visits_to_include:
-        start_date = visits_to_include[-1].date.strftime("%d/%m/%Y")
-        end_date = visits_to_include[0].date.strftime("%d/%m/%Y")
+        start_date_obj = visits_to_include[-1].date
+        end_date_obj = visits_to_include[0].date
     else:
-        start_date = end_date = visit.date.strftime("%d/%m/%Y")
+        start_date_obj = visit.date
+        end_date_obj = visit.date
+
+    start_date = start_date_obj.strftime("%d/%m/%Y") if start_date_obj else "—"
+    end_date = end_date_obj.strftime("%d/%m/%Y") if end_date_obj else "—"
 
     add_info("Período de acompanhamento:", f"{start_date} → {end_date}")
+
+    # dias de plantado = data de geração do PDF (hoje local) - data do plantio
+    if planting_date_obj:
+        dias_plantado = (get_local_today() - planting_date_obj).days
+        if dias_plantado < 0:
+            dias_plantado = 0
+
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("Dias de plantado", days_planted_label))
+        story.append(Paragraph(f"{dias_plantado} dias", days_planted_value))
 
     story.append(Spacer(1, 40))
     story.append(PageBreak())
