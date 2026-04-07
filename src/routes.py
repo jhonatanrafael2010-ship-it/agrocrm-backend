@@ -429,8 +429,8 @@ def parse_summary_edit_command(text: str):
         (r"^(?:data|data da visita)(?:\s+para)?\s+(.+)$", "date"),
 
         # observações
-        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*observacao(?:oes)?(?:\s+para)?\s+(.+)$", "recommendation"),
-        (r"^(?:observacao|observacoes)(?:\s+para)?\s+(.+)$", "recommendation"),
+        (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*(?:obs|observacao|observacoes)(?:\s+para)?\s+(.+)$", "recommendation"),
+        (r"^(?:obs|observacao|observacoes)(?:\s+para)?\s+(.+)$", "recommendation"),
 
         # cultura
         (r"^(?:alterar|corrigir|corrija|ajustar|mudar|muda)\s+a?\s*cultura(?:\s+para)?\s+(.+)$", "culture"),
@@ -3030,6 +3030,9 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
         db.session.delete(state)
         db.session.commit()
 
+        # ✅ limpa fotos pendentes ligadas a essa tentativa
+        clear_pending_telegram_photos(chat_message.chat_id)
+
         send_telegram_message(
             chat_id=chat_message.chat_id,
             text="Operação cancelada."
@@ -3196,6 +3199,53 @@ def find_visit_by_explicit_id(visit_id: int, consultant_id: int | None = None):
     return q.first()
 
 
+
+def handle_priority_stateful_actions(chat_message, consultant, message_text: str):
+    """
+    Trata primeiro estados que dependem de resposta curta/numérica,
+    para evitar conflito entre PDF, agenda semanal, visitas do mês etc.
+    """
+    active_state = ChatbotConversationState.query.filter_by(
+        platform="telegram",
+        chat_id=chat_message.chat_id
+    ).first()
+
+    if not active_state:
+        return None
+
+    # prioridade máxima: seleção de PDF
+    if active_state.status in ("awaiting_pdf_visit_selection", "awaiting_pdf_confirmation"):
+        return handle_pdf_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+
+    # depois seleção de visitas do mês
+    if active_state.status == "awaiting_month_visit_selection":
+        return handle_month_visits_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+
+    # depois confirmação final
+    if active_state.status == "awaiting_final_confirmation":
+        return handle_final_confirmation(
+            chat_message=chat_message,
+            message_text=message_text,
+        )
+
+    # depois agenda semanal
+    if active_state.status == "awaiting_week_visit_selection":
+        return handle_week_schedule_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            resolved_consultant_id=consultant.id if consultant else 1,
+            message_text=message_text,
+        )
+
+    return None
 
 
 # ============================================================
@@ -5908,6 +5958,9 @@ def telegram_webhook():
                 state.status = "cancelled"
                 db.session.commit()
 
+            # ✅ limpa fotos pendentes da conversa cancelada
+            clear_pending_telegram_photos(chat_message.chat_id)
+
             send_result = send_telegram_message(
                 chat_id=chat_message.chat_id,
                 text=bot_phrase("operation_cancelled", "Operação cancelada com sucesso.")
@@ -5918,6 +5971,16 @@ def telegram_webhook():
                 "message": "operação cancelada globalmente",
                 "send_result": send_result,
             }), 200
+
+
+        priority_state_response = handle_priority_stateful_actions(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+        if priority_state_response:
+            return priority_state_response
+              
 
         week_schedule_response = handle_week_schedule_flow(
             chat_message=chat_message,
