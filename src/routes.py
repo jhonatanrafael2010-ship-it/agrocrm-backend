@@ -416,7 +416,9 @@ def parse_summary_edit_command(text: str):
     if not text:
         return None
 
-    raw = text.strip()
+    raw = re.sub(r"\s*\n\s*", " ", text).strip()
+    raw = re.sub(r"\s+", " ", raw).strip()
+
     normalized = normalize_lookup_text(raw)
 
     patterns = [
@@ -2265,9 +2267,10 @@ def extract_prefill_from_message_text(message_text: str):
 
     parsed = parse_chatbot_message(message_text) or {}
 
-    recommendation = (parsed.get("recommendation") or "").strip()
+    recommendation = extract_recommendation_fallback(message_text)
+
     if not recommendation:
-        recommendation = extract_recommendation_fallback(message_text)
+        recommendation = (parsed.get("recommendation") or "").strip()
 
     return {
         "date": parsed.get("date"),
@@ -2286,13 +2289,15 @@ def extract_recommendation_fallback(message_text: str) -> str:
 
     raw = message_text.strip()
 
+    # normaliza quebras de linha, mas preserva o conteúdo
+    raw_single = re.sub(r"\s*\n\s*", " ", raw).strip()
+
     patterns = [
-        r"(?:observacoes|observação|observacao|obs)\s*[:,\-]?\s*(.+)$",
-        r"(?:plantas|planta)\s+(.+)$",
+        r"(?:observacoes|observação|observacao|obs)\s*[:,\-]?\s*([\s\S]+)$",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, raw, re.IGNORECASE)
+        match = re.search(pattern, raw_single, re.IGNORECASE)
         if match:
             value = match.group(1).strip(" .,-;:")
             if value:
@@ -5980,7 +5985,7 @@ def telegram_webhook():
         )
         if priority_state_response:
             return priority_state_response
-              
+
 
         week_schedule_response = handle_week_schedule_flow(
             chat_message=chat_message,
@@ -6376,9 +6381,10 @@ def telegram_webhook():
                 original_message = state.last_message or ""
                 parsed = parse_chatbot_message(original_message)
 
-                parsed_recommendation = (parsed.get("recommendation") or "").strip()
+                parsed_recommendation = extract_recommendation_fallback(original_message)
+
                 if not parsed_recommendation:
-                    parsed_recommendation = extract_recommendation_fallback(original_message)
+                    parsed_recommendation = (parsed.get("recommendation") or "").strip()
 
                 parsed_products = normalize_products_from_parsed(parsed.get("products") or [])
 
