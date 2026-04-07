@@ -2782,12 +2782,21 @@ def create_visit_from_payload(final_visit_payload: dict):
 def build_same_cycle_visit_query(base_visit):
     q = Visit.query.filter(Visit.id != base_visit.id)
 
-    # Critério principal: planting_id
+    # ✅ critério principal
     if getattr(base_visit, "planting_id", None):
         q = q.filter(Visit.planting_id == base_visit.planting_id)
+
+        base_recommendation = (getattr(base_visit, "recommendation", None) or "").strip()
+        if base_recommendation:
+            q = q.filter(Visit.recommendation == base_recommendation)
+
         return q
 
-    # Fallback seguro: cliente + propriedade + talhão + cultura + variedade
+    # ✅ sem planting_id, só segue se houver variedade
+    base_variety = (getattr(base_visit, "variety", None) or "").strip()
+    if not base_variety:
+        return None
+
     q = q.filter(Visit.client_id == base_visit.client_id)
 
     if getattr(base_visit, "property_id", None) is not None:
@@ -2804,9 +2813,11 @@ def build_same_cycle_visit_query(base_visit):
     if base_culture:
         q = q.filter(Visit.culture == base_culture)
 
-    base_variety = (getattr(base_visit, "variety", None) or "").strip()
-    if base_variety:
-        q = q.filter(Visit.variety == base_variety)
+    q = q.filter(Visit.variety == base_variety)
+
+    base_recommendation = (getattr(base_visit, "recommendation", None) or "").strip()
+    if base_recommendation:
+        q = q.filter(Visit.recommendation == base_recommendation)
 
     return q
 
@@ -2815,9 +2826,10 @@ def auto_close_previous_cycle_visits(current_visit):
     '''
     Fecha automaticamente visitas anteriores do mesmo ciclo/evento.
 
-    Regra:
+    REGRA NOVA:
     - usa planting_id como prioridade
-    - fallback: client_id + property_id + plot_id + culture + variety
+    - se NÃO houver planting_id, só fecha se houver variedade preenchida
+    - se não houver query segura, não fecha nada
     - só fecha visitas com data <= data atual
     - só fecha visitas ainda não concluídas
     '''
@@ -2828,6 +2840,8 @@ def auto_close_previous_cycle_visits(current_visit):
         return []
 
     q = build_same_cycle_visit_query(current_visit)
+    if q is None:
+        return []
 
     previous_visits = (
         q.filter(Visit.date.isnot(None))
@@ -6177,13 +6191,19 @@ def telegram_webhook():
                         "message": "resposta inválida para visita avulsa"
                     }), 200
 
+                # ✅ Se for visita avulsa, FORÇA nova visita
                 if yes_no is True:
+                    forced_payload = {
+                        **(final_visit_payload or {}),
+                        "linked_pending_visit_id": None,
+                    }
+
                     state.visit_preview_json = json.dumps(
                         build_guided_state_payload(
-                            action=action,
-                            final_visit_payload=final_visit_payload,
-                            selected_pending_visit=selected_pending_visit,
-                            close_only=close_only,
+                            action="create_new_visit",
+                            final_visit_payload=forced_payload,
+                            selected_pending_visit=None,
+                            close_only=False,
                         ),
                         ensure_ascii=False
                     )
@@ -6192,24 +6212,23 @@ def telegram_webhook():
 
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
-                        text="🌿 Informe a fenologia observada.\nExemplo: V4, V5, VE, VT, R1"
+                        text="🌿 Perfeito. Como é visita avulsa, vou criar uma NOVA visita.\nAgora me informe a fenologia observada.\nExemplo: V4, V5, VE, VT, R1"
                     )
 
                     return jsonify({
                         "ok": True,
-                        "message": "visita avulsa confirmada"
+                        "message": "visita avulsa forçada como nova visita"
                     }), 200
 
                 send_telegram_message(
                     chat_id=chat_message.chat_id,
                     text=(
-                        "No momento consigo seguir com dois tipos de nova visita.\n"
+                        "No momento consigo seguir com dois tipos de nova visita:\n"
                         "- visita de plantio\n"
                         "- visita avulsa\n\n"
                         "Se quiser, me envie novamente os dados da visita e eu sigo por esse caminho."
                     )
                 )
-
 
                 state.status = "cancelled"
                 db.session.commit()
