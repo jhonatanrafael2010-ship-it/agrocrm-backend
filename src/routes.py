@@ -598,14 +598,30 @@ def build_pending_visits_confirmation_text(client_name: str, requested_culture: 
         elif requested_culture and not same_culture_found:
             lines.append(f"Não encontrei visitas pendentes de {requested_culture} para {client_name}.")
             lines.append("")
-            lines.append(f"📋 Encontrei outras visitas pendentes deste cliente:")
+            lines.append("📋 Encontrei outras visitas pendentes deste cliente:")
         else:
             lines.append(f"📋 Encontrei visitas pendentes para {client_name}:")
 
-        for idx, item in enumerate(suggestions, start=1):
-            lines.append(f"{idx}. {item.get('culture') or '—'} - {item.get('recommendation') or '—'} - {item.get('date') or '—'}")
-
         lines.append("")
+
+        for idx, item in enumerate(suggestions, start=1):
+            culture = item.get("culture") or "—"
+            variety = item.get("variety") or "—"
+            fenologia = item.get("fenologia_real") or "—"
+            recommendation = item.get("recommendation") or "—"
+            date_value = item.get("date") or "—"
+
+            property_name = item.get("property_name") or "Sem fazenda"
+            plot_name = item.get("plot_name") or "Sem talhão"
+
+            lines.append(f"{idx}. {culture} | {variety}")
+            lines.append(f"   🏡 Fazenda: {property_name}")
+            lines.append(f"   📍 Talhão: {plot_name}")
+            lines.append(f"   🌿 Fenologia: {fenologia}")
+            lines.append(f"   📝 Evento/Obs: {recommendation}")
+            lines.append(f"   📅 Data: {date_value}")
+            lines.append("")
+
         lines.append("Responda com:")
         lines.append("🔢 número da visita para atualizar")
         lines.append("✅ CONCLUIR X para apenas concluir a visita pendente")
@@ -6436,6 +6452,8 @@ def telegram_webhook():
                         "client_id": visit.client_id,
                         "property_id": visit.property_id,
                         "plot_id": visit.plot_id,
+                        "property_name": visit.property.name if getattr(visit, "property", None) else "",
+                        "plot_name": visit.plot.name if getattr(visit, "plot", None) else "",
                         "display_text": visit.to_dict().get("display_text"),
                     })
 
@@ -6816,6 +6834,8 @@ def telegram_webhook():
                     "client_id": visit.client_id,
                     "property_id": visit.property_id,
                     "plot_id": visit.plot_id,
+                    "property_name": visit.property.name if getattr(visit, "property", None) else "",
+                    "plot_name": visit.plot.name if getattr(visit, "plot", None) else "",
                     "display_text": visit.to_dict().get("display_text"),
                 })
 
@@ -7011,6 +7031,8 @@ def telegram_webhook():
                 "client_id": visit.client_id,
                 "property_id": visit.property_id,
                 "plot_id": visit.plot_id,
+                "property_name": visit.property.name if getattr(visit, "property", None) else "",
+                "plot_name": visit.plot.name if getattr(visit, "plot", None) else "",
                 "display_text": visit.to_dict().get("display_text"),
             })
 
@@ -7347,6 +7369,8 @@ def chatbot_suggest_pending_visits():
                 "client_id": visit.client_id,
                 "property_id": visit.property_id,
                 "plot_id": visit.plot_id,
+                "property_name": visit.property.name if getattr(visit, "property", None) else "",
+                "plot_name": visit.plot.name if getattr(visit, "plot", None) else "",
                 "display_text": visit.to_dict().get("display_text"),
             })
 
