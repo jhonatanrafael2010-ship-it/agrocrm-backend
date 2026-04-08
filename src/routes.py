@@ -4208,6 +4208,19 @@ def setup_telegram_link_codes():
 
 @bp.route('/consultants', methods=['GET'])
 def list_consultants():
+    rows = Consultant.query.order_by(Consultant.id.asc()).all()
+
+    # fonte principal: tabela real do banco
+    if rows:
+        return jsonify([
+            {
+                "id": c.id,
+                "name": c.name,
+            }
+            for c in rows
+        ]), 200
+
+    # fallback: lista estática, caso o banco esteja vazio
     return jsonify(CONSULTANTS), 200
 
 
@@ -7781,8 +7794,16 @@ def create_visit():
         return jsonify(message="propriedade não encontrada"), 404
     if plot_id and not Plot.query.get(plot_id):
         return jsonify(message="talhão não encontrado"), 404
-    if consultant_id and not Consultant.query.get(int(consultant_id)):
-        return jsonify(message="consultor não encontrado"), 404
+    if consultant_id not in (None, "", 0, "0"):
+        try:
+            consultant_id = int(consultant_id)
+        except (TypeError, ValueError):
+            return jsonify(message="consultant_id inválido"), 400
+
+        if not Consultant.query.get(consultant_id):
+            return jsonify(message="consultor não encontrado"), 404
+    else:
+        consultant_id = None
 
     try:
         visit_date = _d.fromisoformat(date_str)
