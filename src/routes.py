@@ -593,29 +593,51 @@ def build_name_confirmation_text(entity_label: str, candidates: list) -> str:
 def build_pending_visits_confirmation_text(client_name: str, requested_culture: str, suggestions: list, same_culture_found: bool) -> str:
     lines = []
 
-    if suggestions:
-        if requested_culture and same_culture_found:
-            lines.append(f"📋 Encontrei visitas pendentes de {requested_culture} para {client_name}:")
-        elif requested_culture and not same_culture_found:
-            lines.append(f"Não encontrei visitas pendentes de {requested_culture} para {client_name}.")
-            lines.append("")
-            lines.append("📋 Encontrei outras visitas pendentes deste cliente:")
-        else:
-            lines.append(f"📋 Encontrei visitas pendentes para {client_name}:")
+    if not suggestions:
+        if requested_culture:
+            return (
+                f"Não encontrei visitas pendentes de {requested_culture} para {client_name}.\n\n"
+                "Você pode responder com NOVA para criar uma nova visita."
+            )
 
+        return (
+            f"Não encontrei visitas pendentes para {client_name}.\n\n"
+            "Você pode responder com NOVA para criar uma nova visita."
+        )
+
+    if requested_culture and same_culture_found:
+        lines.append(f"📋 Encontrei visitas pendentes de {requested_culture} para {client_name}:")
+    elif requested_culture and not same_culture_found:
+        lines.append(f"Não encontrei visitas pendentes de {requested_culture} para {client_name}.")
+        lines.append("")
+        lines.append("📋 Encontrei outras visitas pendentes deste cliente:")
+    else:
+        lines.append(f"📋 Encontrei visitas pendentes para {client_name}:")
+
+    lines.append("")
+
+    # agrupa por variedade
+    grouped = {}
+    for item in suggestions:
+        variety = item.get("variety") or "Sem variedade"
+        grouped.setdefault(variety, []).append(item)
+
+    display_index = 1
+    ordered_suggestions = []
+
+    for variety_name, items in grouped.items():
+        lines.append(f"🌱 Variedade: {variety_name}")
         lines.append("")
 
-        for idx, item in enumerate(suggestions, start=1):
+        for item in items:
             culture = item.get("culture") or "—"
-            variety = item.get("variety") or "—"
             fenologia = item.get("fenologia_real") or "—"
             recommendation = item.get("recommendation") or "—"
             date_value = item.get("date") or "—"
-
             property_name = item.get("property_name") or "Sem fazenda"
             plot_name = item.get("plot_name") or "Sem talhão"
 
-            lines.append(f"{idx}. {culture} | {variety}")
+            lines.append(f"{display_index}. {culture} | {variety_name}")
             lines.append(f"   🏡 Fazenda: {property_name}")
             lines.append(f"   📍 Talhão: {plot_name}")
             lines.append(f"   🌿 Fenologia: {fenologia}")
@@ -623,22 +645,15 @@ def build_pending_visits_confirmation_text(client_name: str, requested_culture: 
             lines.append(f"   📅 Data: {date_value}")
             lines.append("")
 
-        lines.append("Responda com:")
-        lines.append("🔢 número da visita para atualizar")
-        lines.append("✅ CONCLUIR X para apenas concluir a visita pendente")
-        lines.append("🆕 NOVA para criar uma nova visita")
-        return "\n".join(lines)
+            ordered_suggestions.append(item)
+            display_index += 1
 
-    if requested_culture:
-        return (
-            f"Não encontrei visitas pendentes de {requested_culture} para {client_name}.\n\n"
-            "Você pode responder com NOVA para criar uma nova visita."
-        )
+    lines.append("Responda com:")
+    lines.append("🔢 número da visita para atualizar")
+    lines.append("✅ CONCLUIR X para apenas concluir a visita pendente")
+    lines.append("🆕 NOVA para criar uma nova visita")
 
-    return (
-        f"Não encontrei visitas pendentes para {client_name}.\n\n"
-        "Você pode responder com NOVA para criar uma nova visita."
-    )
+    return "\n".join(lines)
 
 def build_pdf_visit_selection_text(visits: list) -> str:
     if not visits:
@@ -1110,10 +1125,13 @@ def find_pending_visits(
     limit: int = 5
 ):
     """
-    Busca visitas pendentes do cliente e, se houver, da propriedade.
-    Retorna:
-    - visits: lista de visitas
-    - same_culture_found: se encontrou visitas da mesma cultura
+    Busca visitas pendentes do cliente.
+
+    NOVA REGRA:
+    - prioriza a mesma cultura, se existir
+    - ordena pelas mais recentes primeiro
+    - se houver mesma fazenda, separa por variedade
+    - mostra até `limit` por variedade quando houver múltiplas variedades
     """
     base_query = Visit.query.filter(Visit.client_id == client_id)
     base_query = base_query.filter(Visit.status.in_(["planned", "pendente", "planejada", "planejado"]))
@@ -1121,24 +1139,60 @@ def find_pending_visits(
     if property_id:
         base_query = base_query.filter(Visit.property_id == property_id)
 
-    if culture:
-        same_culture = (
-            base_query
-            .filter(Visit.culture == culture)
-            .order_by(Visit.date.asc().nullslast())
-            .limit(limit)
-            .all()
+    def sort_query(q):
+        return (
+            q.order_by(
+                Visit.date.desc().nullslast(),
+                Visit.id.desc()
+            )
         )
-        if same_culture:
-            return same_culture, True
 
-    fallback = (
-        base_query
-        .order_by(Visit.date.asc().nullslast())
-        .limit(limit)
-        .all()
+    working_query = base_query
+    same_culture_found = False
+
+    if culture:
+        same_culture_items = sort_query(
+            working_query.filter(Visit.culture == culture)
+        ).all()
+
+        if same_culture_items:
+            working_query_items = same_culture_items
+            same_culture_found = True
+        else:
+            working_query_items = sort_query(working_query).all()
+    else:
+        working_query_items = sort_query(working_query).all()
+
+    if not working_query_items:
+        return [], same_culture_found
+
+    # separa por variedade
+    grouped_by_variety = {}
+    for visit in working_query_items:
+        variety_key = (visit.variety or "Sem variedade").strip() or "Sem variedade"
+        grouped_by_variety.setdefault(variety_key, []).append(visit)
+
+    # se só existe uma variedade, mantém comportamento simples
+    if len(grouped_by_variety) == 1:
+        only_items = list(grouped_by_variety.values())[0][:limit]
+        return only_items, same_culture_found
+
+    # se existem várias variedades, pega até `limit` por variedade
+    merged = []
+    for variety_name in sorted(grouped_by_variety.keys()):
+        variety_visits = grouped_by_variety[variety_name][:limit]
+        merged.extend(variety_visits)
+
+    # ordena de novo no final para manter as mais recentes no topo
+    merged.sort(
+        key=lambda v: (
+            v.date or _date.min,
+            v.id or 0
+        ),
+        reverse=True
     )
-    return fallback, False
+
+    return merged, same_culture_found
 
 
 
@@ -2306,7 +2360,8 @@ def extract_recommendation_fallback(message_text: str) -> str:
 
     raw = message_text.strip()
 
-    # normaliza quebras de linha, mas preserva o conteúdo
+    # preserva quebra de linha original para pegar observações abaixo do rótulo
+    raw_multiline = raw
     raw_single = re.sub(r"\s*\n\s*", " ", raw).strip()
 
     patterns = [
@@ -2314,11 +2369,38 @@ def extract_recommendation_fallback(message_text: str) -> str:
     ]
 
     for pattern in patterns:
+        match = re.search(pattern, raw_multiline, re.IGNORECASE)
+        if match:
+            value = match.group(1).strip(" .,-;:")
+            if value:
+                return re.sub(r"\s*\n\s*", " ", value).strip()
+
         match = re.search(pattern, raw_single, re.IGNORECASE)
         if match:
             value = match.group(1).strip(" .,-;:")
             if value:
                 return value
+
+    # fallback extra:
+    # quando vier algo como:
+    # Cliente X
+    # Fenologia R3
+    # Data hoje
+    # Observações plantas com boa sanidade
+    # Baixa incidência de pragas
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    for idx, line in enumerate(lines):
+        normalized = normalize_lookup_text(line)
+        if normalized.startswith("observacoes") or normalized.startswith("observacao") or normalized.startswith("obs"):
+            remainder = re.sub(r"^(observacoes|observação|observacao|obs)\s*[:\-]?\s*", "", line, flags=re.IGNORECASE).strip()
+            tail = lines[idx + 1:]
+            parts = []
+            if remainder:
+                parts.append(remainder)
+            parts.extend(tail)
+            joined = " ".join([p for p in parts if p]).strip()
+            if joined:
+                return joined
 
     return ""
 
@@ -2736,6 +2818,20 @@ def apply_payload_to_existing_visit(visit, final_visit_payload: dict, close_only
 
     visit.source = final_visit_payload.get("source") or "chatbot"
 
+
+    # reforça planting_id quando a visita tiver talhão mas ainda estiver sem planting_id
+    if not getattr(visit, "planting_id", None) and getattr(visit, "plot_id", None):
+        planting = (
+            Planting.query
+            .filter_by(plot_id=visit.plot_id)
+            .order_by(Planting.id.desc())
+            .first()
+        )
+        if planting:
+            visit.planting_id = planting.id
+            visit.culture = visit.culture or planting.culture
+            visit.variety = visit.variety or planting.variety
+
     replace_visit_products_from_payload(visit, final_visit_payload)
 
     db.session.add(visit)
@@ -2776,7 +2872,7 @@ def create_visit_from_payload(final_visit_payload: dict):
         source=final_visit_payload.get("source") or "chatbot",
     )
 
-    if not visit.culture and visit.plot_id:
+    if visit.plot_id:
         planting = (
             Planting.query
             .filter_by(plot_id=visit.plot_id)
@@ -2784,7 +2880,8 @@ def create_visit_from_payload(final_visit_payload: dict):
             .first()
         )
         if planting:
-            visit.culture = planting.culture
+            visit.planting_id = planting.id
+            visit.culture = visit.culture or planting.culture
             visit.variety = visit.variety or planting.variety
 
     db.session.add(visit)
@@ -2797,67 +2894,87 @@ def create_visit_from_payload(final_visit_payload: dict):
 
 
 def build_same_cycle_visit_query(base_visit):
-    q = Visit.query.filter(Visit.id != base_visit.id)
+    """
+    Define quais visitas anteriores pertencem ao mesmo ciclo.
 
-    # ✅ critério principal
-    if getattr(base_visit, "planting_id", None):
-        q = q.filter(Visit.planting_id == base_visit.planting_id)
-
-        base_recommendation = (getattr(base_visit, "recommendation", None) or "").strip()
-        if base_recommendation:
-            q = q.filter(Visit.recommendation == base_recommendation)
-
-        return q
-
-    # ✅ sem planting_id, só segue se houver variedade
-    base_variety = (getattr(base_visit, "variety", None) or "").strip()
-    if not base_variety:
+    REGRA SEGURA:
+    1) se houver planting_id, ele manda em tudo
+    2) sem planting_id:
+       - exige client_id
+       - exige property_id igual
+       - exige plot_id igual
+       - exige culture igual quando existir
+       - exige variety igual quando existir
+    3) NÃO usa recommendation para amarrar ciclo,
+       porque a recommendation da visita concluída vira observação real
+       e deixa de bater com a pendência original
+    """
+    if not base_visit:
         return None
 
-    q = q.filter(Visit.client_id == base_visit.client_id)
+    q = Visit.query.filter(Visit.id != base_visit.id)
 
+    # 1) critério mais forte: mesmo planting_id
+    if getattr(base_visit, "planting_id", None):
+        q = q.filter(Visit.planting_id == base_visit.planting_id)
+        return q
+
+    # 2) fallback seguro por estrutura da visita
+    client_id = getattr(base_visit, "client_id", None)
+    if not client_id:
+        return None
+
+    q = q.filter(Visit.client_id == client_id)
+
+    # propriedade
     if getattr(base_visit, "property_id", None) is not None:
         q = q.filter(Visit.property_id == base_visit.property_id)
     else:
         q = q.filter(Visit.property_id.is_(None))
 
+    # talhão
     if getattr(base_visit, "plot_id", None) is not None:
         q = q.filter(Visit.plot_id == base_visit.plot_id)
     else:
         q = q.filter(Visit.plot_id.is_(None))
 
+    # cultura
     base_culture = (getattr(base_visit, "culture", None) or "").strip()
     if base_culture:
         q = q.filter(Visit.culture == base_culture)
 
-    q = q.filter(Visit.variety == base_variety)
-
-    base_recommendation = (getattr(base_visit, "recommendation", None) or "").strip()
-    if base_recommendation:
-        q = q.filter(Visit.recommendation == base_recommendation)
+    # variedade:
+    # se houver variedade na visita base, amarra por variedade
+    # se não houver, não força esse filtro
+    base_variety = (getattr(base_visit, "variety", None) or "").strip()
+    if base_variety:
+        q = q.filter(Visit.variety == base_variety)
 
     return q
 
 
 def auto_close_previous_cycle_visits(current_visit):
-    '''
-    Fecha automaticamente visitas anteriores do mesmo ciclo/evento.
+    """
+    Fecha automaticamente visitas anteriores do mesmo ciclo.
 
-    REGRA NOVA:
-    - usa planting_id como prioridade
-    - se NÃO houver planting_id, só fecha se houver variedade preenchida
-    - se não houver query segura, não fecha nada
-    - só fecha visitas com data <= data atual
-    - só fecha visitas ainda não concluídas
-    '''
+    Regras:
+    - só fecha visitas anteriores ou da mesma data
+    - só fecha visita ainda não concluída
+    - usa planting_id quando existir
+    - sem planting_id, usa client/property/plot/culture/variety
+    - nunca usa recommendation para definir ciclo
+    """
     if not current_visit:
+        print("DEBUG auto_close_previous_cycle_visits: current_visit ausente")
         return []
 
     if not getattr(current_visit, "date", None):
+        print("DEBUG auto_close_previous_cycle_visits: current_visit sem data")
         return []
 
     q = build_same_cycle_visit_query(current_visit)
     if q is None:
+        print("DEBUG auto_close_previous_cycle_visits: query do mesmo ciclo retornou None")
         return []
 
     previous_visits = (
@@ -2868,6 +2985,9 @@ def auto_close_previous_cycle_visits(current_visit):
          .all()
     )
 
+    print("DEBUG auto_close_previous_cycle_visits current_visit_id:", current_visit.id)
+    print("DEBUG auto_close_previous_cycle_visits previous_visits_found:", [v.id for v in previous_visits])
+
     closed_ids = []
 
     for visit in previous_visits:
@@ -2875,7 +2995,9 @@ def auto_close_previous_cycle_visits(current_visit):
         db.session.add(visit)
         closed_ids.append(visit.id)
 
+    print("DEBUG auto_close_previous_cycle_visits closed_ids:", closed_ids)
     return closed_ids
+
 
 
 def start_new_visit_direct_confirmation(
@@ -3136,6 +3258,8 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
             raise ValueError(f"Ação final inválida: {action}")
 
         auto_closed_ids = auto_close_previous_cycle_visits(visit)
+
+        print("DEBUG handle_final_confirmation auto_closed_ids:", auto_closed_ids)
 
         attached_count, attach_errors = attach_pending_telegram_photos_to_visit(
             chat_id=chat_message.chat_id,
@@ -6682,6 +6806,35 @@ def telegram_webhook():
                             "summary_text": summary_text
                         }), 200
 
+                    original_message = (state.last_message or "").strip()
+                    original_parsed = parse_chatbot_message(original_message) or {}
+
+                    fallback_recommendation = extract_recommendation_fallback(original_message)
+                    fallback_products = normalize_products_from_parsed(original_parsed.get("products") or [])
+
+                    if not (final_visit_payload.get("fenologia_real") or "").strip():
+                        final_visit_payload["fenologia_real"] = (
+                            original_parsed.get("fenologia_real")
+                            or final_visit_payload.get("fenologia_real")
+                        )
+
+                    if not final_visit_payload.get("date"):
+                        parsed_fallback_date = original_parsed.get("date")
+                        if parsed_fallback_date:
+                            parsed_fallback_date = parse_date_flexible(parsed_fallback_date) or parsed_fallback_date
+                        final_visit_payload["date"] = parsed_fallback_date or final_visit_payload.get("date")
+
+                    if not (final_visit_payload.get("recommendation") or "").strip():
+                        final_visit_payload["recommendation"] = (
+                            fallback_recommendation
+                            or (original_parsed.get("recommendation") or "").strip()
+                            or selected_pending_visit.get("recommendation")
+                            or ""
+                        )
+
+                    if not final_visit_payload.get("products"):
+                        final_visit_payload["products"] = fallback_products
+
                     has_prefilled_fenologia = bool((final_visit_payload.get("fenologia_real") or "").strip())
                     has_prefilled_date = bool(final_visit_payload.get("date"))
                     has_prefilled_observation = bool((final_visit_payload.get("recommendation") or "").strip())
@@ -6894,6 +7047,7 @@ def telegram_webhook():
                 db.session.add(state)
 
             state.last_message = f"cliente {guessed_client.name}"
+            state.last_message = original_message
             state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
 
             prefill = extract_prefill_from_message_text(message_text)
