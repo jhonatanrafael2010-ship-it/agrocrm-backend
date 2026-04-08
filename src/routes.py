@@ -137,6 +137,7 @@ MAX_PHOTOS_V = 6       # máximo de fotos por visita
 bp = Blueprint('api', __name__, url_prefix='/api')
 
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/opt/render/project/src/uploads")
+BUILD_STAMP = "routes_2026_04_08_visits_fix_01"
 
 def normalize_phone_number(phone: str) -> str:
     if not phone:
@@ -4217,6 +4218,34 @@ def list_consultants():
 def ping():
     return "pong", 200
 
+@bp.route("/debug/build-stamp", methods=["GET"])
+def debug_build_stamp():
+    return jsonify({
+        "ok": True,
+        "build_stamp": BUILD_STAMP
+    }), 200
+
+@bp.route("/debug/routes-visits", methods=["GET"])
+def debug_routes_visits():
+    routes = []
+
+    for rule in current_app.url_map.iter_rules():
+        rule_str = str(rule)
+        if "/api/visits" in rule_str:
+            methods = sorted([m for m in rule.methods if m not in {"HEAD", "OPTIONS"}])
+            routes.append({
+                "rule": rule_str,
+                "methods": methods,
+                "endpoint": rule.endpoint,
+            })
+
+    routes.sort(key=lambda x: x["rule"])
+    return jsonify({
+        "ok": True,
+        "build_stamp": BUILD_STAMP,
+        "routes": routes,
+    }), 200
+
 def is_confirmation_reply(text: str) -> bool:
     if not text:
         return False
@@ -7715,7 +7744,8 @@ def get_visits():
 
 
 
-@bp.route('/visits', methods=['POST'])
+@bp.route('/visits', methods=['POST', 'OPTIONS'])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
 def create_visit():
     """
     Cria uma nova visita.
@@ -7958,7 +7988,8 @@ def create_visits_bulk():
 
 
 
-@bp.route('/visits/<int:visit_id>', methods=['PUT'])
+@bp.route('/visits/<int:visit_id>', methods=['PUT', 'OPTIONS'])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
 def update_visit(visit_id: int):
     v = Visit.query.get(visit_id)
     if not v:
