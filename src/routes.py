@@ -8352,9 +8352,9 @@ def get_visit(visit_id):
         "fenologia_real": getattr(v, "fenologia_real", None),
         "latitude": getattr(v, "latitude", None),
         "longitude": getattr(v, "longitude", None),
-        "products": getattr(v, "products", []) or [],
+        "products": [p.to_dict() for p in (getattr(v, "products", []) or [])],
         "photos": photos
-    })
+    }), 200
 
 
 
