@@ -8128,6 +8128,7 @@ def delete_visit(visit_id):
 
 
 
+
 # ==============================
 # 📸 FOTOS — upload, legenda, exclusão (REVISADO)
 # ==============================
