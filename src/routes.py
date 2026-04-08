@@ -6054,6 +6054,7 @@ def telegram_webhook():
 
         message_text = (message_text or "").strip()
         message_text_lower = message_text.lower()
+        original_message = message_text
 
         single_reference = resolve_single_active_reference(
             chat_message=chat_message,
@@ -6544,6 +6545,7 @@ def telegram_webhook():
         # =========================================================
         # Se a mensagem for resposta para escolha de cliente parecido
         # =========================================================
+        print("DEBUG telegram original_message base:", original_message)
         if message_text.strip().isdigit():
             state = ChatbotConversationState.query.filter_by(
                 platform="telegram",
@@ -6579,10 +6581,25 @@ def telegram_webhook():
                         "message": "cliente escolhido não encontrado"
                     }), 200
 
-                original_message = state.last_message or ""
-                parsed = parse_chatbot_message(original_message)
+                safe_original_message = (state.last_message or original_message or message_text or "").strip()
+                print("DEBUG awaiting_client_confirmation state.last_message:", state.last_message)
+                print("DEBUG awaiting_client_confirmation safe_original_message:", safe_original_message)
+                
+                parsed = parse_chatbot_message(safe_original_message) or {}
 
-                parsed_recommendation = extract_recommendation_fallback(original_message)
+                parsed_recommendation = extract_recommendation_fallback(safe_original_message)
+
+                if not parsed_recommendation:
+                    parsed_recommendation = (parsed.get("recommendation") or "").strip()
+
+                parsed_products = normalize_products_from_parsed(parsed.get("products") or [])
+
+                matched_property, property_candidates, property_needs_confirmation = find_property_by_name(
+                    parsed.get("property_name"),
+                    matched_client.id if matched_client else None
+                )
+
+                parsed_recommendation = extract_recommendation_fallback(safe_original_message)
 
                 if not parsed_recommendation:
                     parsed_recommendation = (parsed.get("recommendation") or "").strip()
@@ -7180,7 +7197,7 @@ def telegram_webhook():
                 )
                 db.session.add(state)
 
-            state.last_message = message_text
+            state.last_message = original_message
             state.pending_visit_suggestions_json = json.dumps(
                 [{"id": c.id, "name": c.name} for c in client_candidates[:3]],
                 ensure_ascii=False
@@ -7232,9 +7249,10 @@ def telegram_webhook():
                 "display_text": visit.to_dict().get("display_text"),
             })
 
-        parsed_recommendation = (parsed.get("recommendation") or "").strip()
+        parsed_recommendation = extract_recommendation_fallback(safe_original_message)
+
         if not parsed_recommendation:
-            parsed_recommendation = extract_recommendation_fallback(message_text)
+            parsed_recommendation = (parsed.get("recommendation") or "").strip()
 
         parsed_products = normalize_products_from_parsed(parsed.get("products") or [])
 
@@ -7541,9 +7559,9 @@ def chatbot_suggest_pending_visits():
             "consultant_id": consultant_id,
             "date": parsed.get("date"),
             "status": parsed.get("status", "planned"),
-            "culture": parsed.get("culture") or "",
+            "culture": (parsed.get("culture") or "").strip(),
             "variety": "",
-            "fenologia_real": parsed.get("fenologia_real"),
+            "fenologia_real": (parsed.get("fenologia_real") or "").strip() or None,
             "recommendation": parsed_recommendation,
             "products": normalize_products_from_parsed(parsed.get("products") or []),
             "latitude": None,
