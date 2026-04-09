@@ -1391,6 +1391,16 @@ def build_visit_pdf_file(visit_id: int):
     variety_slug = slugify_variety(visit.variety or "")
     variety_logo_path = os.path.join(static_dir, "variety_logos", f"{variety_slug}.png")
 
+    def sanitize_filename_part(value: str) -> str:
+        if not value:
+            return ""
+        value = unicodedata.normalize("NFD", value)
+        value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
+        value = value.strip()
+        value = re.sub(r'[\\/:*?"<>|]+', "", value)
+        value = re.sub(r"\s+", " ", value)
+        return value
+
     def draw_footer(canvas, doc):
         canvas.saveState()
         y = 22
@@ -1738,8 +1748,33 @@ def build_visit_pdf_file(visit_id: int):
         except:
             pass
 
-    filename = f"{client.name if client else 'Cliente'} - {visit.variety or ''} - Relatório.pdf"
-    return buffer, filename
+        # ✅ usa a última visita que realmente entrou no PDF
+        last_pdf_visit = visits_to_include[0] if visits_to_include else visit
+
+        last_fenologia = sanitize_filename_part(
+            (last_pdf_visit.fenologia_real or "").strip()
+        ) or "Sem Fenologia"
+
+        pdf_property_name = ""
+        if getattr(last_pdf_visit, "property_id", None):
+            pdf_property = Property.query.get(last_pdf_visit.property_id)
+            if pdf_property and pdf_property.name:
+                pdf_property_name = f"Faz. {sanitize_filename_part(pdf_property.name)}"
+
+        client_name_part = sanitize_filename_part(client.name if client else "Cliente") or "Cliente"
+        variety_part = sanitize_filename_part(last_pdf_visit.variety or visit.variety or "") or "Sem Variedade"
+
+        filename_parts = [
+            client_name_part,
+            variety_part,
+            last_fenologia,
+        ]
+
+        if pdf_property_name:
+            filename_parts.append(pdf_property_name)
+
+        filename = " - ".join(filename_parts) + ".pdf"
+        return buffer, filename
 
 
 
@@ -2509,9 +2544,13 @@ def attach_pending_telegram_photos_to_visit(chat_id: str, visit):
     errors = []
 
     for item in pending:
+        print("DEBUG attach_pending item path:", item["path"])
+        print("DEBUG attach_pending item filename:", item["filename"])
+        print("DEBUG attach_pending item caption:", item.get("caption"))
         try:
             with open(item["path"], "rb") as f:
                 photo_bytes = f.read()
+                print("DEBUG attach_pending bytes_len:", len(photo_bytes) if photo_bytes else 0)
 
             _, attach_error = attach_photo_to_visit_from_telegram(
                 visit=visit,
@@ -2519,6 +2558,7 @@ def attach_pending_telegram_photos_to_visit(chat_id: str, visit):
                 filename=item["filename"],
                 caption=item["caption"],
             )
+            print("DEBUG attach_pending attach_error:", attach_error)
 
             if attach_error:
                 errors.append(attach_error)
@@ -2626,11 +2666,20 @@ def resolve_pending_photo_for_message(chat_message, payload, current_text: str):
     message_text = (current_text or "").strip()
     photo_info = extract_telegram_photo_info(payload)
 
+    if photo_info:
+        print("DEBUG telegram photo_info file_id:", photo_info.get("file_id"))
+        print("DEBUG telegram photo_info media_group_id:", photo_info.get("media_group_id"))
+        print("DEBUG telegram photo_info file_size:", photo_info.get("file_size"))
+        print("DEBUG telegram photo_info caption:", photo_info.get("caption"))
+
     if not photo_info:
         return None
 
     downloaded_photo_name = guess_telegram_photo_filename(photo_info)
     downloaded_photo_bytes, photo_download_error = download_telegram_file_bytes(photo_info["file_id"])
+
+    print("DEBUG telegram photo_download_error:", photo_download_error)
+    print("DEBUG telegram photo_downloaded_bytes:", len(downloaded_photo_bytes) if downloaded_photo_bytes else 0)
 
     if photo_download_error:
         print("DEBUG telegram photo download error:", photo_download_error)
@@ -3285,6 +3334,9 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
 
         if attached_count > 0:
             success_lines.append(f"📸 {attached_count} foto(s) vinculada(s) à visita.")
+
+        elif get_pending_telegram_photos(chat_message.chat_id):
+            success_lines.append("⚠️ Havia fotos pendentes, mas nenhuma conseguiu ser vinculada. Verifique os logs do upload.")
 
         if attach_errors:
             print("DEBUG attach_pending errors:", attach_errors)
@@ -6584,7 +6636,7 @@ def telegram_webhook():
                 safe_original_message = (state.last_message or original_message or message_text or "").strip()
                 print("DEBUG awaiting_client_confirmation state.last_message:", state.last_message)
                 print("DEBUG awaiting_client_confirmation safe_original_message:", safe_original_message)
-                
+
                 parsed = parse_chatbot_message(safe_original_message) or {}
 
                 parsed_recommendation = extract_recommendation_fallback(safe_original_message)
@@ -6599,17 +6651,6 @@ def telegram_webhook():
                     matched_client.id if matched_client else None
                 )
 
-                parsed_recommendation = extract_recommendation_fallback(safe_original_message)
-
-                if not parsed_recommendation:
-                    parsed_recommendation = (parsed.get("recommendation") or "").strip()
-
-                parsed_products = normalize_products_from_parsed(parsed.get("products") or [])
-
-                matched_property, property_candidates, property_needs_confirmation = find_property_by_name(
-                    parsed.get("property_name"),
-                    matched_client.id if matched_client else None
-                )
 
                 pending_visits = []
                 same_culture_found = False
@@ -6824,33 +6865,39 @@ def telegram_webhook():
                         }), 200
 
                     original_message = (state.last_message or "").strip()
+                    robust_prefill = extract_prefill_from_message_text(original_message)
                     original_parsed = parse_chatbot_message(original_message) or {}
 
-                    fallback_recommendation = extract_recommendation_fallback(original_message)
                     fallback_products = normalize_products_from_parsed(original_parsed.get("products") or [])
 
                     if not (final_visit_payload.get("fenologia_real") or "").strip():
                         final_visit_payload["fenologia_real"] = (
-                            original_parsed.get("fenologia_real")
-                            or final_visit_payload.get("fenologia_real")
+                            (robust_prefill.get("fenologia_real") or "").strip()
+                            or (original_parsed.get("fenologia_real") or "").strip()
+                            or (final_visit_payload.get("fenologia_real") or "").strip()
+                            or None
                         )
 
                     if not final_visit_payload.get("date"):
-                        parsed_fallback_date = original_parsed.get("date")
+                        parsed_fallback_date = robust_prefill.get("date") or original_parsed.get("date")
                         if parsed_fallback_date:
                             parsed_fallback_date = parse_date_flexible(parsed_fallback_date) or parsed_fallback_date
                         final_visit_payload["date"] = parsed_fallback_date or final_visit_payload.get("date")
 
                     if not (final_visit_payload.get("recommendation") or "").strip():
                         final_visit_payload["recommendation"] = (
-                            fallback_recommendation
+                            (robust_prefill.get("recommendation") or "").strip()
                             or (original_parsed.get("recommendation") or "").strip()
-                            or selected_pending_visit.get("recommendation")
+                            or (selected_pending_visit.get("recommendation") or "").strip()
                             or ""
                         )
 
                     if not final_visit_payload.get("products"):
-                        final_visit_payload["products"] = fallback_products
+                        final_visit_payload["products"] = (
+                            robust_prefill.get("products")
+                            or fallback_products
+                            or []
+                        )
 
                     has_prefilled_fenologia = bool((final_visit_payload.get("fenologia_real") or "").strip())
                     has_prefilled_date = bool(final_visit_payload.get("date"))
@@ -7063,11 +7110,10 @@ def telegram_webhook():
                 )
                 db.session.add(state)
 
-            state.last_message = f"cliente {guessed_client.name}"
             state.last_message = original_message
             state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
 
-            prefill = extract_prefill_from_message_text(message_text)
+            prefill = extract_prefill_from_message_text(original_message)
 
             visit_preview = {
                 "client_id": guessed_client.id,
@@ -8301,8 +8347,11 @@ def update_visit(visit_id: int):
 @bp.route('/visits/<int:visit_id>', methods=['DELETE'])
 def delete_visit(visit_id):
     """
-    Exclui uma visita. Se for a visita de plantio, remove também o plantio e TODAS
-    as visitas geradas automaticamente (fenológicas) vinculadas ao mesmo plantio_id.
+    Exclui uma visita.
+
+    REGRA NOVA:
+    - efeito cascata SOMENTE quando a visita excluída for realmente a visita de plantio
+    - visitas normais do ciclo (V2, V4, R1, R4, etc.) apagam apenas elas mesmas
     """
     try:
         visit = Visit.query.get(visit_id)
@@ -8312,57 +8361,48 @@ def delete_visit(visit_id):
 
         print(f"🗑 Solicitada exclusão da visita {visit_id}: {visit.recommendation}")
 
-        # ✅ Detecção mais robusta de plantio
-        rec = (visit.recommendation or "").lower()
-        is_plantio = ("plantio" in rec) or (visit.planting_id is not None)
+        rec = (visit.recommendation or "").strip().lower()
+        fenologia = (visit.fenologia_real or "").strip().lower()
 
-        if is_plantio:
-            planting = Planting.query.get(visit.planting_id) if visit.planting_id else None
+        # ✅ Só considera plantio quando a própria visita é de plantio
+        is_real_plantio_visit = (
+            rec == "plantio"
+            or rec.startswith("plantio ")
+            or "plantio -" in rec
+            or fenologia == "plantio"
+        )
 
-            # 1) Se tiver planting_id, apaga todas as visitas vinculadas (SEM filtro de data)
+        # ==========================================
+        # CASCATA APENAS NA VISITA DE PLANTIO
+        # ==========================================
+        if is_real_plantio_visit and visit.planting_id:
+            planting = Planting.query.get(visit.planting_id)
+
             if planting:
+                print(f"🌾 Exclusão em cascata do plantio {planting.id}")
+
                 linked_visits = Visit.query.filter(
-                    Visit.planting_id == planting.id,
-                    Visit.id != visit.id
+                    Visit.planting_id == planting.id
                 ).all()
 
                 for lv in linked_visits:
                     print(f"   → Removendo visita vinculada {lv.id} ({lv.recommendation})")
                     db.session.delete(lv)
 
-                print(f"🌾 Removendo plantio {planting.id} vinculado.")
+                print(f"   → Removendo plantio {planting.id}")
                 db.session.delete(planting)
 
-            else:
-                # 2) Fallback: sem planting_id, apaga "todas do mesmo contexto"
-                #    (se você tiver plot_id, USE ELE! É o melhor vínculo do talhão)
-                q = Visit.query.filter(
-                    Visit.id != visit.id,
-                    Visit.client_id == visit.client_id,
-                    Visit.property_id == visit.property_id,
-                    Visit.culture == visit.culture
-                )
+                db.session.commit()
+                print("✅ Plantio e visitas vinculadas excluídos com sucesso.")
+                return jsonify({'message': 'Plantio e visitas vinculadas excluídos com sucesso'}), 200
 
-                # Se existir plot_id no seu model, habilite essa linha (recomendado):
-                if getattr(visit, "plot_id", None):
-                    q = q.filter(Visit.plot_id == visit.plot_id)
-
-                linked_visits = q.all()
-
-                for lv in linked_visits:
-                    print(f"   → Removendo visita relacionada {lv.id} ({lv.recommendation})")
-                    db.session.delete(lv)
-
-            # 3) Por fim, remove a visita de plantio
-            db.session.delete(visit)
-            db.session.commit()
-            print("✅ Plantio e visitas vinculadas excluídos com sucesso.")
-            return jsonify({'message': 'Plantio e visitas vinculadas excluídos com sucesso'}), 200
-
-        # Caso comum (visita isolada)
+        # ==========================================
+        # CASO COMUM: APAGA SÓ A VISITA
+        # ==========================================
         print(f"🧾 Excluindo visita isolada {visit_id}")
         db.session.delete(visit)
         db.session.commit()
+
         print(f"✅ Visita {visit_id} excluída com sucesso.")
         return jsonify({'message': 'Visita excluída com sucesso'}), 200
 
