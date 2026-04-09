@@ -838,15 +838,18 @@ def bind_telegram_consultant_by_code(chat_message, code: str):
 
 
 
-def find_last_completed_visits_for_consultant(consultant_id: int, limit: int = 6):
+def find_last_completed_visits_for_consultant(consultant_id: int, limit: int = 10):
     if not consultant_id:
         return []
 
     visits = (
         Visit.query
+        .join(Photo, Photo.visit_id == Visit.id)
         .filter(Visit.consultant_id == consultant_id)
         .filter(Visit.status == "done")
+        .filter(Photo.url.isnot(None))
         .order_by(Visit.date.desc().nullslast(), Visit.id.desc())
+        .distinct()
         .limit(limit)
         .all()
     )
@@ -5037,7 +5040,7 @@ def handle_pdf_flow(chat_message, consultant, message_text: str):
 
         recent_visits = find_last_completed_visits_for_consultant(
             consultant_id=consultant.id,
-            limit=6
+            limit=10
         )
 
         response_text = build_pdf_visit_selection_text(recent_visits)
@@ -6107,6 +6110,7 @@ def telegram_webhook():
         message_text = (message_text or "").strip()
         message_text_lower = message_text.lower()
         original_message = message_text
+        safe_original_message = original_message
 
         single_reference = resolve_single_active_reference(
             chat_message=chat_message,
@@ -6598,7 +6602,8 @@ def telegram_webhook():
         # Se a mensagem for resposta para escolha de cliente parecido
         # =========================================================
         print("DEBUG telegram original_message base:", original_message)
-        if message_text.strip().isdigit():
+        is_numeric_like_reply = bool(re.fullmatch(r"[\d,\s;]+", message_text.strip()))
+        if is_numeric_like_reply:
             state = ChatbotConversationState.query.filter_by(
                 platform="telegram",
                 chat_id=chat_message.chat_id,
