@@ -4981,7 +4981,7 @@ def handle_pdf_flow(chat_message, consultant, message_text: str):
 
         recent_visits = find_last_completed_visits_for_consultant(
             consultant.id,
-            limit=1
+            limit=10
         )
         last_visit = recent_visits[0] if recent_visits else None
 
@@ -6094,7 +6094,6 @@ def telegram_webhook():
         resolved_consultant_id = consultant.id if consultant else 1
 
         message_text = (chat_message.text or chat_message.caption or "").strip()
-
         message_text = resolve_audio_message_text(
             chat_message=chat_message,
             payload=payload,
@@ -6109,6 +6108,8 @@ def telegram_webhook():
 
         message_text = (message_text or "").strip()
         message_text_lower = message_text.lower()
+
+        # ✅ base imutável da mensagem do usuário
         original_message = message_text
         safe_original_message = original_message
 
@@ -7351,7 +7352,7 @@ def telegram_webhook():
             )
             db.session.add(state)
 
-        state.last_message = message_text
+        state.last_message = safe_original_message
         state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
         state.visit_preview_json = json.dumps(visit_preview, ensure_ascii=False)
         state.confirmation_text = confirmation_text
@@ -8354,8 +8355,8 @@ def delete_visit(visit_id):
     """
     Exclui uma visita.
 
-    REGRA NOVA:
-    - efeito cascata SOMENTE quando a visita excluída for realmente a visita de plantio
+    REGRA SEGURA:
+    - efeito cascata SOMENTE se a visita excluída for a visita raiz de plantio do ciclo
     - visitas normais do ciclo (V2, V4, R1, R4, etc.) apagam apenas elas mesmas
     """
     try:
@@ -8369,41 +8370,65 @@ def delete_visit(visit_id):
         rec = (visit.recommendation or "").strip().lower()
         fenologia = (visit.fenologia_real or "").strip().lower()
 
-        # ✅ Só considera plantio quando a própria visita é de plantio
-        is_real_plantio_visit = (
-            rec == "plantio"
-            or rec.startswith("plantio ")
-            or "plantio -" in rec
-            or fenologia == "plantio"
-        )
+        def is_plantio_like(v):
+            rec_local = (v.recommendation or "").strip().lower()
+            fen_local = (v.fenologia_real or "").strip().lower()
+            return (
+                rec_local == "plantio"
+                or rec_local.startswith("plantio ")
+                or "plantio -" in rec_local
+                or fen_local == "plantio"
+            )
 
-        # ==========================================
-        # CASCATA APENAS NA VISITA DE PLANTIO
-        # ==========================================
-        if is_real_plantio_visit and visit.planting_id:
+        # ==================================================
+        # CASCATA SOMENTE NA VISITA RAIZ DE PLANTIO
+        # ==================================================
+        if visit.planting_id and is_plantio_like(visit):
             planting = Planting.query.get(visit.planting_id)
 
             if planting:
-                print(f"🌾 Exclusão em cascata do plantio {planting.id}")
+                first_cycle_visit = (
+                    Visit.query
+                    .filter(Visit.planting_id == planting.id)
+                    .order_by(Visit.date.asc().nullslast(), Visit.id.asc())
+                    .first()
+                )
 
-                linked_visits = Visit.query.filter(
-                    Visit.planting_id == planting.id
-                ).all()
+                is_root_plantio_visit = (
+                    first_cycle_visit is not None
+                    and first_cycle_visit.id == visit.id
+                    and is_plantio_like(first_cycle_visit)
+                )
 
-                for lv in linked_visits:
-                    print(f"   → Removendo visita vinculada {lv.id} ({lv.recommendation})")
-                    db.session.delete(lv)
+                if is_root_plantio_visit:
+                    print(f"🌾 Exclusão em cascata do plantio {planting.id}")
 
-                print(f"   → Removendo plantio {planting.id}")
-                db.session.delete(planting)
+                    linked_visits = (
+                        Visit.query
+                        .filter(Visit.planting_id == planting.id)
+                        .order_by(Visit.date.asc().nullslast(), Visit.id.asc())
+                        .all()
+                    )
 
-                db.session.commit()
-                print("✅ Plantio e visitas vinculadas excluídos com sucesso.")
-                return jsonify({'message': 'Plantio e visitas vinculadas excluídos com sucesso'}), 200
+                    for lv in linked_visits:
+                        print(f"   → Removendo visita vinculada {lv.id} ({lv.recommendation})")
+                        db.session.delete(lv)
 
-        # ==========================================
+                    print(f"   → Removendo plantio {planting.id}")
+                    db.session.delete(planting)
+
+                    db.session.commit()
+                    print("✅ Plantio e visitas vinculadas excluídos com sucesso.")
+                    return jsonify({'message': 'Plantio e visitas vinculadas excluídos com sucesso'}), 200
+
+                print(
+                    f"ℹ️ Visita {visit.id} parece plantio, mas não é a visita raiz do ciclo. "
+                    "Excluindo apenas a visita isolada."
+                )
+
+        # ==================================================
         # CASO COMUM: APAGA SÓ A VISITA
-        # ==========================================
+        # ==================================================
         print(f"🧾 Excluindo visita isolada {visit_id}")
         db.session.delete(visit)
         db.session.commit()
@@ -8412,8 +8437,8 @@ def delete_visit(visit_id):
         return jsonify({'message': 'Visita excluída com sucesso'}), 200
 
     except Exception as e:
-        print(f"❌ Erro interno ao excluir visita {visit_id}: {e}")
         db.session.rollback()
+        print(f"❌ Erro interno ao excluir visita {visit_id}: {e}")
         return jsonify({'error': f'Erro interno ao excluir visita: {str(e)}'}), 500
 
 
