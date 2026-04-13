@@ -465,3 +465,59 @@ class PhenologyStage(db.Model):
             'name': self.name,
             'days': self.days,
         }
+
+
+class FieldData(db.Model):
+    __tablename__ = "field_data"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    consultant_id = db.Column(db.Integer, db.ForeignKey("consultants.id"), nullable=True, index=True)
+    client_id = db.Column(db.Integer, db.ForeignKey("clients.id"), nullable=False, index=True)
+    property_id = db.Column(db.Integer, db.ForeignKey("properties.id"), nullable=True, index=True)
+    plot_id = db.Column(db.Integer, db.ForeignKey("plots.id"), nullable=True, index=True)
+
+    culture = db.Column(db.String(120), nullable=True, index=True)
+    variety = db.Column(db.String(200), nullable=True, index=True)
+
+    category = db.Column(db.String(80), nullable=False, index=True)
+    category_extra = db.Column(db.String(120), nullable=True)
+
+    title = db.Column(db.String(200), nullable=True)
+    content = db.Column(db.Text, nullable=False)
+
+    source = db.Column(db.String(30), nullable=False, server_default="bot", index=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+    updated_at = db.Column(
+        db.DateTime,
+        server_default=db.func.now(),
+        onupdate=db.func.now(),
+        nullable=False
+    )
+
+    consultant = db.relationship("Consultant", backref="field_data_items")
+    client = db.relationship("Client", backref=db.backref("field_data_items", lazy="dynamic", cascade="all, delete-orphan"))
+    property = db.relationship("Property", backref=db.backref("field_data_items", lazy="dynamic", cascade="all, delete-orphan"))
+    plot = db.relationship("Plot", backref=db.backref("field_data_items", lazy="dynamic", cascade="all, delete-orphan"))
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "consultant_id": self.consultant_id,
+            "consultant_name": self.consultant.name if self.consultant else None,
+            "client_id": self.client_id,
+            "client_name": self.client.name if self.client else None,
+            "property_id": self.property_id,
+            "property_name": self.property.name if self.property else None,
+            "plot_id": self.plot_id,
+            "plot_name": self.plot.name if self.plot else None,
+            "culture": self.culture,
+            "variety": self.variety,
+            "category": self.category,
+            "category_extra": self.category_extra,
+            "title": self.title,
+            "content": self.content,
+            "source": self.source,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }

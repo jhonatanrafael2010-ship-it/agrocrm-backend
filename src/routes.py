@@ -99,6 +99,7 @@ from models import (
     Consultant,
     CONSULTANTS,
     VisitProduct,
+    FieldData,
 )
 from utils.r2_client import get_r2_client
 
@@ -111,6 +112,18 @@ from services.chatbot_service import (
     send_telegram_message,
     send_telegram_document,
 )
+from services.field_data_service import (
+    infer_field_data_category,
+    create_field_data_record,
+    search_field_data,
+    build_field_data_summary_text,
+    find_best_plot_by_name,
+)
+from services.planting_insights_service import (
+    calculate_days_since_planting,
+    build_days_planted_text,
+)
+
 import io
 import subprocess
 from openai import OpenAI
@@ -513,6 +526,61 @@ def is_pdf_request(text: str) -> bool:
         "pdf das últimas visitas",
         "relatorio pdf",
         "relatório pdf",
+    ]
+
+    return any(trigger in normalized for trigger in triggers)
+
+def is_field_data_save_request(text: str) -> bool:
+    if not text:
+        return False
+
+    normalized = normalize_lookup_text(text)
+
+    triggers = [
+        "salva dado de campo",
+        "salvar dado de campo",
+        "anota no dado de campo",
+        "anotar dado de campo",
+        "perfil comercial do cliente",
+        "perfil tecnico do cliente",
+        "perfil técnico do cliente",
+        "manejo fungicida do",
+        "manejo inseticida do",
+        "manejo herbicida do",
+    ]
+
+    return any(trigger in normalized for trigger in triggers)
+
+
+def is_field_data_query_request(text: str) -> bool:
+    if not text:
+        return False
+
+    normalized = normalize_lookup_text(text)
+
+    triggers = [
+        "o que tem de dado de campo",
+        "me resume o manejo",
+        "me mostra o perfil comercial",
+        "me mostra o perfil tecnico",
+        "me mostra o perfil técnico",
+        "o que foi anotado sobre",
+        "dados do campo do",
+    ]
+
+    return any(trigger in normalized for trigger in triggers)
+
+
+def is_days_planted_request(text: str) -> bool:
+    if not text:
+        return False
+
+    normalized = normalize_lookup_text(text)
+
+    triggers = [
+        "dias de plantado",
+        "quantos dias de plantado",
+        "quanto tempo de plantado",
     ]
 
     return any(trigger in normalized for trigger in triggers)
@@ -2390,6 +2458,51 @@ def extract_prefill_from_message_text(message_text: str):
     }
 
 
+def extract_field_data_payload_from_text(message_text: str):
+    raw = (message_text or "").strip()
+    normalized = normalize_lookup_text(raw)
+
+    client = None
+    category = infer_field_data_category(raw)
+    content = raw
+
+    marker_patterns = [
+        r"salva dado de campo do\s+(.+?)\s*:\s*(.+)$",
+        r"anota no dado de campo que\s+(.+?)\s*:\s*(.+)$",
+        r"perfil comercial do cliente\s+(.+?)\s*:\s*(.+)$",
+        r"perfil tecnico do cliente\s+(.+?)\s*:\s*(.+)$",
+        r"perfil técnico do cliente\s+(.+?)\s*:\s*(.+)$",
+        r"manejo fungicida do\s+(.+?)\s*:\s*(.+)$",
+        r"manejo inseticida do\s+(.+?)\s*:\s*(.+)$",
+        r"manejo herbicida do\s+(.+?)\s*:\s*(.+)$",
+    ]
+
+    client_name = None
+
+    for pattern in marker_patterns:
+        match = re.search(pattern, normalized, re.IGNORECASE)
+        if match:
+            client_name = raw[match.start(1):match.end(1)].strip()
+            content = raw[match.start(2):match.end(2)].strip()
+            break
+
+    if client_name:
+        client, _, _ = find_client_by_name(client_name)
+
+    parsed = parse_chatbot_message(raw) or {}
+
+    return {
+        "client": client,
+        "client_name": client_name,
+        "property_name": parsed.get("property_name"),
+        "plot_name": parsed.get("plot_name"),
+        "culture": parsed.get("culture"),
+        "variety": parsed.get("variety"),
+        "category": category,
+        "content": content,
+    }
+
+
 
 
 def extract_recommendation_fallback(message_text: str) -> str:
@@ -3372,6 +3485,237 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
             "message": "erro ao confirmar visita final",
             "error": str(e),
         }), 200
+
+
+def handle_field_data_save_flow(chat_message, consultant, message_text: str):
+    extracted = extract_field_data_payload_from_text(message_text)
+
+    client = extracted.get("client")
+    if not client:
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text="Não consegui identificar o cliente para salvar o dado de campo. Tente citar o nome do cliente com mais clareza."
+        )
+        return jsonify({
+            "ok": True,
+            "message": "cliente não identificado para field data"
+        }), 200
+
+    property_obj = None
+    plot_obj = None
+
+    if extracted.get("property_name"):
+        property_obj, _, _ = find_property_by_name(extracted.get("property_name"), client_id=client.id)
+
+    if extracted.get("plot_name") and property_obj:
+        plot_obj = find_best_plot_by_name(extracted.get("plot_name"), property_id=property_obj.id)
+
+    row = create_field_data_record(
+        consultant_id=consultant.id if consultant else None,
+        client_id=client.id,
+        property_id=property_obj.id if property_obj else None,
+        plot_id=plot_obj.id if plot_obj else None,
+        culture=extracted.get("culture"),
+        variety=extracted.get("variety"),
+        category=extracted.get("category") or "geral",
+        content=extracted.get("content") or "",
+        source="bot",
+    )
+
+    send_telegram_message(
+        chat_id=chat_message.chat_id,
+        text=(
+            "✅ Dado de campo salvo com sucesso.\n\n"
+            f"Cliente: {client.name}\n"
+            f"Categoria: {row.category}\n"
+            f"Conteúdo: {row.content}"
+        )
+    )
+
+    return jsonify({
+        "ok": True,
+        "message": "field data salvo",
+        "field_data_id": row.id,
+    }), 200
+
+
+def handle_field_data_query_flow(chat_message, consultant, message_text: str):
+    extracted = extract_field_data_payload_from_text(message_text)
+
+    client = extracted.get("client")
+    category = extracted.get("category")
+
+    rows = search_field_data(
+        consultant_id=consultant.id if consultant else None,
+        client_id=client.id if client else None,
+        culture=extracted.get("culture"),
+        variety=extracted.get("variety"),
+        category=category if category != "geral" else None,
+        limit=10,
+    )
+
+    summary_text = build_field_data_summary_text(rows)
+
+    send_telegram_message(
+        chat_id=chat_message.chat_id,
+        text=summary_text
+    )
+
+    return jsonify({
+        "ok": True,
+        "message": "field data consultado",
+        "count": len(rows),
+    }), 200
+
+
+
+def build_consultant_days_planted_portfolio(consultant_id: int):
+    """
+    Monta a carteira completa do consultor com dias de plantado,
+    em uma linha por cliente + variedade.
+
+    Regra:
+    - prioriza Planting.planting_date
+    - fallback para visita de Plantio
+    - usa client + property + plot + culture + variety como chave segura
+    """
+    if not consultant_id:
+        return []
+
+    visits = (
+        Visit.query
+        .filter(Visit.consultant_id == consultant_id)
+        .order_by(Visit.date.desc().nullslast(), Visit.id.desc())
+        .all()
+    )
+
+    grouped = {}
+
+    for visit in visits:
+        client_id = getattr(visit, "client_id", None)
+        if not client_id:
+            continue
+
+        key = (
+            client_id,
+            visit.property_id,
+            visit.plot_id,
+            (visit.culture or "").strip(),
+            (visit.variety or "").strip(),
+        )
+
+        if key not in grouped:
+            grouped[key] = visit
+
+    items = []
+
+    for key, base_visit in grouped.items():
+        client_id, property_id, plot_id, culture, variety = key
+
+        result = calculate_days_since_planting(
+            client_id=client_id,
+            property_id=property_id,
+            plot_id=plot_id,
+            culture=culture or None,
+            variety=variety or None,
+        )
+
+        if not result:
+            continue
+
+        client_name = base_visit.client.name if base_visit.client else f"Cliente {client_id}"
+        property_name = base_visit.property.name if getattr(base_visit, "property", None) else ""
+        plot_name = base_visit.plot.name if getattr(base_visit, "plot", None) else ""
+
+        items.append({
+            "client_name": client_name,
+            "property_name": property_name,
+            "plot_name": plot_name,
+            "culture": culture or "—",
+            "variety": variety or "—",
+            "planting_date": result["planting_date"],
+            "days": result["days"],
+        })
+
+    items.sort(
+        key=lambda x: (
+            -(x["days"] or 0),
+            x["client_name"] or "",
+            x["variety"] or "",
+        )
+    )
+
+    return items
+
+
+def build_consultant_days_planted_text(consultant_name: str, items: list) -> str:
+    if not items:
+        return (
+            f"🌱 Dias de plantado da carteira\n"
+            f"Consultor: {consultant_name}\n\n"
+            f"Não encontrei plantios válidos para calcular."
+        )
+
+    lines = [
+        "🌱 Dias de plantado da carteira",
+        f"Consultor: {consultant_name}",
+        "Critério: 1 linha por cliente + variedade.",
+        "",
+    ]
+
+    for idx, item in enumerate(items, start=1):
+        client_name = item["client_name"]
+        property_name = item["property_name"]
+        variety = item["variety"]
+        culture = item["culture"]
+        planting_date = item["planting_date"]
+        days = item["days"]
+
+        context = f"{client_name} - {culture} - {variety}"
+        if property_name:
+            context += f" - Faz. {property_name}"
+
+        lines.append(f"{idx}. {context}")
+        lines.append(f"   📅 Plantio: {planting_date}")
+        lines.append(f"   🌱 {days} dias de plantado")
+
+    return "\n".join(lines)
+
+
+def handle_days_planted_flow(chat_message, consultant, message_text: str):
+    """
+    Nova regra:
+    sempre retorna a carteira completa do consultor com dias de plantado.
+    """
+    if not consultant:
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text="Seu Telegram ainda não está vinculado a um consultor do AgroCRM."
+        )
+        return jsonify({
+            "ok": False,
+            "message": "consultor não vinculado para dias de plantado"
+        }), 400
+
+    items = build_consultant_days_planted_portfolio(consultant.id)
+
+    response_text = build_consultant_days_planted_text(
+        consultant_name=consultant.name,
+        items=items,
+    )
+
+    send_telegram_message(
+        chat_id=chat_message.chat_id,
+        text=response_text
+    )
+
+    return jsonify({
+        "ok": True,
+        "message": "dias de plantado da carteira enviados",
+        "items_count": len(items),
+    }), 200
+
+
 
 
 
@@ -6132,6 +6476,27 @@ def telegram_webhook():
                 "ok": True,
                 "message": "foto recebida e salva temporariamente"
             }), 200
+
+        if is_field_data_save_request(message_text):
+            return handle_field_data_save_flow(
+                chat_message=chat_message,
+                consultant=consultant,
+                message_text=message_text,
+            )
+
+        if is_field_data_query_request(message_text):
+            return handle_field_data_query_flow(
+                chat_message=chat_message,
+                consultant=consultant,
+                message_text=message_text,
+            )
+
+        if is_days_planted_request(message_text):
+            return handle_days_planted_flow(
+                chat_message=chat_message,
+                consultant=consultant,
+                message_text=message_text,
+            )
 
         # =========================================================
         # Auto-vínculo Telegram

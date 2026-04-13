@@ -108,13 +108,15 @@ def create_app(test_config=None):
     # Seeds — só roda em SQLite
     # =====================================================
     with app.app_context():
-        db.create_all()
-        if db_status["engine"] == "sqlite":
+        command_line = " ".join(os.sys.argv).lower()
+        is_db_command = "flask" in command_line and " db " in f" {command_line} "
+
+        if db_status["engine"] == "sqlite" and not is_db_command:
             try:
+                db.create_all()
                 auto_populate_database()
             except Exception as e:
                 print("⚠️ Erro ao executar seeds:", e)
-
     return app
 
 
