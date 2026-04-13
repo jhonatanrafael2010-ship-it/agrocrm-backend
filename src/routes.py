@@ -535,12 +535,19 @@ def is_field_data_save_request(text: str) -> bool:
         return False
 
     normalized = normalize_lookup_text(text)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
 
     triggers = [
         "salva dado de campo",
         "salvar dado de campo",
+        "salva dados de campo",
+        "salvar dados de campo",
+        "dado de campo do",
+        "dados de campo do",
         "anota no dado de campo",
         "anotar dado de campo",
+        "anota nos dados de campo",
+        "anotar nos dados de campo",
         "perfil comercial do cliente",
         "perfil tecnico do cliente",
         "perfil técnico do cliente",
@@ -2467,8 +2474,8 @@ def extract_field_data_payload_from_text(message_text: str):
     content = raw
 
     marker_patterns = [
-        r"salva dado de campo do\s+(.+?)\s*:\s*(.+)$",
-        r"anota no dado de campo que\s+(.+?)\s*:\s*(.+)$",
+        r"salva(?:r)?\s+dados?\s+de\s+campo(?:\s+do)?\s+(.+?)\s*:\s*(.+)$",
+        r"anota(?:r)?\s+(?:no|nos)\s+dados?\s+de\s+campo(?:\s+que)?\s+(.+?)\s*:\s*(.+)$",
         r"perfil comercial do cliente\s+(.+?)\s*:\s*(.+)$",
         r"perfil tecnico do cliente\s+(.+?)\s*:\s*(.+)$",
         r"perfil técnico do cliente\s+(.+?)\s*:\s*(.+)$",
@@ -3618,6 +3625,7 @@ def build_consultant_days_planted_portfolio(consultant_id: int):
             plot_id=plot_id,
             culture=culture or None,
             variety=variety or None,
+            planting_id=base_visit.planting_id,
         )
 
         if not result:
