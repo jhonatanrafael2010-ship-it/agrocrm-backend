@@ -123,6 +123,7 @@ from services.planting_insights_service import (
     calculate_days_since_planting,
     build_days_planted_text,
 )
+from services.agent import AgentService
 
 import io
 import subprocess
@@ -151,6 +152,8 @@ bp = Blueprint('api', __name__, url_prefix='/api')
 
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/opt/render/project/src/uploads")
 BUILD_STAMP = "routes_2026_04_08_visits_fix_01"
+
+AGENT_SERVICE = AgentService()
 
 def normalize_phone_number(phone: str) -> str:
     if not phone:
@@ -537,13 +540,11 @@ def is_field_data_save_request(text: str) -> bool:
     normalized = normalize_lookup_text(text)
     normalized = re.sub(r"\s+", " ", normalized).strip()
 
-    triggers = [
+    explicit_prefixes = [
         "salva dado de campo",
         "salvar dado de campo",
         "salva dados de campo",
         "salvar dados de campo",
-        "dado de campo do",
-        "dados de campo do",
         "anota no dado de campo",
         "anotar dado de campo",
         "anota nos dados de campo",
@@ -551,12 +552,23 @@ def is_field_data_save_request(text: str) -> bool:
         "perfil comercial do cliente",
         "perfil tecnico do cliente",
         "perfil técnico do cliente",
-        "manejo fungicida do",
-        "manejo inseticida do",
-        "manejo herbicida do",
+        "perfil do produtor",
     ]
 
-    return any(trigger in normalized for trigger in triggers)
+    explicit_patterns = [
+        r"^salva(?:r)?\s+dados?\s+de\s+campo\b",
+        r"^anota(?:r)?\s+(?:no|nos)\s+dados?\s+de\s+campo\b",
+        r"^perfil\s+comercial\s+do\s+cliente\b",
+        r"^perfil\s+tecnico\s+do\s+cliente\b",
+        r"^perfil\s+técnico\s+do\s+cliente\b",
+        r"^perfil\s+do\s+produtor\b",
+    ]
+
+    if any(normalized.startswith(p) for p in explicit_prefixes):
+        return True
+
+    return any(re.search(pattern, normalized) for pattern in explicit_patterns)
+
 
 
 def is_field_data_query_request(text: str) -> bool:
@@ -564,19 +576,21 @@ def is_field_data_query_request(text: str) -> bool:
         return False
 
     normalized = normalize_lookup_text(text)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
 
     triggers = [
-        "o que tem de dado de campo",
-        "me resume o manejo",
         "me mostra o perfil comercial",
         "me mostra o perfil tecnico",
         "me mostra o perfil técnico",
+        "me mostra o perfil do produtor",
         "o que foi anotado sobre",
-        "dados do campo do",
+        "me resume os dados de campo",
+        "me mostra os dados de campo",
+        "consultar dado de campo",
+        "consultar dados de campo",
     ]
 
     return any(trigger in normalized for trigger in triggers)
-
 
 def is_days_planted_request(text: str) -> bool:
     if not text:
@@ -2479,10 +2493,9 @@ def extract_field_data_payload_from_text(message_text: str):
         r"perfil comercial do cliente\s+(.+?)\s*:\s*(.+)$",
         r"perfil tecnico do cliente\s+(.+?)\s*:\s*(.+)$",
         r"perfil técnico do cliente\s+(.+?)\s*:\s*(.+)$",
-        r"manejo fungicida do\s+(.+?)\s*:\s*(.+)$",
-        r"manejo inseticida do\s+(.+?)\s*:\s*(.+)$",
-        r"manejo herbicida do\s+(.+?)\s*:\s*(.+)$",
+        r"perfil do produtor\s+(.+?)\s*:\s*(.+)$",
     ]
+
 
     client_name = None
 
@@ -3813,6 +3826,269 @@ def handle_priority_stateful_actions(chat_message, consultant, message_text: str
         )
 
     return None
+
+
+def build_agent_context_for_telegram(chat_message, consultant, message_text: str):
+    current_state_row = get_current_chatbot_state("telegram", chat_message.chat_id)
+    current_state = current_state_row.status if current_state_row else ""
+
+    return {
+        "platform": "telegram",
+        "chat_id": chat_message.chat_id,
+        "consultant_id": consultant.id if consultant else None,
+        "consultant_name": consultant.name if consultant else None,
+        "current_state": current_state,
+        "message_text": message_text,
+    }
+
+
+
+def handle_agent_phase2_flow(chat_message, consultant, resolved_consultant_id: int, message_text: str):
+    """
+    Camada nova do agente.
+    Ela decide a intenção e roteia para os fluxos já estáveis do routes.py.
+    Nesta fase, não remove o legado.
+    """
+    context = build_agent_context_for_telegram(
+        chat_message=chat_message,
+        consultant=consultant,
+        message_text=message_text,
+    )
+
+    agent_result = AGENT_SERVICE.process(
+        message_text=message_text,
+        context=context,
+    )
+
+    execution = agent_result.get("execution") or {}
+    action = execution.get("action")
+    entities = execution.get("entities") or {}
+
+    print("DEBUG agent_phase2 intent_result:", agent_result.get("intent_result"))
+    print("DEBUG agent_phase2 decision:", agent_result.get("decision"))
+
+    if not action or execution.get("should_fallback", True):
+        return None
+
+    if action == "ROUTE_TO_WEEK_SCHEDULE":
+        return handle_week_schedule_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            resolved_consultant_id=resolved_consultant_id,
+            message_text=message_text,
+        )
+
+    if action == "ROUTE_TO_STALE_CLIENTS":
+        return handle_stale_clients_ranking_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+
+    if action == "ROUTE_TO_DAILY_ROUTINE":
+        return handle_daily_routine_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+
+    if action == "ROUTE_TO_WEEK_ORGANIZATION":
+        return handle_week_organization_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+
+    if action == "ROUTE_TO_MONTH_VISITS":
+        return handle_month_visits_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+
+    if action == "ROUTE_TO_PDF":
+        return handle_pdf_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+
+    if action == "START_GUIDED_VISIT_FROM_FREE_TEXT":
+        return start_guided_visit_flow_from_agent(
+            chat_message=chat_message,
+            consultant=consultant,
+            resolved_consultant_id=resolved_consultant_id,
+            original_message_text=message_text,
+            entities=entities,
+        )
+
+    if action == "ROUTE_TO_FIELD_DATA_SAVE":
+        return handle_field_data_save_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+
+    if action == "ROUTE_TO_FIELD_DATA_QUERY":
+        return handle_field_data_query_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+        )
+
+
+    return None
+
+
+
+def start_guided_visit_flow_from_agent(
+    chat_message,
+    consultant,
+    resolved_consultant_id: int,
+    original_message_text: str,
+    entities: dict,
+):
+    """
+    Usa a interpretação do agente para pré-preencher o fluxo guiado.
+    Não salva direto.
+    Continua respeitando confirmação, pendências e segurança do bot atual.
+    """
+    client_name = (entities.get("client_name") or "").strip()
+    property_name = (entities.get("property_name") or "").strip()
+    plot_name = (entities.get("plot_name") or "").strip()
+    culture = (entities.get("culture") or "").strip()
+    fenologia_real = (entities.get("fenologia_real") or "").strip()
+    recommendation = (entities.get("recommendation") or "").strip()
+    date_value = entities.get("date")
+    products = normalize_products_from_parsed(entities.get("products") or [])
+
+    if not client_name:
+        return None
+
+    matched_client, client_candidates, needs_client_confirmation = find_client_by_name(client_name)
+    if not matched_client:
+        return None
+
+    if needs_client_confirmation and client_candidates:
+        state = ChatbotConversationState.query.filter_by(
+            platform="telegram",
+            chat_id=chat_message.chat_id,
+        ).first()
+
+        if not state:
+            state = ChatbotConversationState(
+                platform="telegram",
+                chat_id=chat_message.chat_id,
+            )
+            db.session.add(state)
+
+        state.pending_visit_suggestions_json = json.dumps(
+            [{"id": c.id, "name": c.name} for c in client_candidates[:3]],
+            ensure_ascii=False,
+        )
+        state.visit_preview_json = json.dumps({
+            "original_message": original_message_text,
+            "agent_entities": entities,
+        }, ensure_ascii=False)
+        state.status = "awaiting_client_confirmation"
+        state.confirmation_text = build_name_confirmation_text("cliente", client_candidates[:3])
+        db.session.commit()
+
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text=state.confirmation_text,
+        )
+        return jsonify({
+            "ok": True,
+            "message": "aguardando confirmação de cliente pelo agente",
+        }), 200
+
+    matched_property = None
+    if property_name:
+        matched_property, _, _ = find_property_by_name(property_name, client_id=matched_client.id)
+
+    pending_visits, same_culture_found = find_pending_visits(
+        client_id=matched_client.id,
+        property_id=matched_property.id if matched_property else None,
+        culture=culture or None,
+        limit=5,
+    )
+
+    state = ChatbotConversationState.query.filter_by(
+        platform="telegram",
+        chat_id=chat_message.chat_id,
+    ).first()
+    if not state:
+        state = ChatbotConversationState(
+            platform="telegram",
+            chat_id=chat_message.chat_id,
+        )
+        db.session.add(state)
+
+    visit_preview = {
+        "client_id": matched_client.id,
+        "property_id": matched_property.id if matched_property else None,
+        "plot_id": None,
+        "consultant_id": resolved_consultant_id,
+        "culture": culture or "",
+        "variety": "",
+        "fenologia_real": fenologia_real or None,
+        "date": parse_date_flexible(date_value) if date_value else None,
+        "recommendation": recommendation,
+        "products": products,
+        "latitude": None,
+        "longitude": None,
+        "source": "chatbot",
+    }
+
+    if not pending_visits:
+        return start_new_visit_direct_confirmation(
+            state=state,
+            chat_message=chat_message,
+            visit_preview=visit_preview,
+            matched_client=matched_client,
+            matched_property=matched_property,
+        )
+
+    suggestions = []
+    for visit in pending_visits:
+        suggestions.append({
+            "id": visit.id,
+            "client_id": visit.client_id,
+            "property_id": visit.property_id,
+            "plot_id": visit.plot_id,
+            "culture": visit.culture,
+            "variety": visit.variety,
+            "date": visit.date.isoformat() if visit.date else None,
+            "recommendation": visit.recommendation or "",
+            "fenologia_real": visit.fenologia_real,
+            "property_name": visit.property.name if getattr(visit, "property", None) else None,
+            "plot_name": visit.plot.name if getattr(visit, "plot", None) else None,
+        })
+
+    confirmation_text = build_pending_visits_confirmation_text(
+        client_name=matched_client.name,
+        requested_culture=culture or "",
+        suggestions=suggestions,
+        same_culture_found=same_culture_found,
+    )
+
+    state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
+    state.visit_preview_json = json.dumps(visit_preview, ensure_ascii=False)
+    state.confirmation_text = confirmation_text
+    state.status = "awaiting_confirmation"
+    db.session.commit()
+
+    send_telegram_message(
+        chat_id=chat_message.chat_id,
+        text=confirmation_text,
+    )
+
+    return jsonify({
+        "ok": True,
+        "message": "agente iniciou fluxo guiado com pendências encontradas",
+    }), 200
+
 
 
 # ============================================================
@@ -6489,26 +6765,7 @@ def telegram_webhook():
                 "message": "foto recebida e salva temporariamente"
             }), 200
 
-        if is_field_data_save_request(message_text):
-            return handle_field_data_save_flow(
-                chat_message=chat_message,
-                consultant=consultant,
-                message_text=message_text,
-            )
-
-        if is_field_data_query_request(message_text):
-            return handle_field_data_query_flow(
-                chat_message=chat_message,
-                consultant=consultant,
-                message_text=message_text,
-            )
-
-        if is_days_planted_request(message_text):
-            return handle_days_planted_flow(
-                chat_message=chat_message,
-                consultant=consultant,
-                message_text=message_text,
-            )
+        
 
         # =========================================================
         # Auto-vínculo Telegram
@@ -6617,6 +6874,35 @@ def telegram_webhook():
         if priority_state_response:
             return priority_state_response
 
+        agent_phase2_response = handle_agent_phase2_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            resolved_consultant_id=resolved_consultant_id,
+            message_text=message_text,
+        )
+        if agent_phase2_response:
+            return agent_phase2_response
+        
+        if is_field_data_save_request(message_text):
+            return handle_field_data_save_flow(
+                chat_message=chat_message,
+                consultant=consultant,
+                message_text=message_text,
+            )
+
+        if is_field_data_query_request(message_text):
+            return handle_field_data_query_flow(
+                chat_message=chat_message,
+                consultant=consultant,
+                message_text=message_text,
+            )
+
+        if is_days_planted_request(message_text):
+            return handle_days_planted_flow(
+                chat_message=chat_message,
+                consultant=consultant,
+                message_text=message_text,
+            )
 
         week_schedule_response = handle_week_schedule_flow(
             chat_message=chat_message,
