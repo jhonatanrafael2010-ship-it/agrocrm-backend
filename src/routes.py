@@ -123,7 +123,7 @@ from services.planting_insights_service import (
     calculate_days_since_planting,
     build_days_planted_text,
 )
-from services.agent import AgentService
+from services.agent.agent_service import AgentService
 
 import io
 import subprocess
