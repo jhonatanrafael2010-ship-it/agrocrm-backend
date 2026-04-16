@@ -9348,9 +9348,62 @@ def update_visit(visit_id: int):
             if not consultant:
                 return jsonify(message='consultant not found'), 404
 
+            # ==================================================
+            # 🔧 REPARA planting_id antes de propagar consultor
+            # ==================================================
+            if not getattr(v, "planting_id", None):
+                candidate_planting = None
+
+                # 1) prioridade: pelo talhão da própria visita
+                if getattr(v, "plot_id", None):
+                    candidate_planting = (
+                        Planting.query
+                        .filter_by(plot_id=v.plot_id)
+                        .order_by(Planting.planting_date.desc().nullslast(), Planting.id.desc())
+                        .first()
+                    )
+
+                # 2) fallback: pela própria visita como contexto
+                if not candidate_planting:
+                    q = Planting.query
+
+                    if getattr(v, "culture", None):
+                        q = q.filter(Planting.culture == v.culture)
+
+                    if getattr(v, "variety", None):
+                        q = q.filter(Planting.variety == v.variety)
+
+                    candidate_planting = (
+                        q.order_by(Planting.planting_date.desc().nullslast(), Planting.id.desc())
+                        .first()
+                    )
+
+                if candidate_planting:
+                    v.planting_id = candidate_planting.id
+
+                    if not getattr(v, "plot_id", None):
+                        v.plot_id = candidate_planting.plot_id
+
+                    if candidate_planting.plot_id and not getattr(v, "property_id", None):
+                        plot_obj = Plot.query.get(candidate_planting.plot_id)
+                        if plot_obj:
+                            v.property_id = getattr(plot_obj, "property_id", None)
+
+                    if not getattr(v, "culture", None):
+                        v.culture = candidate_planting.culture
+
+                    if not getattr(v, "variety", None):
+                        v.variety = candidate_planting.variety
+
             v.consultant_id = cid
 
+            print("DEBUG update_visit visit_id:", v.id)
+            print("DEBUG update_visit consultant recebido:", cid)
+            print("DEBUG update_visit planting_id final:", v.planting_id)
+
+            # ==================================================
             # 🔄 propaga para visitas planejadas do mesmo ciclo
+            # ==================================================
             if v.planting_id:
                 sibling_visits = (
                     Visit.query
@@ -9359,6 +9412,8 @@ def update_visit(visit_id: int):
                     .filter(Visit.status != "done")
                     .all()
                 )
+
+                print("DEBUG sibling_visits ids:", [sib.id for sib in sibling_visits])
 
                 for sib in sibling_visits:
                     sib.consultant_id = cid
