@@ -9350,6 +9350,20 @@ def update_visit(visit_id: int):
 
             v.consultant_id = cid
 
+            # 🔄 propaga para visitas planejadas do mesmo ciclo
+            if v.planting_id:
+                sibling_visits = (
+                    Visit.query
+                    .filter(Visit.planting_id == v.planting_id)
+                    .filter(Visit.id != v.id)
+                    .filter(Visit.status != "done")
+                    .all()
+                )
+
+                for sib in sibling_visits:
+                    sib.consultant_id = cid
+                    db.session.add(sib)
+
     # Só altera culture se vier explicitamente
     if 'culture' in data:
         culture = (data.get('culture') or "").strip()
