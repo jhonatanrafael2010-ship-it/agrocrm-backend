@@ -2911,6 +2911,10 @@ def build_final_visit_payload(
 
     payload = {
         "linked_pending_visit_id": linked_pending_visit_id,
+        "planting_id": (
+            base_preview.get("planting_id")
+            or selected_pending_visit.get("planting_id")
+        ),
         "client_id": client_id,
         "property_id": property_id,
         "plot_id": plot_id,
@@ -3001,7 +3005,8 @@ def apply_payload_to_existing_visit(visit, final_visit_payload: dict, close_only
     if final_visit_payload.get("longitude") is not None:
         visit.longitude = final_visit_payload.get("longitude")
 
-    visit.source = final_visit_payload.get("source") or "chatbot"
+    if final_visit_payload.get("planting_id"):
+        visit.planting_id = final_visit_payload.get("planting_id")
 
 
     # reforça planting_id quando a visita tiver talhão mas ainda estiver sem planting_id
@@ -3041,8 +3046,11 @@ def create_visit_from_payload(final_visit_payload: dict):
         except Exception:
             parsed_date = parse_human_date(date_value)
 
+    planting_id = final_visit_payload.get("planting_id")
+
     visit = Visit(
         client_id=client_id,
+        planting_id=planting_id,
         property_id=final_visit_payload.get("property_id"),
         plot_id=final_visit_payload.get("plot_id"),
         consultant_id=final_visit_payload.get("consultant_id"),
@@ -3057,7 +3065,18 @@ def create_visit_from_payload(final_visit_payload: dict):
         source=final_visit_payload.get("source") or "chatbot",
     )
 
-    if visit.plot_id:
+    if visit.planting_id:
+        planting = Planting.query.get(visit.planting_id)
+        if planting:
+            visit.plot_id = visit.plot_id or planting.plot_id
+            if visit.plot_id and not visit.property_id:
+                plot_obj = Plot.query.get(visit.plot_id)
+                if plot_obj:
+                    visit.property_id = getattr(plot_obj, "property_id", None)
+            visit.culture = visit.culture or planting.culture
+            visit.variety = visit.variety or planting.variety
+
+    elif visit.plot_id:
         planting = (
             Planting.query
             .filter_by(plot_id=visit.plot_id)
@@ -3136,6 +3155,220 @@ def build_same_cycle_visit_query(base_visit):
         q = q.filter(Visit.variety == base_variety)
 
     return q
+
+
+def find_candidate_cycles_for_agent(
+    client_id: int,
+    property_id: int | None = None,
+    plot_id: int | None = None,
+    culture: str | None = None,
+    variety: str | None = None,
+    limit: int = 5,
+):
+    """
+    Busca ciclos candidatos para o agente.
+    Prioridade:
+    1) Planting por plot/property/client
+    2) fallback em Visits com planting_id
+    """
+    candidates = []
+
+    normalized_culture = (culture or "").strip().lower()
+    normalized_variety = (variety or "").strip().lower()
+
+    plantings = (
+        Planting.query
+        .order_by(Planting.planting_date.desc().nullslast(), Planting.id.desc())
+        .all()
+    )
+
+    for planting in plantings:
+        plot_obj = Plot.query.get(planting.plot_id) if getattr(planting, "plot_id", None) else None
+        if not plot_obj:
+            continue
+
+        property_obj = Property.query.get(getattr(plot_obj, "property_id", None)) if getattr(plot_obj, "property_id", None) else None
+        if not property_obj:
+            continue
+
+        if property_obj.client_id != client_id:
+            continue
+
+        score = 0
+
+        if plot_id and plot_obj.id == plot_id:
+            score += 100
+        elif plot_id and plot_obj.id != plot_id:
+            score -= 50
+
+        if property_id and property_obj.id == property_id:
+            score += 50
+        elif property_id and property_obj.id != property_id:
+            score -= 20
+
+        planting_culture = (getattr(planting, "culture", None) or "").strip()
+        planting_variety = (getattr(planting, "variety", None) or "").strip()
+
+        if normalized_culture and planting_culture.lower() == normalized_culture:
+            score += 20
+        elif normalized_culture and planting_culture:
+            score -= 10
+
+        if normalized_variety and planting_variety.lower() == normalized_variety:
+            score += 15
+        elif normalized_variety and planting_variety:
+            score -= 5
+
+        candidates.append({
+            "source": "planting",
+            "score": score,
+            "planting_id": planting.id,
+            "property_id": property_obj.id,
+            "plot_id": plot_obj.id,
+            "property_name": property_obj.name,
+            "plot_name": plot_obj.name,
+            "culture": planting_culture,
+            "variety": planting_variety,
+            "planting_date": planting.planting_date.isoformat() if getattr(planting, "planting_date", None) else None,
+        })
+
+    if not candidates:
+        visit_cycles = (
+            Visit.query
+            .filter(Visit.client_id == client_id)
+            .filter(Visit.planting_id.isnot(None))
+            .order_by(Visit.date.desc().nullslast(), Visit.id.desc())
+            .all()
+        )
+
+        seen_planting_ids = set()
+
+        for visit in visit_cycles:
+            planting_id = getattr(visit, "planting_id", None)
+            if not planting_id or planting_id in seen_planting_ids:
+                continue
+            seen_planting_ids.add(planting_id)
+
+            score = 0
+
+            if plot_id and visit.plot_id == plot_id:
+                score += 100
+            elif plot_id and visit.plot_id != plot_id:
+                score -= 50
+
+            if property_id and visit.property_id == property_id:
+                score += 50
+            elif property_id and visit.property_id != property_id:
+                score -= 20
+
+            visit_culture = (visit.culture or "").strip()
+            visit_variety = (visit.variety or "").strip()
+
+            if normalized_culture and visit_culture.lower() == normalized_culture:
+                score += 20
+            elif normalized_culture and visit_culture:
+                score -= 10
+
+            if normalized_variety and visit_variety.lower() == normalized_variety:
+                score += 15
+            elif normalized_variety and visit_variety:
+                score -= 5
+
+            candidates.append({
+                "source": "visit",
+                "score": score,
+                "planting_id": planting_id,
+                "property_id": visit.property_id,
+                "plot_id": visit.plot_id,
+                "property_name": visit.property.name if getattr(visit, "property", None) else None,
+                "plot_name": visit.plot.name if getattr(visit, "plot", None) else None,
+                "culture": visit_culture,
+                "variety": visit_variety,
+                "planting_date": None,
+            })
+
+    candidates.sort(
+        key=lambda item: (
+            -(item.get("score") or 0),
+            item.get("planting_date") or "",
+            item.get("property_name") or "",
+            item.get("plot_name") or "",
+        )
+    )
+
+    deduped = []
+    seen_keys = set()
+
+    for item in candidates:
+        key = (
+            item.get("planting_id"),
+            item.get("property_id"),
+            item.get("plot_id"),
+            item.get("culture"),
+            item.get("variety"),
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(item)
+
+    return deduped[:limit]
+
+
+def find_active_cycle_for_agent(
+    client_id: int,
+    property_id: int | None = None,
+    plot_id: int | None = None,
+    culture: str | None = None,
+    variety: str | None = None,
+):
+    candidates = find_candidate_cycles_for_agent(
+        client_id=client_id,
+        property_id=property_id,
+        plot_id=plot_id,
+        culture=culture,
+        variety=variety,
+        limit=3,
+    )
+
+    if not candidates:
+        return None, []
+
+    top = candidates[0]
+
+    if len(candidates) == 1:
+        return top, candidates
+
+    second = candidates[1]
+    score_diff = (top.get("score") or 0) - (second.get("score") or 0)
+
+    if (top.get("score") or 0) >= 100 and score_diff >= 30:
+        return top, candidates
+
+    return None, candidates
+
+
+def build_cycle_disambiguation_text(client_name: str, candidates: list) -> str:
+    if not candidates:
+        return (
+            f"Não consegui definir o ciclo correto para {client_name}.\n"
+            f"Tente informar fazenda e talhão."
+        )
+
+    lines = [
+        f"Encontrei mais de um ciclo possível para {client_name}.",
+        "Responda com o número correto:",
+        "",
+    ]
+
+    for idx, item in enumerate(candidates[:3], start=1):
+        property_name = item.get("property_name") or "Sem fazenda"
+        plot_name = item.get("plot_name") or "Sem talhão"
+        culture = item.get("culture") or "—"
+        variety = item.get("variety") or "—"
+        lines.append(f"{idx}. Faz. {property_name} | Talhão {plot_name} | {culture} | {variety}")
+
+    return "\n".join(lines)
 
 
 def auto_close_previous_cycle_visits(current_visit):
@@ -3248,7 +3481,85 @@ def start_new_visit_direct_confirmation(
     }), 200
 
 
+def handle_cycle_confirmation_flow(chat_message, message_text: str):
+    state = ChatbotConversationState.query.filter_by(
+        platform="telegram",
+        chat_id=chat_message.chat_id,
+        status="awaiting_cycle_confirmation"
+    ).first()
 
+    if not state:
+        return None
+
+    choice = (message_text or "").strip()
+
+    if not choice.isdigit():
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text="Responda com o número do ciclo correto."
+        )
+        return jsonify({
+            "ok": True,
+            "message": "aguardando escolha de ciclo"
+        }), 200
+
+    idx = int(choice) - 1
+
+    try:
+        stored = json.loads(state.visit_preview_json or "{}")
+    except Exception:
+        stored = {}
+
+    candidates = stored.get("cycle_candidates") or []
+    visit_preview = stored.get("visit_preview") or {}
+
+    if idx < 0 or idx >= len(candidates):
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text="Número inválido. Escolha uma das opções listadas."
+        )
+        return jsonify({
+            "ok": True,
+            "message": "índice de ciclo inválido"
+        }), 200
+
+    selected_cycle = candidates[idx]
+
+    visit_preview["planting_id"] = selected_cycle.get("planting_id")
+    visit_preview["property_id"] = selected_cycle.get("property_id") or visit_preview.get("property_id")
+    visit_preview["plot_id"] = selected_cycle.get("plot_id") or visit_preview.get("plot_id")
+    visit_preview["culture"] = visit_preview.get("culture") or selected_cycle.get("culture") or ""
+    visit_preview["variety"] = visit_preview.get("variety") or selected_cycle.get("variety") or ""
+
+    summary_text = build_visit_summary_text(
+        action="create_new_visit",
+        final_visit_payload=visit_preview,
+        selected_pending_visit=None,
+        close_only=False,
+    )
+
+    state.visit_preview_json = json.dumps(
+        build_guided_state_payload(
+            action="create_new_visit",
+            final_visit_payload=visit_preview,
+            selected_pending_visit=None,
+            close_only=False,
+        ),
+        ensure_ascii=False
+    )
+    state.confirmation_text = summary_text
+    state.status = "awaiting_final_confirmation"
+    db.session.commit()
+
+    send_telegram_message(
+        chat_id=chat_message.chat_id,
+        text=summary_text
+    )
+
+    return jsonify({
+        "ok": True,
+        "message": "ciclo escolhido e resumo final enviado"
+    }), 200
 
 
 def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
@@ -3809,6 +4120,13 @@ def handle_priority_stateful_actions(chat_message, consultant, message_text: str
             message_text=message_text,
         )
 
+    # confirmação de ciclo
+    if active_state.status == "awaiting_cycle_confirmation":
+        return handle_cycle_confirmation_flow(
+            chat_message=chat_message,
+            message_text=message_text,
+        )
+
     # depois confirmação final
     if active_state.status == "awaiting_final_confirmation":
         return handle_final_confirmation(
@@ -3950,8 +4268,13 @@ def start_guided_visit_flow_from_agent(
 ):
     """
     Usa a interpretação do agente para pré-preencher o fluxo guiado.
-    Não salva direto.
-    Continua respeitando confirmação, pendências e segurança do bot atual.
+    Prioridade nova:
+    1) resolver cliente
+    2) resolver propriedade
+    3) resolver talhão
+    4) resolver ciclo ativo
+    5) criar nova visita já no ciclo
+    6) só cair em pendência como fallback secundário
     """
     client_name = (entities.get("client_name") or "").strip()
     property_name = (entities.get("property_name") or "").strip()
@@ -4007,12 +4330,12 @@ def start_guided_visit_flow_from_agent(
     if property_name:
         matched_property, _, _ = find_property_by_name(property_name, client_id=matched_client.id)
 
-    pending_visits, same_culture_found = find_pending_visits(
-        client_id=matched_client.id,
-        property_id=matched_property.id if matched_property else None,
-        culture=culture or None,
-        limit=5,
-    )
+    matched_plot = None
+    if plot_name and matched_property:
+        matched_plot = find_best_plot_by_name(
+            plot_name,
+            property_id=matched_property.id,
+        )
 
     state = ChatbotConversationState.query.filter_by(
         platform="telegram",
@@ -4026,9 +4349,10 @@ def start_guided_visit_flow_from_agent(
         db.session.add(state)
 
     visit_preview = {
+        "planting_id": None,
         "client_id": matched_client.id,
         "property_id": matched_property.id if matched_property else None,
-        "plot_id": None,
+        "plot_id": matched_plot.id if matched_plot else None,
         "consultant_id": resolved_consultant_id,
         "culture": culture or "",
         "variety": "",
@@ -4040,6 +4364,61 @@ def start_guided_visit_flow_from_agent(
         "longitude": None,
         "source": "chatbot",
     }
+
+    active_cycle, cycle_candidates = find_active_cycle_for_agent(
+        client_id=matched_client.id,
+        property_id=matched_property.id if matched_property else None,
+        plot_id=matched_plot.id if matched_plot else None,
+        culture=culture or None,
+        variety=None,
+    )
+
+    if active_cycle:
+        visit_preview["planting_id"] = active_cycle.get("planting_id")
+        visit_preview["property_id"] = active_cycle.get("property_id") or visit_preview.get("property_id")
+        visit_preview["plot_id"] = active_cycle.get("plot_id") or visit_preview.get("plot_id")
+        visit_preview["culture"] = visit_preview.get("culture") or active_cycle.get("culture") or ""
+        visit_preview["variety"] = visit_preview.get("variety") or active_cycle.get("variety") or ""
+
+        return start_new_visit_direct_confirmation(
+            state=state,
+            chat_message=chat_message,
+            visit_preview=visit_preview,
+            matched_client=matched_client,
+            matched_property=matched_property,
+        )
+
+    if cycle_candidates and len(cycle_candidates) > 1:
+        confirmation_text = build_cycle_disambiguation_text(
+            client_name=matched_client.name,
+            candidates=cycle_candidates[:3],
+        )
+
+        state.pending_visit_suggestions_json = json.dumps([], ensure_ascii=False)
+        state.visit_preview_json = json.dumps({
+            "visit_preview": visit_preview,
+            "cycle_candidates": cycle_candidates[:3],
+        }, ensure_ascii=False)
+        state.confirmation_text = confirmation_text
+        state.status = "awaiting_cycle_confirmation"
+        db.session.commit()
+
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text=confirmation_text,
+        )
+        return jsonify({
+            "ok": True,
+            "message": "aguardando confirmação de ciclo",
+        }), 200
+
+    # fallback secundário: pendências antigas
+    pending_visits, same_culture_found = find_pending_visits(
+        client_id=matched_client.id,
+        property_id=matched_property.id if matched_property else None,
+        culture=culture or None,
+        limit=5,
+    )
 
     if not pending_visits:
         return start_new_visit_direct_confirmation(
@@ -4054,6 +4433,7 @@ def start_guided_visit_flow_from_agent(
     for visit in pending_visits:
         suggestions.append({
             "id": visit.id,
+            "planting_id": visit.planting_id,
             "client_id": visit.client_id,
             "property_id": visit.property_id,
             "plot_id": visit.plot_id,
@@ -8869,7 +9249,14 @@ def create_visits_bulk():
         if not Client.query.get(client_id): continue
         if not Property.query.get(property_id): continue
         if not Plot.query.get(plot_id): continue
-        if consultant_id and int(consultant_id) not in CONSULTANT_IDS: continue
+        if consultant_id:
+            try:
+                consultant_id = int(consultant_id)
+            except (TypeError, ValueError):
+                continue
+
+            if not Consultant.query.get(consultant_id):
+                continue
 
         try:
             from datetime import date as _d
@@ -8952,9 +9339,16 @@ def update_visit(visit_id: int):
         if cid in (None, "", 0):
             v.consultant_id = None
         else:
-            if int(cid) not in CONSULTANT_IDS:
+            try:
+                cid = int(cid)
+            except (TypeError, ValueError):
+                return jsonify(message='invalid consultant_id'), 400
+
+            consultant = Consultant.query.get(cid)
+            if not consultant:
                 return jsonify(message='consultant not found'), 404
-            v.consultant_id = int(cid)
+
+            v.consultant_id = cid
 
     # Só altera culture se vier explicitamente
     if 'culture' in data:
