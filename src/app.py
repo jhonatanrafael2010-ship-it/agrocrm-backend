@@ -5,6 +5,8 @@ from flask_migrate import Migrate
 from sqlalchemy import text, create_engine
 from models import db, Client, Consultant
 from routes import bp as api_bp
+from services.agent.metrics_routes import agent_metrics_bp
+
 
 BASE_DIR = os.path.dirname(__file__)
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR") or os.path.join(BASE_DIR, "uploads")
@@ -77,6 +79,7 @@ def create_app(test_config=None):
     # Rotas
     # =====================================================
     app.register_blueprint(api_bp)
+    app.register_blueprint(agent_metrics_bp)
 
     @app.route("/uploads/<path:filename>")
     def serve_uploads(filename):

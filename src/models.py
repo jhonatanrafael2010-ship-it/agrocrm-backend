@@ -521,3 +521,57 @@ class FieldData(db.Model):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+# ============================================================
+# Agent Decision Log
+# Registra cada decisao do agente para medir qualidade do bot.
+# ============================================================
+class AgentDecisionLog(db.Model):
+    __tablename__ = "agent_decision_log"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    platform = db.Column(db.String(20), nullable=True, index=True)
+    chat_id = db.Column(db.String(64), nullable=True, index=True)
+    consultant_id = db.Column(db.Integer, nullable=True, index=True)
+
+    raw_message = db.Column(db.Text, nullable=True)
+    current_state = db.Column(db.String(80), nullable=True)
+
+    intent = db.Column(db.String(80), nullable=True, index=True)
+    intent_confidence = db.Column(db.String(20), nullable=True)
+    intent_matched_by = db.Column(db.String(40), nullable=True)
+    entities_json = db.Column(db.Text, nullable=True)
+
+    decision_action = db.Column(db.String(80), nullable=True, index=True)
+    decision_reason = db.Column(db.String(300), nullable=True)
+
+    executed = db.Column(db.Boolean, nullable=False, server_default="0")
+    extra_json = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(
+        db.DateTime,
+        server_default=db.func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "platform": self.platform,
+            "chat_id": self.chat_id,
+            "consultant_id": self.consultant_id,
+            "raw_message": self.raw_message,
+            "current_state": self.current_state,
+            "intent": self.intent,
+            "intent_confidence": self.intent_confidence,
+            "intent_matched_by": self.intent_matched_by,
+            "entities_json": self.entities_json,
+            "decision_action": self.decision_action,
+            "decision_reason": self.decision_reason,
+            "executed": bool(self.executed) if self.executed is not None else False,
+            "extra_json": self.extra_json,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

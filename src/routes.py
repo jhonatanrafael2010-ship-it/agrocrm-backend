@@ -124,6 +124,7 @@ from services.planting_insights_service import (
     build_days_planted_text,
 )
 from services.agent.agent_service import AgentService
+from services.agent.decision_logger import log_from_agent_result
 
 import io
 import subprocess
@@ -4408,6 +4409,26 @@ def handle_agent_phase2_flow(chat_message, consultant, resolved_consultant_id: i
 
     print("DEBUG agent_phase2 intent_result:", agent_result.get("intent_result"))
     print("DEBUG agent_phase2 decision:", agent_result.get("decision"))
+
+
+    # ============================================================
+    # LOG DE OBSERVABILIDADE
+    # Registra a decisao do agente ANTES de executar.
+    # Se esta chamada falhar, o logger silencia sozinho.
+    # ============================================================
+    try:
+        will_execute = bool(action and not execution.get("should_fallback", True))
+        log_from_agent_result(
+            agent_result=agent_result,
+            platform="telegram",
+            chat_id=getattr(chat_message, "chat_id", None),
+            consultant_id=consultant.id if consultant else None,
+            raw_message=message_text,
+            current_state=(context or {}).get("current_state"),
+            executed=will_execute,
+        )
+    except Exception as e:
+        print(f"[routes] warning - log_from_agent_result falhou: {e}")
 
     if not action or execution.get("should_fallback", True):
         return None
