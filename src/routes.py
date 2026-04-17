@@ -861,7 +861,21 @@ def build_guided_state_payload(action: str, final_visit_payload: dict, selected_
         "close_only": close_only,
     }
 
+def resolve_telegram_consultant(chat_message):
+    if not chat_message:
+        return None
 
+    binding = TelegramContactBinding.query.filter_by(
+        telegram_chat_id=str(chat_message.chat_id),
+        is_active=True
+    ).first()
+
+    if binding and binding.consultant:
+        return binding.consultant
+
+    return None
+
+    
 # ================================================================
 # GUARDA DE SEGURANCA: evita salvar dado no consultor errado
 # Chame esta funcao ANTES de qualquer operacao que cria ou
