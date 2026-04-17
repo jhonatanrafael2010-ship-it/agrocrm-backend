@@ -861,19 +861,29 @@ def build_guided_state_payload(action: str, final_visit_payload: dict, selected_
     }
 
 
-def resolve_telegram_consultant(chat_message):
-    if not chat_message:
-        return None
+# ================================================================
+# GUARDA DE SEGURANCA: evita salvar dado no consultor errado
+# Chame esta funcao ANTES de qualquer operacao que cria ou
+# modifica dado sensivel vindo do Telegram.
+# Retorna:
+#   - True se pode seguir (consultor vinculado)
+#   - False se deve PARAR (ja envia mensagem de aviso sozinho)
+# ================================================================
+def require_linked_consultant_or_warn(chat_message, consultant, reason: str = "salvar"):
+    if consultant and getattr(consultant, "id", None):
+        return True
 
-    binding = TelegramContactBinding.query.filter_by(
-        telegram_chat_id=str(chat_message.chat_id),
-        is_active=True
-    ).first()
-
-    if binding and binding.consultant:
-        return binding.consultant
-
-    return None
+    send_telegram_message(
+        chat_id=chat_message.chat_id,
+        text=(
+            f"⚠️ Nao posso {reason} porque seu Telegram ainda nao "
+            f"esta vinculado a um consultor do AgroCRM.\n\n"
+            f"Use /start para iniciar e depois /vincular SEU_CODIGO "
+            f"para vincular seu acesso.\n\n"
+            f"Depois disso posso continuar de onde paramos."
+        )
+    )
+    return False
 
 
 def find_telegram_binding(chat_message):
@@ -2931,6 +2941,8 @@ def build_final_visit_payload(
         "source": "chatbot",
         "update_only_products": bool(base_preview.get("update_only_products")),
         "close_only": bool(close_only),
+        "visit_kind": base_preview.get("visit_kind"),
+        "require_cycle_link": bool(base_preview.get("require_cycle_link")),
     }
 
     return payload
@@ -3032,6 +3044,10 @@ def apply_payload_to_existing_visit(visit, final_visit_payload: dict, close_only
 def create_visit_from_payload(final_visit_payload: dict):
     """
     Cria nova visita a partir do payload final.
+
+    Blindagem:
+    - se for visita de ciclo, precisa sair com planting_id
+    - visita de Plantio e visita avulsa continuam permitidas sem planting_id
     """
     client_id = final_visit_payload.get("client_id")
     if not client_id:
@@ -3047,6 +3063,13 @@ def create_visit_from_payload(final_visit_payload: dict):
             parsed_date = parse_human_date(date_value)
 
     planting_id = final_visit_payload.get("planting_id")
+
+    # 🔒 tenta resolver plantio de forma segura antes de criar
+    strict_planting = None
+    if not planting_id and should_require_cycle_link(final_visit_payload):
+        strict_planting = resolve_strict_planting_for_payload(final_visit_payload)
+        if strict_planting:
+            planting_id = strict_planting.id
 
     visit = Visit(
         client_id=client_id,
@@ -3069,14 +3092,28 @@ def create_visit_from_payload(final_visit_payload: dict):
         planting = Planting.query.get(visit.planting_id)
         if planting:
             visit.plot_id = visit.plot_id or planting.plot_id
+
             if visit.plot_id and not visit.property_id:
                 plot_obj = Plot.query.get(visit.plot_id)
                 if plot_obj:
                     visit.property_id = getattr(plot_obj, "property_id", None)
+
             visit.culture = visit.culture or planting.culture
             visit.variety = visit.variety or planting.variety
 
-    elif visit.plot_id:
+    elif strict_planting:
+        visit.planting_id = strict_planting.id
+        visit.plot_id = visit.plot_id or strict_planting.plot_id
+
+        if visit.plot_id and not visit.property_id:
+            plot_obj = Plot.query.get(visit.plot_id)
+            if plot_obj:
+                visit.property_id = getattr(plot_obj, "property_id", None)
+
+        visit.culture = visit.culture or strict_planting.culture
+        visit.variety = visit.variety or strict_planting.variety
+
+    elif visit.plot_id and not should_require_cycle_link(final_visit_payload):
         planting = (
             Planting.query
             .filter_by(plot_id=visit.plot_id)
@@ -3087,6 +3124,12 @@ def create_visit_from_payload(final_visit_payload: dict):
             visit.planting_id = planting.id
             visit.culture = visit.culture or planting.culture
             visit.variety = visit.variety or planting.variety
+
+    # 🔒 trava final
+    if should_require_cycle_link(final_visit_payload) and not visit.planting_id:
+        raise ValueError(
+            "Visita de ciclo bloqueada: não foi possível resolver planting_id com segurança."
+        )
 
     db.session.add(visit)
     db.session.commit()
@@ -3369,6 +3412,135 @@ def build_cycle_disambiguation_text(client_name: str, candidates: list) -> str:
         lines.append(f"{idx}. Faz. {property_name} | Talhão {plot_name} | {culture} | {variety}")
 
     return "\n".join(lines)
+
+
+def is_explicit_planting_visit_payload(payload: dict) -> bool:
+    fenologia = (payload.get("fenologia_real") or "").strip().lower()
+    recommendation = (payload.get("recommendation") or "").strip().lower()
+
+    if fenologia == "plantio":
+        return True
+
+    if recommendation.startswith("plantio"):
+        return True
+
+    if " plantio" in recommendation:
+        return True
+
+    return False
+
+
+def should_require_cycle_link(payload: dict) -> bool:
+    """
+    Decide se a visita PRECISA ter planting_id antes de salvar.
+
+    Regra:
+    - visita de Plantio: NÃO exige planting_id
+    - visita avulsa explícita: NÃO exige planting_id
+    - visita de ciclo (fenologia/cultura/contexto técnico): EXIGE planting_id
+    """
+    if not payload:
+        return False
+
+    if is_explicit_planting_visit_payload(payload):
+        return False
+
+    if payload.get("visit_kind") == "avulsa":
+        return False
+
+    has_cycle_signals = any([
+        bool(payload.get("culture")),
+        bool(payload.get("fenologia_real")),
+        bool(payload.get("plot_id")),
+        bool(payload.get("property_id")),
+    ])
+
+    return has_cycle_signals
+
+
+def resolve_strict_planting_for_payload(payload: dict):
+    """
+    Resolve o Planting de forma mais segura do que o fallback antigo.
+
+    Prioridade:
+    1. planting_id já informado
+    2. busca por plot_id + cultura/variedade + data da visita
+    3. fallback por property_id + cultura/variedade + data
+    4. nunca escolhe plantio ambíguo sem critério forte
+    """
+    if not payload:
+        return None
+
+    planting_id = payload.get("planting_id")
+    if planting_id:
+        planting = Planting.query.get(planting_id)
+        if planting:
+            return planting
+
+    client_id = payload.get("client_id")
+    property_id = payload.get("property_id")
+    plot_id = payload.get("plot_id")
+    culture = (payload.get("culture") or "").strip()
+    variety = (payload.get("variety") or "").strip()
+    date_value = payload.get("date")
+
+    visit_date = None
+    if date_value:
+        try:
+            visit_date = _date.fromisoformat(date_value)
+        except Exception:
+            visit_date = parse_human_date(date_value)
+
+    query = Planting.query
+
+    if plot_id:
+        query = query.filter(Planting.plot_id == plot_id)
+
+    elif property_id:
+        query = query.join(Plot, Plot.id == Planting.plot_id).filter(Plot.property_id == property_id)
+
+    elif client_id:
+        query = (
+            query.join(Plot, Plot.id == Planting.plot_id)
+                 .join(Property, Property.id == Plot.property_id)
+                 .filter(Property.client_id == client_id)
+        )
+
+    if culture:
+        query = query.filter(Planting.culture == culture)
+
+    if variety:
+        query = query.filter(Planting.variety == variety)
+
+    if visit_date:
+        query = query.filter(
+            db.or_(
+                Planting.planting_date.is_(None),
+                Planting.planting_date <= visit_date
+            )
+        )
+
+    candidates = (
+        query.order_by(Planting.planting_date.desc().nullslast(), Planting.id.desc())
+             .limit(5)
+             .all()
+    )
+
+    if not candidates:
+        return None
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    # se houver plot_id + data + cultura, aceita o mais recente antes da visita
+    if plot_id and visit_date and culture:
+        return candidates[0]
+
+    # ambíguo -> não arrisca
+    return None
+
+
+
 
 
 def auto_close_previous_cycle_visits(current_visit):
@@ -3724,6 +3896,46 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
         close_only=close_only,
     )
 
+
+    # ==================================================
+    # 🔒 BLINDAGEM: visita de ciclo não salva sem planting_id
+    # ==================================================
+    if action == "create_new_visit" and should_require_cycle_link(final_visit_payload):
+        strict_planting = resolve_strict_planting_for_payload(final_visit_payload)
+
+        if strict_planting:
+            final_visit_payload["planting_id"] = strict_planting.id
+
+            if not final_visit_payload.get("plot_id"):
+                final_visit_payload["plot_id"] = strict_planting.plot_id
+
+            if strict_planting.plot_id and not final_visit_payload.get("property_id"):
+                plot_obj = Plot.query.get(strict_planting.plot_id)
+                if plot_obj:
+                    final_visit_payload["property_id"] = getattr(plot_obj, "property_id", None)
+
+            final_visit_payload["culture"] = final_visit_payload.get("culture") or strict_planting.culture
+            final_visit_payload["variety"] = final_visit_payload.get("variety") or strict_planting.variety
+
+        if not final_visit_payload.get("planting_id"):
+            send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=(
+                    "Não consegui vincular essa visita com segurança ao ciclo correto.\n\n"
+                    "Para não correr o risco de errar o PDF e o fechamento automático, "
+                    "me envie a visita novamente informando fazenda e talhão."
+                )
+            )
+
+            return jsonify({
+                "ok": True,
+                "message": "save bloqueado por ausência de planting_id seguro",
+            }), 200
+
+    print("DEBUG final_visit_payload require_cycle_link:", final_visit_payload.get("require_cycle_link"))
+    print("DEBUG final_visit_payload planting_id:", final_visit_payload.get("planting_id"))
+    print("DEBUG final_visit_payload visit_kind:", final_visit_payload.get("visit_kind"))
+
     update_only_products = bool(final_visit_payload.get("update_only_products"))
 
     try:
@@ -3819,6 +4031,18 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
 
 
 def handle_field_data_save_flow(chat_message, consultant, message_text: str):
+    # GUARDA: field data e dado sensivel do consultor.
+    # Se nao houver vinculo, nao salvamos.
+    if not require_linked_consultant_or_warn(
+        chat_message=chat_message,
+        consultant=consultant,
+        reason="salvar dado de campo",
+    ):
+        return jsonify({
+            "ok": True,
+            "message": "consultor nao vinculado - salvamento de field data bloqueado",
+        }), 200
+
     extracted = extract_field_data_payload_from_text(message_text)
 
     client = extracted.get("client")
@@ -4276,6 +4500,17 @@ def start_guided_visit_flow_from_agent(
     5) criar nova visita já no ciclo
     6) só cair em pendência como fallback secundário
     """
+    # GUARDA: nao deixa criar visita se o consultor nao esta vinculado.
+    if not require_linked_consultant_or_warn(
+        chat_message=chat_message,
+        consultant=consultant,
+        reason="criar visita",
+    ):
+        return jsonify({
+            "ok": True,
+            "message": "consultor nao vinculado - fluxo de visita bloqueado com seguranca",
+        }), 200
+
     client_name = (entities.get("client_name") or "").strip()
     property_name = (entities.get("property_name") or "").strip()
     plot_name = (entities.get("plot_name") or "").strip()
@@ -4348,6 +4583,8 @@ def start_guided_visit_flow_from_agent(
         )
         db.session.add(state)
 
+    inferred_visit_kind = "plantio" if (fenologia_real or "").strip().lower() == "plantio" else "cycle"
+
     visit_preview = {
         "planting_id": None,
         "client_id": matched_client.id,
@@ -4363,6 +4600,8 @@ def start_guided_visit_flow_from_agent(
         "latitude": None,
         "longitude": None,
         "source": "chatbot",
+        "visit_kind": inferred_visit_kind,
+        "require_cycle_link": inferred_visit_kind == "cycle",
     }
 
     active_cycle, cycle_candidates = find_active_cycle_for_agent(
@@ -4421,6 +4660,36 @@ def start_guided_visit_flow_from_agent(
     )
 
     if not pending_visits:
+        # ✅ visita de ciclo sem planting_id resolvido NÃO pode seguir direto
+        if should_require_cycle_link(visit_preview) and not visit_preview.get("planting_id"):
+            warning_text = (
+                f"Consegui identificar o cliente {matched_client.name}, "
+                f"mas ainda não consegui vincular essa visita com segurança ao ciclo correto.\n\n"
+                f"Para continuar, me informe pelo menos a fazenda e o talhão.\n"
+                f"Exemplo:\n"
+                f"cliente {matched_client.name} fazenda Santa Luzia talhão 7 {culture or 'milho'} {fenologia_real or 'V4'} hoje observações ..."
+            )
+
+            state.pending_visit_suggestions_json = json.dumps([], ensure_ascii=False)
+            state.visit_preview_json = json.dumps({
+                "visit_preview": visit_preview,
+                "original_message": original_message_text,
+                "reason": "cycle_link_required",
+            }, ensure_ascii=False)
+            state.confirmation_text = warning_text
+            state.status = "cancelled"
+            db.session.commit()
+
+            send_telegram_message(
+                chat_id=chat_message.chat_id,
+                text=warning_text,
+            )
+
+            return jsonify({
+                "ok": True,
+                "message": "visita de ciclo bloqueada por ausência de planting_id",
+            }), 200
+
         return start_new_visit_direct_confirmation(
             state=state,
             chat_message=chat_message,
@@ -4510,7 +4779,8 @@ def create_whatsapp_binding():
     except (TypeError, ValueError):
         return jsonify(message="consultant_id must be an integer"), 400
 
-    if consultant_id not in CONSULTANT_IDS:
+    consultant = Consultant.query.get(consultant_id)
+    if not consultant:
         return jsonify(message="consultant not found"), 404
 
     existing = WhatsAppContactBinding.query.filter_by(phone_number=phone_number).first()
@@ -10426,7 +10696,7 @@ def create_planting():
                     property_id=(prop.id if prop else None),
                     plot_id=plot.id,
                     planting_id=p.id,
-                    consultant_id=None,
+                    consultant_id=consultant_id,
                     date=visit_date,
                     checklist=None,
                     diagnosis=None,
