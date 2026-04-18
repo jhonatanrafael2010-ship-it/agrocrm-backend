@@ -30,7 +30,7 @@ def upgrade():
         sa.Column("entities_json", sa.Text(), nullable=True),
         sa.Column("decision_action", sa.String(length=80), nullable=True),
         sa.Column("decision_reason", sa.String(length=300), nullable=True),
-        sa.Column("executed", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("executed", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("extra_json", sa.Text(), nullable=True),
         sa.Column(
             "created_at",

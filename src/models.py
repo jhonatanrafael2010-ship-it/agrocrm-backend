@@ -547,7 +547,7 @@ class AgentDecisionLog(db.Model):
     decision_action = db.Column(db.String(80), nullable=True, index=True)
     decision_reason = db.Column(db.String(300), nullable=True)
 
-    executed = db.Column(db.Boolean, nullable=False, server_default="0")
+    executed = db.Column(db.Boolean, nullable=False, server_default=db.text("false"))
     extra_json = db.Column(db.Text, nullable=True)
 
     created_at = db.Column(
