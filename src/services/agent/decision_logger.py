@@ -13,8 +13,19 @@ esta acertando. Este servico e 100% isolado:
 
 Por que isso importa:
   Sem observabilidade, nao da para saber se uma mudanca
-  futura melhora ou piora a qualidade do agente. Este e o
-  trilho que vai sustentar todas as proximas otimizacoes.
+  futura melhora ou piora a qualidade do agente.
+
+VERSAO DESTE ARQUIVO:
+  v2 - adicionado registro das entidades RESOLVIDAS (Passo 2):
+       - client_id, client_score
+       - property_id, property_score
+       - plot_id, plot_score
+       Alem das entidades textuais originais.
+
+COMPATIBILIDADE:
+  Tabela agent_decision_log NAO muda. Os novos campos entram
+  dentro do entities_json existente, como um sub-dicionario
+  "resolved". Nao precisa rodar migration.
 ================================================================
 """
 
@@ -48,6 +59,88 @@ def _truncate(text: Optional[str], limit: int) -> Optional[str]:
     return text[:limit]
 
 
+def _extract_resolved_summary(entities: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Extrai um resumo COMPACTO das entidades resolvidas pelo
+    EntityResolver (Passo 2). Esse resumo fica salvo no log para
+    permitir auditar se o resolver esta acertando.
+
+    Formato de saida (apenas com o que interessa para auditoria):
+    {
+        "client":   {"id": 47, "name": "Marcelo Alonso", "score": 0.92, "raw": "Marcelo"},
+        "property": {"id": None, "score": 0.0, "raw": ""},
+        "plot":     {...}
+    }
+
+    Nunca lanca excecao. Em caso de erro, devolve dict vazio.
+    """
+    if not entities or not isinstance(entities, dict):
+        return {}
+
+    result: Dict[str, Any] = {}
+
+    try:
+        for key in ("client", "property", "plot"):
+            item = entities.get(key)
+            if not item or not isinstance(item, dict):
+                continue
+            result[key] = {
+                "id": item.get("id"),
+                "name": item.get("name"),
+                "score": item.get("score"),
+                "raw": item.get("raw_name"),
+            }
+    except Exception:
+        # se qualquer chave der problema, retornamos vazio
+        return {}
+
+    return result
+
+
+def _build_entities_payload_for_log(entities: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Monta o payload final que vai para o campo entities_json.
+    Mantem tudo que o EntityExtractor devolveu (como antes) e
+    adiciona um resumo compacto das entidades resolvidas.
+
+    Se nao houver entities, devolve None.
+    """
+    if not entities:
+        return None
+
+    try:
+        payload = {}
+
+        # Campos textuais originais do EntityExtractor.
+        # Copiamos apenas os que sao serializaveis e relevantes.
+        # NAO inclui raw_message (pode ser longo; ja vai em raw_message separado).
+        safe_keys = [
+            "client_name",
+            "property_name",
+            "plot_name",
+            "culture",
+            "fenologia_real",
+            "date",
+            "recommendation",
+            "products",
+            "visit_index",
+            "pdf_client_name",
+        ]
+        for key in safe_keys:
+            if key in entities:
+                payload[key] = entities.get(key)
+
+        # Resumo compacto das entidades RESOLVIDAS (Passo 2).
+        resolved = _extract_resolved_summary(entities)
+        if resolved:
+            payload["resolved"] = resolved
+
+        return payload
+    except Exception:
+        # ultima rede: em caso de qualquer falha, serializa o dict bruto
+        return entities
+
+
 def log_agent_decision(
     *,
     platform: str = "telegram",
@@ -67,25 +160,12 @@ def log_agent_decision(
     """
     Grava uma linha em AgentDecisionLog.
     NUNCA lanca excecao. Em caso de erro, imprime warning e segue.
-
-    Parametros:
-        platform           - "telegram", "whatsapp" etc.
-        chat_id            - id do chat do Telegram
-        consultant_id      - id do consultor vinculado (pode ser None)
-        raw_message        - texto original do usuario (truncado)
-        current_state      - estado conversacional no momento da mensagem
-        intent             - intent decidida (ex: LIST_WEEK, UNKNOWN)
-        intent_confidence  - "high", "medium" ou "low"
-        intent_matched_by  - "keyword", "ai_fallback", "state", ...
-        entities           - dict com entidades extraidas
-        decision_action    - action decidida (ex: ROUTE_TO_WEEK_SCHEDULE)
-        decision_reason    - razao textual da decisao
-        executed           - True se o agente de fato executou a acao
-        extra              - qualquer outro contexto extra (dict)
     """
     try:
         # importacao tardia para nao criar ciclo de import
         from models import db, AgentDecisionLog
+
+        entities_payload = _build_entities_payload_for_log(entities)
 
         row = AgentDecisionLog(
             platform=_truncate(platform or "telegram", 20),
@@ -96,7 +176,7 @@ def log_agent_decision(
             intent=_truncate(intent, 80),
             intent_confidence=_truncate(intent_confidence, 20),
             intent_matched_by=_truncate(intent_matched_by, 40),
-            entities_json=_safe_dumps(entities),
+            entities_json=_safe_dumps(entities_payload),
             decision_action=_truncate(decision_action, 80),
             decision_reason=_truncate(decision_reason, 300),
             executed=bool(executed),
@@ -136,7 +216,7 @@ def log_from_agent_result(
     O formato esperado de agent_result e:
         {
             "intent_result": {...},
-            "entities": {...},
+            "entities": {...},    # agora ja vem enriquecido pelo EntityResolver
             "decision": {...},
             "execution": {...},
         }
