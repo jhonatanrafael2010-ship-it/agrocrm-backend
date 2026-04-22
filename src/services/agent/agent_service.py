@@ -5,6 +5,7 @@ from .entity_extractor import EntityExtractor
 from .entity_resolver import EntityResolver
 from .decision_engine import DecisionEngine
 from .action_executor import ActionExecutor
+from .skill_loader import interpret_with_skill
 
 
 class AgentService:
@@ -29,6 +30,33 @@ class AgentService:
         decision = self.decision_engine.decide(intent_result, entities, context=context)
         execution = self.action_executor.execute(decision, context=context)
 
+        return {
+            "intent_result": intent_result,
+            "entities": entities,
+            "decision": decision,
+            "execution": execution,
+        }
+
+    def process(self, message_text, context=None):
+        context = context or {}
+        intent_result = self.intent_classifier.classify(message_text, context=context)
+        entities = self.entity_extractor.extract(message_text, context=context)
+        
+        if intent_result["intent"] == "CREATE_VISIT_LIKE_MESSAGE":
+            skill_result = interpret_with_skill(
+                message_text=message_text,
+                skill_name="lancamento_visita",
+                current_state=context.get("current_state", ""),
+            )
+            if skill_result and skill_result.get("parsed_visit"):
+                entities.update(skill_result["parsed_visit"])
+                intent_result["confidence"] = skill_result.get("confidence", "medium")
+                intent_result["matched_by"] = "skill:lancamento_visita"
+        
+        entities = self.entity_resolver.resolve(entities, context=context)
+        decision = self.decision_engine.decide(intent_result, entities, context=context)
+        execution = self.action_executor.execute(decision, context=context)
+        
         return {
             "intent_result": intent_result,
             "entities": entities,
