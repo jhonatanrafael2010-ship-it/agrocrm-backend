@@ -513,26 +513,31 @@ def is_last_pdf_request(text: str) -> bool:
 
     return any(trigger in normalized for trigger in triggers)
 
-def is_pdf_request(text: str) -> bool:
+def _match_trigger(text: str, exact: set, startswith: list) -> bool:
     if not text:
         return False
+    normalized = normalize_lookup_text(text).strip()
+    if normalized in exact:
+        return True
+    return any(normalized.startswith(t) for t in startswith)
 
-    normalized = normalize_lookup_text(text)
 
-    triggers = [
-        "pdf",
-        "gerar pdf",
-        "me manda o pdf",
-        "mande o pdf",
-        "pdf da ultima visita",
-        "pdf da última visita",
-        "pdf das ultimas visitas",
-        "pdf das últimas visitas",
-        "relatorio pdf",
-        "relatório pdf",
-    ]
+def is_pdf_request(text):
+    return _match_trigger(
+        text,
+        exact={"pdf", "gerar pdf", "me manda o pdf", "mande o pdf",
+               "pdf da ultima visita", "pdf da última visita",
+               "relatorio pdf", "relatório pdf"},
+        startswith=["pdf da ", "gerar pdf ", "me manda pdf"],
+    )
 
-    return any(trigger in normalized for trigger in triggers)
+
+def is_days_planted_request(text):
+    return _match_trigger(
+        text,
+        exact={"dias de plantado", "quantos dias de plantado", "quanto tempo de plantado"},
+        startswith=["dias de plantado ", "quantos dias de plantado "],
+    )
 
 def is_field_data_save_request(text: str) -> bool:
     if not text:
@@ -592,21 +597,6 @@ def is_field_data_query_request(text: str) -> bool:
     ]
 
     return any(trigger in normalized for trigger in triggers)
-
-def is_days_planted_request(text: str) -> bool:
-    if not text:
-        return False
-
-    normalized = normalize_lookup_text(text)
-
-    triggers = [
-        "dias de plantado",
-        "quantos dias de plantado",
-        "quanto tempo de plantado",
-    ]
-
-    return any(trigger in normalized for trigger in triggers)
-
 
 
 def is_week_schedule_request(text: str) -> bool:
@@ -875,7 +865,7 @@ def resolve_telegram_consultant(chat_message):
 
     return None
 
-    
+
 # ================================================================
 # GUARDA DE SEGURANCA: evita salvar dado no consultor errado
 # Chame esta funcao ANTES de qualquer operacao que cria ou
