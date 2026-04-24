@@ -8217,6 +8217,13 @@ def telegram_webhook():
                     original_message = (state.last_message or "").strip()
                     robust_prefill = extract_prefill_from_message_text(original_message)
                     original_parsed = parse_chatbot_message(original_message) or {}
+                    
+                    print(f"DEBUG selecao - state.last_message: {original_message[:300]}")
+                    print(f"DEBUG selecao - visit_preview recuperado: {visit_preview}")
+                    print(f"DEBUG selecao - parser.date: {original_parsed.get('date')}")
+                    print(f"DEBUG selecao - parser.recommendation: {(original_parsed.get('recommendation') or '')[:100]}")
+                    print(f"DEBUG selecao - robust_prefill.date: {robust_prefill.get('date')}")
+                    print(f"DEBUG selecao - robust_prefill.recommendation: {(robust_prefill.get('recommendation') or '')[:100]}")
 
                     fallback_products = normalize_products_from_parsed(original_parsed.get("products") or [])
 
@@ -8696,6 +8703,9 @@ def telegram_webhook():
                 chat_id=chat_message.chat_id,
             )
             db.session.add(state)
+
+        print(f"DEBUG grava - visit_preview: {visit_preview}")
+        print(f"DEBUG grava - safe_original_message: {safe_original_message[:300]}")
 
         state.last_message = safe_original_message
         state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
