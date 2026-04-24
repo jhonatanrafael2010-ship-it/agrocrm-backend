@@ -8182,6 +8182,10 @@ def telegram_webhook():
                         "source": "chatbot",
                     }
 
+                    print(f"DEBUG payload montado - date: {final_visit_payload.get('date')}")
+                    print(f"DEBUG payload montado - recommendation: {(final_visit_payload.get('recommendation') or '')[:80]}")
+                    print(f"DEBUG payload montado - fenologia: {final_visit_payload.get('fenologia_real')}")
+
                     if close_only:
                         summary_text = build_visit_summary_text(
                             action=action,
@@ -8260,6 +8264,8 @@ def telegram_webhook():
                     has_prefilled_date = bool(final_visit_payload.get("date"))
                     has_prefilled_observation = bool((final_visit_payload.get("recommendation") or "").strip())
 
+                    print(f"DEBUG has_prefilled - fenologia: {has_prefilled_fenologia}, date: {has_prefilled_date}, obs: {has_prefilled_observation}")
+
                     if has_prefilled_fenologia and has_prefilled_date and has_prefilled_observation:
                         summary_text = build_visit_summary_text(
                             action=action,
@@ -8291,6 +8297,8 @@ def telegram_webhook():
                             "message": "resumo final enviado com pré-preenchimento",
                             "summary_text": summary_text
                         }), 200
+
+                    print(f"DEBUG vai escolher prox campo - fenologia={has_prefilled_fenologia} date={has_prefilled_date} obs={has_prefilled_observation}")
 
                     if not has_prefilled_fenologia:
                         next_status = "awaiting_fenologia"
