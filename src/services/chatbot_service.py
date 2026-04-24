@@ -99,15 +99,17 @@ def extract_date_iso(message: str) -> Optional[str]:
 
 
 def extract_client_name(message: str) -> Optional[str]:
+    # Aceita: "cliente Marcos Puziski\n", "Cliente: João Silva fazenda X",
+    # "produtor Pedro da Silva v4". Para linha multi, pega até \n ou delimitador.
     patterns = [
-        r"cliente[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar|produto|produtos|id|visita)\b|$)",
-        r"produtor[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar|produto|produtos|id|visita)\b|$)",
+        r"cliente[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\n|\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|reprodutivo|variedade|cultura|soja|milho|algodao|algodão|area|área|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|produto|produtos|id|visita|data|fenologia|\d{2}/\d{2})\b|$)",
+        r"produtor[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\n|\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|reprodutivo|variedade|cultura|soja|milho|algodao|algodão|area|área|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|produto|produtos|id|visita|data|fenologia|\d{2}/\d{2})\b|$)",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, message, flags=re.IGNORECASE)
+        match = re.search(pattern, message, flags=re.IGNORECASE | re.MULTILINE)
         if match:
-            value = match.group(1).strip(" .,-")
+            value = match.group(1).strip(" .,-\n\r\t")
             if value:
                 return value
 
@@ -116,16 +118,16 @@ def extract_client_name(message: str) -> Optional[str]:
 
 def extract_property_name(message: str) -> Optional[str]:
     patterns = [
-        r"fazenda[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
-        r"propriedade[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
-        r"sitio[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
-        r"sítio[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
+        r"fazenda[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\n|\s+(talhao|talhão|reprodutivo|variedade|cultura|soja|milho|algodao|algodão|area|área|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|data|fenologia|\d{2}/\d{2})\b|$)",
+        r"propriedade[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\n|\s+(talhao|talhão|reprodutivo|variedade|cultura|soja|milho|algodao|algodão|area|área|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|data|fenologia|\d{2}/\d{2})\b|$)",
+        r"sitio[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\n|\s+(talhao|talhão|reprodutivo|variedade|cultura|soja|milho|algodao|algodão|area|área|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|data|fenologia|\d{2}/\d{2})\b|$)",
+        r"sítio[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\n|\s+(talhao|talhão|reprodutivo|variedade|cultura|soja|milho|algodao|algodão|area|área|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|data|fenologia|\d{2}/\d{2})\b|$)",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, message, flags=re.IGNORECASE)
+        match = re.search(pattern, message, flags=re.IGNORECASE | re.MULTILINE)
         if match:
-            value = match.group(1).strip(" .,-")
+            value = match.group(1).strip(" .,-\n\r\t")
             if value:
                 return value
 
@@ -134,16 +136,14 @@ def extract_property_name(message: str) -> Optional[str]:
 
 def extract_plot_name(message: str) -> Optional[str]:
     patterns = [
-        r"talhao[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
-        r"talhão[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
-        r"area[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
-        r"área[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(soja|milho|algodao|algodão|v\d+|r\d+|hoje|amanha|amanhã|aplicar)\b|$)",
+        r"talhao[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\n|\s+(soja|milho|algodao|algodão|reprodutivo|variedade|cultura|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|data|fenologia|\d{2}/\d{2})\b|$)",
+        r"talhão[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\n|\s+(soja|milho|algodao|algodão|reprodutivo|variedade|cultura|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|data|fenologia|\d{2}/\d{2})\b|$)",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, message, flags=re.IGNORECASE)
+        match = re.search(pattern, message, flags=re.IGNORECASE | re.MULTILINE)
         if match:
-            value = match.group(1).strip(" .,-")
+            value = match.group(1).strip(" .,-\n\r\t")
             if value:
                 return value
 
@@ -154,6 +154,7 @@ def extract_recommendation(message: str) -> str:
     msg = message.strip()
 
     recommendation_patterns = [
+        r"(?:observacoes|observações|observação|observacao|obs)\s*[:,\-]?\s*([\s\S]+)$",
         r"aplicar[:\s]+(.+)",
         r"recomendacao[:\s]+(.+)",
         r"recomendação[:\s]+(.+)",
@@ -166,6 +167,40 @@ def extract_recommendation(message: str) -> str:
             value = match.group(1).strip()
             if value:
                 return value
+
+    # Fallback: se mensagem tem múltiplas linhas e nenhum marcador bateu,
+    # tudo que vem DEPOIS dos campos estruturados (data, cliente, fazenda,
+    # talhão, cultura, fenologia, variedade, reprodutivo) vira observação.
+    lines = [ln.strip() for ln in msg.split("\n") if ln.strip()]
+    if len(lines) <= 1:
+        return ""
+
+    structured_prefixes = (
+        "lancar visita", "lançar visita", "nova visita",
+        "data ", "data:",
+        "cliente ", "cliente:",
+        "produtor ", "produtor:",
+        "fazenda ", "fazenda:",
+        "propriedade ", "propriedade:",
+        "talhao ", "talhao:", "talhão ", "talhão:",
+        "cultura ", "cultura:",
+        "fenologia ", "fenologia:",
+        "variedade ", "variedade:",
+        "reprodutivo ", "reprodutivo:",
+    )
+
+    free_lines = []
+    for ln in lines:
+        ln_lower = ln.lower()
+        if ln_lower.startswith(structured_prefixes):
+            continue
+        # pula data isolada DD/MM/YYYY
+        if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", ln):
+            continue
+        free_lines.append(ln)
+
+    if free_lines:
+        return " ".join(free_lines).strip()
 
     return ""
 
