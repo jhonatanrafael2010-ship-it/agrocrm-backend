@@ -1229,19 +1229,23 @@ def find_pending_visits(
     client_id: int,
     property_id: int = None,
     culture: str = None,
+    consultant_id: int = None,
     limit: int = 5
 ):
     """
     Busca visitas pendentes do cliente.
 
-    NOVA REGRA:
+    REGRAS:
     - prioriza a mesma cultura, se existir
     - ordena pelas mais recentes primeiro
     - se houver mesma fazenda, separa por variedade
-    - mostra até `limit` por variedade quando houver múltiplas variedades
+    - FILTRA por consultant_id quando fornecido (isolamento de carteira)
     """
     base_query = Visit.query.filter(Visit.client_id == client_id)
     base_query = base_query.filter(Visit.status.in_(["planned", "pendente", "planejada", "planejado"]))
+
+    if consultant_id:
+        base_query = base_query.filter(Visit.consultant_id == consultant_id)
 
     if property_id:
         base_query = base_query.filter(Visit.property_id == property_id)
@@ -4681,6 +4685,7 @@ def start_guided_visit_flow_from_agent(
         client_id=matched_client.id,
         property_id=matched_property.id if matched_property else None,
         culture=culture or None,
+        consultant_id=consultant.id if consultant else None,
         limit=5,
     )
 
@@ -8004,6 +8009,7 @@ def telegram_webhook():
                         client_id=matched_client.id,
                         property_id=matched_property.id if matched_property else None,
                         culture=parsed.get("culture"),
+                        consultant_id=consultant.id if consultant else None,
                         limit=5
                     )
 
@@ -8421,6 +8427,7 @@ def telegram_webhook():
                 client_id=guessed_client.id,
                 property_id=None,
                 culture=None,
+                consultant_id=consultant.id if consultant else None,
                 limit=5
             )
 
@@ -8618,9 +8625,9 @@ def telegram_webhook():
                 client_id=matched_client.id,
                 property_id=matched_property.id if matched_property else None,
                 culture=parsed.get("culture"),
+                consultant_id=consultant.id if consultant else None,
                 limit=5
             )
-
         suggestions = []
         for visit in pending_visits:
             suggestions.append({
@@ -8935,6 +8942,7 @@ def chatbot_suggest_pending_visits():
                 client_id=matched_client.id,
                 property_id=matched_property.id if matched_property else None,
                 culture=parsed.get("culture"),
+                consultant_id=consultant_id,
                 limit=5
             )
 
