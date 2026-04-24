@@ -7836,6 +7836,45 @@ def telegram_webhook():
 
                 final_visit_payload["fenologia_real"] = fenologia_input
 
+                has_date = bool(final_visit_payload.get("date"))
+                has_obs = bool((final_visit_payload.get("recommendation") or "").strip())
+
+                if not has_date:
+                    next_status = "awaiting_date"
+                    next_message = "📅 Informe a data da visita.\nExemplo: 24/02/2026"
+                elif not has_obs:
+                    next_status = "awaiting_observations"
+                    next_message = "💬 Informe as observações da visita."
+                else:
+                    # tudo preenchido, vai direto para resumo final
+                    summary_text = build_visit_summary_text(
+                        action=action,
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=close_only
+                    )
+                    state.visit_preview_json = json.dumps(
+                        build_guided_state_payload(
+                            action=action,
+                            final_visit_payload=final_visit_payload,
+                            selected_pending_visit=selected_pending_visit,
+                            close_only=close_only,
+                        ),
+                        ensure_ascii=False
+                    )
+                    state.confirmation_text = summary_text
+                    state.status = "awaiting_final_confirmation"
+                    db.session.commit()
+
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text=summary_text
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "resumo final apos fenologia"
+                    }), 200
+
                 state.visit_preview_json = json.dumps(
                     build_guided_state_payload(
                         action=action,
@@ -7845,12 +7884,12 @@ def telegram_webhook():
                     ),
                     ensure_ascii=False
                 )
-                state.status = "awaiting_date"
+                state.status = next_status
                 db.session.commit()
 
                 send_telegram_message(
                     chat_id=chat_message.chat_id,
-                    text="📅 Informe a data da visita.\nExemplo: 24/02/2026"
+                    text=next_message
                 )
 
                 return jsonify({
@@ -7884,6 +7923,28 @@ def telegram_webhook():
                     ),
                     ensure_ascii=False
                 )
+                has_obs = bool((final_visit_payload.get("recommendation") or "").strip())
+
+                if has_obs:
+                    summary_text = build_visit_summary_text(
+                        action=action,
+                        final_visit_payload=final_visit_payload,
+                        selected_pending_visit=selected_pending_visit,
+                        close_only=close_only
+                    )
+                    state.confirmation_text = summary_text
+                    state.status = "awaiting_final_confirmation"
+                    db.session.commit()
+
+                    send_telegram_message(
+                        chat_id=chat_message.chat_id,
+                        text=summary_text
+                    )
+                    return jsonify({
+                        "ok": True,
+                        "message": "resumo final apos data"
+                    }), 200
+
                 state.status = "awaiting_observations"
                 db.session.commit()
 
