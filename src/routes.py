@@ -376,6 +376,20 @@ def parse_pending_reply(text: str):
     if value.isdigit():
         return {"mode": "update_existing", "index": int(value) - 1}
 
+    # Formato composto: "3\nR5" ou "3 R5" ou "3 V4"
+    # Usuário manda número da visita + fenologia em uma única mensagem.
+    match_composite = re.match(
+        r"^(\d+)[\s\n\r]+(V\d{1,2}|R\d{1,2}|VE|VC|VT)$",
+        value,
+        flags=re.IGNORECASE
+    )
+    if match_composite:
+        return {
+            "mode": "update_existing",
+            "index": int(match_composite.group(1)) - 1,
+            "fenologia": match_composite.group(2).upper(),
+        }
+
     match = re.match(r"^CONCLUIR\s+(\d+)$", value)
     if match:
         return {"mode": "close_only", "index": int(match.group(1)) - 1}
@@ -8360,6 +8374,14 @@ def telegram_webhook():
                         }), 200
 
                     print(f"DEBUG vai escolher prox campo - fenologia={has_prefilled_fenologia} date={has_prefilled_date} obs={has_prefilled_observation}")
+
+                    # Se usuário já enviou fenologia junto com o número (ex: "3 R5"),
+                    # aproveita a fenologia e marca como preenchida para pular a pergunta.
+                    composite_fenologia = (parsed_reply or {}).get("fenologia")
+                    if composite_fenologia and not has_prefilled_fenologia:
+                        final_visit_payload["fenologia_real"] = composite_fenologia
+                        has_prefilled_fenologia = True
+                        print(f"DEBUG aproveitou fenologia composta: {composite_fenologia}")
 
                     if not has_prefilled_fenologia:
                         next_status = "awaiting_fenologia"
