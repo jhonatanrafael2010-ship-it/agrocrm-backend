@@ -605,7 +605,7 @@ def _render_visits(ws, visits, period_label, total_visits, unique_clients,
 
         has_photo = "Sim" if _has_valid_photo(v) else "Não"
         status_pt = _translate_status(v.status)
-        obs = _truncate(v.observation, 200)
+        obs = _truncate(getattr(v, "recommendation", None) or getattr(v, "observation", None), 200)
 
         row_values = [
             _br_date(v.date), client_name, prop_name, plot_name, cons_name,
