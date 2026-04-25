@@ -5053,8 +5053,9 @@ def list_consultants():
             for c in rows
         ]), 200
 
-    # fallback: lista estática, caso o banco esteja vazio
-    return jsonify(CONSULTANTS), 200
+    # fallback: banco vazio retorna lista vazia
+    # (CONSULTANTS hardcoded foi descontinuado por desencontro de IDs)
+    return jsonify([]), 200
 
 
 # ============================================================

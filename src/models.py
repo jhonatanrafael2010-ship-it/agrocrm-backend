@@ -15,6 +15,37 @@ CONSULTANTS = [
     {"id": 5, "name": "Alexandre"},
 ]
 
+
+def resolve_consultant_name(consultant_id):
+    """
+    Resolve nome do consultor priorizando a tabela real do banco
+    (Consultant). A constante CONSULTANTS acima é fallback histórico
+    e pode estar desencontrada com os IDs autoincrementais reais.
+
+    Retorna o nome ou None se não encontrar.
+    Nunca lança exceção.
+    """
+    if not consultant_id:
+        return None
+
+    # 1) tenta tabela real do banco
+    try:
+        row = Consultant.query.filter_by(id=consultant_id).first()
+        if row and row.name:
+            return row.name
+    except Exception:
+        pass
+
+    # 2) fallback hardcoded
+    try:
+        for c in CONSULTANTS:
+            if c["id"] == consultant_id:
+                return c["name"]
+    except Exception:
+        pass
+
+    return None
+
 # ============================================================
 # 👤 Usuário
 # ============================================================
@@ -172,7 +203,7 @@ class Visit(db.Model):
     def to_dict(self):
         consultant_name = None
         if self.consultant_id:
-            match = next((c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id), None)
+            match = resolve_consultant_name(self.consultant_id)
             consultant_name = match or f"Consultor {self.consultant_id}"
 
         client_line = f"👤 {self.client.name}" if self.client else ""
@@ -228,10 +259,7 @@ class WhatsAppContactBinding(db.Model):
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
     def to_dict(self):
-        consultant_name = next(
-            (c["name"] for c in CONSULTANTS if c["id"] == self.consultant_id),
-            None
-        )
+        consultant_name = resolve_consultant_name(self.consultant_id)
         return {
             "id": self.id,
             "phone_number": self.phone_number,
