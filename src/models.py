@@ -16,6 +16,72 @@ CONSULTANTS = [
 ]
 
 
+# ============================================================
+# 🌍 Regiões disponíveis
+# Para adicionar nova região: incluir aqui e fazer deploy.
+# Sem migration necessária.
+# ============================================================
+AVAILABLE_REGIONS = [
+    "Lucas e região",
+    "Nortão",
+]
+
+
+# ============================================================
+# 🌾 Safras disponíveis (Mato Grosso)
+#
+# Cada safra é definida por (cultura + janela de datas).
+# Visitas são automaticamente atribuídas pela combinação cultura+data.
+# Não precisa marcar safra em cliente nem em visita: tudo é derivado.
+#
+# Sobreposição de janelas é resolvida pela cultura registrada na visita:
+# - Soja → Safra
+# - Milho → Safrinha
+#
+# Para adicionar nova safra: incluir aqui e fazer deploy.
+# ============================================================
+AVAILABLE_SEASONS = [
+    {
+        "key": "safra-25-26",
+        "label": "Safra 25/26",
+        "culture": "Soja",
+        "start": "2025-09-01",
+        "end": "2026-03-31",
+    },
+    {
+        "key": "safrinha-26",
+        "label": "Safrinha 26",
+        "culture": "Milho",
+        "start": "2025-12-01",
+        "end": "2026-08-31",
+    },
+    {
+        "key": "safra-26-27",
+        "label": "Safra 26/27",
+        "culture": "Soja",
+        "start": "2026-09-01",
+        "end": "2027-03-31",
+    },
+    {
+        "key": "safrinha-27",
+        "label": "Safrinha 27",
+        "culture": "Milho",
+        "start": "2026-12-01",
+        "end": "2027-08-31",
+    },
+]
+
+
+def get_season_by_key(key):
+    """Retorna dict da safra pelo key, ou None."""
+    if not key:
+        return None
+    for s in AVAILABLE_SEASONS:
+        if s["key"] == key:
+            return s
+    return None
+
+
 def resolve_consultant_name(consultant_id):
     """
     Resolve nome do consultor priorizando a tabela real do banco
@@ -72,6 +138,7 @@ class Client(db.Model):
     document = db.Column(db.String(100), nullable=True, index=True)
     segment = db.Column(db.String(50), nullable=True)
     vendor = db.Column(db.String(120), nullable=True)
+    region = db.Column(db.String(100), nullable=True, index=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
     properties = db.relationship('Property', backref='client', lazy='dynamic', cascade='all, delete-orphan')
@@ -85,6 +152,7 @@ class Client(db.Model):
             'document': self.document,
             'segment': self.segment,
             'vendor': self.vendor,
+            'region': self.region,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 

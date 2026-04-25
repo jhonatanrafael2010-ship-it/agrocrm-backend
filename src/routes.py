@@ -5059,6 +5059,26 @@ def list_consultants():
 
 
 # ============================================================
+# 🌍 Regiões e 🌾 Safras (para dropdowns no frontend)
+# ============================================================
+@bp.route('/regions', methods=['GET'])
+def list_regions():
+    """Retorna lista de regiões disponíveis para classificar clientes."""
+    from models import AVAILABLE_REGIONS
+    return jsonify(AVAILABLE_REGIONS), 200
+
+
+@bp.route('/seasons', methods=['GET'])
+def list_seasons():
+    """
+    Retorna lista de safras disponíveis para filtrar relatórios.
+    Cada safra define cultura + janela de datas.
+    """
+    from models import AVAILABLE_SEASONS
+    return jsonify(AVAILABLE_SEASONS), 200
+
+
+# ============================================================
 # 🔵 Endpoint de teste usado pelo APK (detectar conexão real)
 # ============================================================
 @bp.route("/ping", methods=["GET"])
@@ -9841,6 +9861,7 @@ def create_client():
         document=data.get('document'),
         segment=data.get('segment'),
         vendor=data.get('vendor'),
+        region=data.get('region') or None,
     )
     db.session.add(client)
     db.session.commit()
@@ -9853,10 +9874,12 @@ def update_client(client_id: int):
     if not client:
         return jsonify(message='client not found'), 404
     data = request.get_json() or {}
-    # Update allowed fields if present
-    for field in ('name', 'document', 'segment', 'vendor'):
+
+    for field in ('name', 'document', 'segment', 'vendor', 'region'):
         if field in data:
-            setattr(client, field, data.get(field))
+            value = data.get(field)
+            setattr(client, field, value if value else None)
+
     db.session.commit()
     return jsonify(message='client updated', client=client.to_dict()), 200
 

@@ -174,11 +174,18 @@ def _build_consultants_map():
 # ================================================================
 def generate_monthly_xlsx(request):
     try:
-        from models import Visit, Client, Property, Plot
+        from models import Visit, Client, Property, Plot, get_season_by_key
 
         month = request.args.get("month")
         start = request.args.get("start")
         end = request.args.get("end")
+
+        # ===== Filtros de carteira/safra =====
+        # region: filtra clientes pela região cadastrada
+        # season: filtra visitas por (cultura + janela de datas) da safra
+        # Vazio = sem filtro. Combinam com AND.
+        filter_region = (request.args.get("region") or "").strip()
+        filter_season_key = (request.args.get("season") or "").strip()
 
         if month:
             y, m = [int(x) for x in month.split("-")]
@@ -191,21 +198,47 @@ def generate_monthly_xlsx(request):
             start_date = _date.fromisoformat(start)
             end_date = _date.fromisoformat(end)
 
-        visits = (
+        # ===== Aplica safra (interseção do período do usuário com a janela da safra) =====
+        season = get_season_by_key(filter_season_key) if filter_season_key else None
+        season_culture = None
+        if season:
+            season_start = _date.fromisoformat(season["start"])
+            season_end = _date.fromisoformat(season["end"])
+            # interseção: o relatório só considera datas que existem em ambos
+            start_date = max(start_date, season_start)
+            end_date = min(end_date, season_end)
+            season_culture = season["culture"]
+
+        # ===== Carteira efetiva (denominador dos KPIs) =====
+        carteira_query = Client.query
+        if filter_region:
+            carteira_query = carteira_query.filter(Client.region == filter_region)
+        carteira = carteira_query.all()
+        carteira_ids = {c.id for c in carteira}
+        total_clients = len(carteira)
+
+        # ===== Visitas filtradas =====
+        visits_query = (
             Visit.query
             .filter(Visit.date >= start_date)
             .filter(Visit.date <= end_date)
-            .order_by(Visit.date.asc().nullslast())
-            .all()
         )
+        if filter_region:
+            visits_query = visits_query.filter(Visit.client_id.in_(carteira_ids))
+        if season_culture:
+            visits_query = visits_query.filter(Visit.culture == season_culture)
+
+        visits = visits_query.order_by(Visit.date.asc().nullslast()).all()
 
         client_ids = sorted({v.client_id for v in visits if v.client_id})
         prop_ids = sorted({v.property_id for v in visits if v.property_id})
         plot_ids = sorted({v.plot_id for v in visits if v.plot_id})
 
+        # mapa unificado: carteira + clientes que aparecem em visitas
+        all_client_ids = sorted(carteira_ids | set(client_ids))
         clients_map = (
-            {c.id: c.name for c in Client.query.filter(Client.id.in_(client_ids)).all()}
-            if client_ids else {}
+            {c.id: c.name for c in Client.query.filter(Client.id.in_(all_client_ids)).all()}
+            if all_client_ids else {}
         )
         props_map = (
             {p.id: p.name for p in Property.query.filter(Property.id.in_(prop_ids)).all()}
@@ -221,7 +254,6 @@ def generate_monthly_xlsx(request):
         total_visits = len(visits)
         visits_with_photo = sum(1 for v in visits if _has_valid_photo(v))
         unique_clients = len({v.client_id for v in visits if v.client_id})
-        total_clients = Client.query.count()
         coverage = (unique_clients / total_clients) if total_clients else 0
 
         photo_visits_by_client = Counter()
@@ -234,6 +266,14 @@ def generate_monthly_xlsx(request):
         )
         target_pct = (clients_in_target / total_clients) if total_clients else 0
 
+        # Label dos filtros aplicados (mostrado no banner)
+        filter_labels = []
+        if filter_region:
+            filter_labels.append(f"Região: {filter_region}")
+        if season:
+            filter_labels.append(f"Safra: {season['label']} ({season['culture']})")
+        filters_applied = " • ".join(filter_labels) if filter_labels else "Carteira completa"
+
         wb = Workbook()
         wb.remove(wb.active)
 
@@ -245,21 +285,25 @@ def generate_monthly_xlsx(request):
         period_label = f"{start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"
 
         _render_dashboard(
-            ws_dash, visits, period_label,
+            ws_dash, visits, period_label, filters_applied,
             total_visits, visits_with_photo, unique_clients, total_clients,
             coverage, clients_in_target, target_pct,
-            photo_visits_by_client, clients_map, consultants_map
+            photo_visits_by_client, clients_map, consultants_map,
+            carteira_ids
         )
         _render_visits(
             ws_visits, visits, period_label, total_visits, unique_clients,
-            clients_map, props_map, plots_map, consultants_map
+            clients_map, props_map, plots_map, consultants_map,
+            filters_applied
         )
         _render_atraso(
-            ws_atraso, total_clients, photo_visits_by_client, clients_map, period_label
+            ws_atraso, total_clients, photo_visits_by_client, clients_map,
+            period_label, filters_applied, carteira_ids
         )
         _render_products(
             ws_prods, visits, period_label,
-            clients_map, props_map, consultants_map
+            clients_map, props_map, consultants_map,
+            filters_applied
         )
 
         bio = BytesIO()
@@ -285,10 +329,11 @@ def generate_monthly_xlsx(request):
 # Aba 1 — Dashboard premium
 # ================================================================
 def _render_dashboard(
-    ws, visits, period_label,
+    ws, visits, period_label, filters_applied,
     total_visits, visits_with_photo, unique_clients, total_clients,
     coverage, clients_in_target, target_pct,
-    photo_visits_by_client, clients_map, consultants_map
+    photo_visits_by_client, clients_map, consultants_map,
+    carteira_ids
 ):
     s = _styles()
     ws.sheet_view.showGridLines = False
@@ -319,6 +364,13 @@ def _render_dashboard(
     )
     ws["A4"].font = Font(name="Calibri Light", color=TEXT_MUTED, size=10, italic=True)
     ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
+
+    # ===== Filtros aplicados =====
+    ws.row_dimensions[5].height = 18
+    ws.merge_cells("A5:L5")
+    ws["A5"] = f"Filtros: {filters_applied}"
+    ws["A5"].font = Font(name="Calibri", color=BRAND_GREEN, size=10, bold=True)
+    ws["A5"].alignment = Alignment(horizontal="center", vertical="center")
 
     # ===== Regra =====
     ws.row_dimensions[6].height = 18
@@ -523,7 +575,7 @@ def _render_dashboard(
     _style_header_row(ws, progresso_row + 1, 1, 4, s)
 
     r = progresso_row + 2
-    for cid in sorted(clients_map.keys(), key=lambda k: -photo_visits_by_client.get(k, 0)):
+    for cid in sorted(carteira_ids, key=lambda k: -photo_visits_by_client.get(k, 0)):
         cnt = photo_visits_by_client.get(cid, 0)
         ws[f"A{r}"] = clients_map.get(cid, f"Cliente {cid}")
         ws[f"B{r}"] = cnt
@@ -642,7 +694,8 @@ def _style_header_row(ws, row, col_start, col_end, s):
 # Aba 2 — Visitas
 # ================================================================
 def _render_visits(ws, visits, period_label, total_visits, unique_clients,
-                   clients_map, props_map, plots_map, consultants_map):
+                   clients_map, props_map, plots_map, consultants_map,
+                   filters_applied):
     s = _styles()
     ws.sheet_view.showGridLines = False
 
@@ -671,17 +724,23 @@ def _render_visits(ws, visits, period_label, total_visits, unique_clients,
     ws["H3"] = unique_clients
     ws["H3"].font = s["row_font"]
 
+    ws.merge_cells("A4:L4")
+    ws["A4"] = f"Filtros: {filters_applied}"
+    ws["A4"].font = Font(name="Calibri", color=BRAND_GREEN, size=10, bold=True)
+    ws["A4"].alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[4].height = 20
+
     headers = [
         "Data", "Cliente", "Propriedade", "Talhão", "Consultor",
         "Cultura", "Variedade", "Fenologia", "Status", "Foto",
         "Dias plantio", "Observações",
     ]
-    header_row = 5
+    header_row = 6
     for i, h in enumerate(headers, start=1):
         ws.cell(row=header_row, column=i).value = h
     _style_header_row(ws, header_row, 1, len(headers), s)
     ws.row_dimensions[header_row].height = 26
-    ws.freeze_panes = "A6"
+    ws.freeze_panes = "A7"
 
     row_idx = header_row
     for v in visits:
@@ -744,7 +803,8 @@ def _render_visits(ws, visits, period_label, total_visits, unique_clients,
 # ================================================================
 # Aba 3 — Atraso
 # ================================================================
-def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map, period_label):
+def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map,
+                   period_label, filters_applied, carteira_ids):
     s = _styles()
     ws.sheet_view.showGridLines = False
 
@@ -768,29 +828,27 @@ def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map, perio
     ws["A3"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[3].height = 18
 
+    ws.merge_cells("A4:E4")
+    ws["A4"] = f"Filtros: {filters_applied}"
+    ws["A4"].font = Font(name="Calibri", color=BRAND_GREEN, size=10, bold=True)
+    ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[4].height = 20
+
     headers = ["Cliente", "Concluídas", "Faltam", "% da meta", "Prioridade"]
-    header_row = 5
+    header_row = 6
     for i, h in enumerate(headers, start=1):
         ws.cell(row=header_row, column=i).value = h
     _style_header_row(ws, header_row, 1, 5, s)
     ws.row_dimensions[header_row].height = 24
-    ws.freeze_panes = "A6"
+    ws.freeze_panes = "A7"
 
+    # Apenas clientes da carteira filtrada (respeita region aplicada)
     all_clients = []
-    for cid, name in clients_map.items():
+    for cid in carteira_ids:
+        name = clients_map.get(cid, f"Cliente {cid}")
         cnt = photo_visits_by_client.get(cid, 0)
         if cnt < META_VISITAS_CLIENTE:
             all_clients.append((cid, name, cnt))
-
-    try:
-        from models import Client
-        all_carteira = Client.query.all()
-        existing_ids = set(clients_map.keys())
-        for c in all_carteira:
-            if c.id not in existing_ids:
-                all_clients.append((c.id, c.name, 0))
-    except Exception:
-        pass
 
     all_clients.sort(key=lambda x: x[2])
 
@@ -839,7 +897,8 @@ def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map, perio
 # Aba 4 — Produtos
 # ================================================================
 def _render_products(ws, visits, period_label,
-                     clients_map, props_map, consultants_map):
+                     clients_map, props_map, consultants_map,
+                     filters_applied):
     s = _styles()
     ws.sheet_view.showGridLines = False
 
@@ -860,16 +919,22 @@ def _render_products(ws, visits, period_label,
     ws["A3"].alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[3].height = 18
 
+    ws.merge_cells("A4:I4")
+    ws["A4"] = f"Filtros: {filters_applied}"
+    ws["A4"].font = Font(name="Calibri", color=BRAND_GREEN, size=10, bold=True)
+    ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[4].height = 20
+
     headers = [
         "Data", "Cliente", "Propriedade", "Cultura", "Fenologia",
         "Consultor", "Produto", "Dose / Unidade", "Data aplicação",
     ]
-    header_row = 5
+    header_row = 6
     for i, h in enumerate(headers, start=1):
         ws.cell(row=header_row, column=i).value = h
     _style_header_row(ws, header_row, 1, len(headers), s)
     ws.row_dimensions[header_row].height = 24
-    ws.freeze_panes = "A6"
+    ws.freeze_panes = "A7"
 
     r = header_row + 1
     has_data = False
