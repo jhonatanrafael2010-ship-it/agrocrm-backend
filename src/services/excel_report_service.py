@@ -1,25 +1,20 @@
 """
-================================================================
-excel_report_service.py — v3 Premium
-================================================================
+excel_report_service.py — v4
 
-Versão 3 do relatório XLSX gerencial NutriCRM.
-
-Mudanças vs v2:
-- FIX consultor: busca da tabela `Consultant` do banco (a constante
-  CONSULTANTS hardcoded em models.py está com IDs desencontrados).
-- Visual premium: banner com faixa dourada decorativa, fontes
-  refinadas, espaçamento generoso, rodapé corporativo.
-- Gráficos refeitos: barra com cor única, pizza com legenda lateral,
-  tamanhos maiores, títulos legíveis.
-- Subtítulos com tracking. KPIs polidos.
-
-Aceita ?month=YYYY-MM ou ?start=YYYY-MM-DD&end=YYYY-MM-DD
-================================================================
+Regras:
+1. Visita = (cliente, dia, cultura). Lançamentos com mesma chave = 1 visita.
+2. Concluída = visita com pelo menos 1 lançamento com foto.
+3. KPIs usam visitas deduplicadas.
+4. % na meta = concluídas / (carteira × 5).
+5. Carteira derivada de Plantings (cultura + janela da safra).
+   Sem filtro: clientes com Planting em qualquer das 4 safras.
+6. Cultura vazia na visita: infere de planting.culture.
+7. Gráfico semanal. Tabela diária removida.
+8. Sem gráfico de pizza.
 """
 
 from io import BytesIO
-from datetime import date as _date, datetime
+from datetime import date as _date, datetime, timedelta
 import datetime as _dt
 from collections import Counter, defaultdict
 
@@ -27,9 +22,7 @@ from flask import jsonify, send_file
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.chart import BarChart, PieChart, Reference
-from openpyxl.chart.label import DataLabelList
-from openpyxl.chart.legend import Legend
+from openpyxl.chart import BarChart, Reference
 from openpyxl.chart.shapes import GraphicalProperties
 from openpyxl.formatting.rule import DataBarRule, CellIsRule
 
@@ -37,26 +30,19 @@ from openpyxl.formatting.rule import DataBarRule, CellIsRule
 META_VISITAS_CLIENTE = 5
 
 
-# ================================================================
-# Paleta premium
-# ================================================================
+# Paleta
 BRAND_DARKEST = "0A2818"
 BRAND_DARK = "0F5132"
 BRAND_GREEN = "14532D"
 BRAND_MID = "166534"
 BRAND_LIGHT = "DCFCE7"
 GOLD = "C8A857"
-GOLD_LIGHT = "F4E5BC"
-
 NEUTRAL_WHITE = "FFFFFF"
 NEUTRAL_OFFWHITE = "FAFAF9"
-NEUTRAL_GREY_LIGHTEST = "F4F4F5"
 NEUTRAL_GREY_LIGHT = "E4E4E7"
 NEUTRAL_TEXT = "18181B"
 TEXT_MUTED = "71717A"
-
 STATUS_DONE = "16A34A"
-STATUS_PENDING = "EAB308"
 STATUS_CANCELED = "DC2626"
 STATUS_DONE_BG = "DCFCE7"
 STATUS_PENDING_BG = "FEF3C7"
@@ -68,42 +54,26 @@ def _styles():
         "banner_fill": PatternFill("solid", fgColor=BRAND_DARKEST),
         "banner_font": Font(name="Calibri", color=NEUTRAL_WHITE, bold=True, size=18),
         "gold_fill": PatternFill("solid", fgColor=GOLD),
-
         "header_fill": PatternFill("solid", fgColor=BRAND_GREEN),
         "header_font": Font(name="Calibri", color=NEUTRAL_WHITE, bold=True, size=10),
-
         "kpi_label_fill": PatternFill("solid", fgColor=BRAND_GREEN),
         "kpi_value_fill": PatternFill("solid", fgColor=BRAND_DARK),
         "kpi_label_font": Font(name="Calibri", color=NEUTRAL_WHITE, bold=True, size=10),
         "kpi_value_font": Font(name="Calibri", color=NEUTRAL_WHITE, bold=True, size=22),
-
         "section_font": Font(name="Calibri", bold=True, color=BRAND_GREEN, size=11),
-        "subheader_fill": PatternFill("solid", fgColor=BRAND_LIGHT),
-
-        "muted": Font(name="Calibri", color=TEXT_MUTED, size=9),
         "muted_italic": Font(name="Calibri", color=TEXT_MUTED, size=9, italic=True),
         "footer": Font(name="Calibri", color=TEXT_MUTED, size=8, italic=True),
-
         "bold": Font(name="Calibri", bold=True, color=NEUTRAL_TEXT),
         "row_font": Font(name="Calibri", color=NEUTRAL_TEXT, size=10),
         "zebra_fill": PatternFill("solid", fgColor=NEUTRAL_OFFWHITE),
-
         "center": Alignment(horizontal="center", vertical="center", wrap_text=True),
         "left": Alignment(horizontal="left", vertical="top", wrap_text=True),
         "left_center": Alignment(horizontal="left", vertical="center", wrap_text=True),
-
-        "border_data": Border(
-            bottom=Side(style="hair", color=NEUTRAL_GREY_LIGHT)
-        ),
-        "border_section": Border(
-            bottom=Side(style="medium", color=GOLD)
-        ),
+        "border_data": Border(bottom=Side(style="hair", color=NEUTRAL_GREY_LIGHT)),
+        "border_section": Border(bottom=Side(style="medium", color=GOLD)),
     }
 
 
-# ================================================================
-# Helpers
-# ================================================================
 def _br_date(d):
     if not d:
         return ""
@@ -120,14 +90,9 @@ def _br_date(d):
 
 def _translate_status(status):
     mapping = {
-        "done": "Concluída",
-        "concluida": "Concluída",
-        "concluído": "Concluída",
-        "planned": "Planejada",
-        "planejada": "Planejada",
-        "pendente": "Pendente",
-        "canceled": "Cancelada",
-        "cancelado": "Cancelada",
+        "done": "Concluída", "concluida": "Concluída", "concluído": "Concluída",
+        "planned": "Planejada", "planejada": "Planejada", "pendente": "Pendente",
+        "canceled": "Cancelada", "cancelado": "Cancelada",
     }
     return mapping.get((status or "").lower(), status or "—")
 
@@ -147,10 +112,6 @@ def _truncate(text, limit=200):
 
 
 def _build_consultants_map():
-    """
-    Busca consultores PRIMEIRO da tabela Consultant do banco.
-    Fallback para constante hardcoded apenas se a query falhar.
-    """
     consultants_map = {}
     try:
         from models import Consultant
@@ -158,32 +119,117 @@ def _build_consultants_map():
         if consultants_map:
             return consultants_map
     except Exception as e:
-        print(f"[excel_report] warning - Consultant.query falhou: {e}")
-
+        print(f"[excel_report] Consultant.query falhou: {e}")
     try:
         from routes import CONSULTANTS
         consultants_map = {c["id"]: c["name"] for c in CONSULTANTS}
     except Exception:
         pass
-
     return consultants_map
 
 
-# ================================================================
-# Função principal
-# ================================================================
+def _resolve_visit_culture(visit):
+    """Cultura da visita; infere de planting se vazia."""
+    c = (visit.culture or "").strip()
+    if c:
+        return c
+    planting = getattr(visit, "planting", None)
+    if planting:
+        c = (getattr(planting, "culture", None) or "").strip()
+        if c:
+            return c
+    return ""
+
+
+def _build_active_clients_for_seasons(seasons_list, region_filter=None):
+    """Clientes com Planting que bate cultura+janela de alguma safra."""
+    from models import Planting, Plot, Property, Client
+
+    if not seasons_list:
+        return set()
+
+    plantings_q = (
+        Planting.query
+        .join(Plot, Planting.plot_id == Plot.id)
+        .join(Property, Plot.property_id == Property.id)
+        .join(Client, Property.client_id == Client.id)
+    )
+    if region_filter:
+        plantings_q = plantings_q.filter(Client.region == region_filter)
+
+    plantings = plantings_q.all()
+
+    active_ids = set()
+    for p in plantings:
+        if not p.planting_date or not p.culture:
+            continue
+        culture_norm = (p.culture or "").strip().lower()
+        for s in seasons_list:
+            if culture_norm != s["culture"].strip().lower():
+                continue
+            try:
+                s_start = _date.fromisoformat(s["start"])
+                s_end = _date.fromisoformat(s["end"])
+            except Exception:
+                continue
+            if s_start <= p.planting_date <= s_end:
+                try:
+                    cid = p.plot.property.client_id if p.plot and p.plot.property else None
+                    if cid:
+                        active_ids.add(cid)
+                except Exception:
+                    pass
+                break
+
+    return active_ids
+
+
+def _dedupe_visits(visits_list):
+    """Lançamentos → visitas únicas por (cliente, data, cultura)."""
+    grouped = {}
+    for v in visits_list:
+        if not v.client_id or not v.date:
+            continue
+        culture = _resolve_visit_culture(v)
+        key = (v.client_id, v.date, culture)
+        if key not in grouped:
+            grouped[key] = {
+                "client_id": v.client_id,
+                "date": v.date,
+                "culture": culture,
+                "consultant_id": v.consultant_id,
+                "has_photo": _has_valid_photo(v),
+                "launches": [v],
+            }
+        else:
+            grouped[key]["launches"].append(v)
+            if _has_valid_photo(v):
+                grouped[key]["has_photo"] = True
+            if not grouped[key]["consultant_id"]:
+                grouped[key]["consultant_id"] = v.consultant_id
+
+    return list(grouped.values())
+
+
+def _week_label(d):
+    """Label semana ISO formato 'DD/MM–DD/MM'."""
+    iso_year, iso_week, _ = d.isocalendar()
+    monday = d - timedelta(days=d.weekday())
+    sunday = monday + timedelta(days=6)
+    return f"{monday.strftime('%d/%m')}–{sunday.strftime('%d/%m')}", (iso_year, iso_week)
+
+
 def generate_monthly_xlsx(request):
     try:
-        from models import Visit, Client, Property, Plot, get_season_by_key
+        from models import (
+            Visit, Client, Property, Plot,
+            get_season_by_key, AVAILABLE_SEASONS,
+        )
 
         month = request.args.get("month")
         start = request.args.get("start")
         end = request.args.get("end")
 
-        # ===== Filtros de carteira/safra =====
-        # region: filtra clientes pela região cadastrada
-        # season: filtra visitas por (cultura + janela de datas) da safra
-        # Vazio = sem filtro. Combinam com AND.
         filter_region = (request.args.get("region") or "").strip()
         filter_season_key = (request.args.get("season") or "").strip()
 
@@ -198,44 +244,55 @@ def generate_monthly_xlsx(request):
             start_date = _date.fromisoformat(start)
             end_date = _date.fromisoformat(end)
 
-        # ===== Aplica safra (interseção do período do usuário com a janela da safra) =====
+        # Resolução de safra(s)
         season = get_season_by_key(filter_season_key) if filter_season_key else None
-        season_culture = None
         if season:
             season_start = _date.fromisoformat(season["start"])
             season_end = _date.fromisoformat(season["end"])
-            # interseção: o relatório só considera datas que existem em ambos
             start_date = max(start_date, season_start)
             end_date = min(end_date, season_end)
+            seasons_for_carteira = [season]
             season_culture = season["culture"]
+        else:
+            seasons_for_carteira = AVAILABLE_SEASONS
+            season_culture = None
 
-        # ===== Carteira efetiva (denominador dos KPIs) =====
-        carteira_query = Client.query
-        if filter_region:
-            carteira_query = carteira_query.filter(Client.region == filter_region)
-        carteira = carteira_query.all()
-        carteira_ids = {c.id for c in carteira}
-        total_clients = len(carteira)
-
-        # ===== Visitas filtradas =====
-        visits_query = (
-            Visit.query
-            .filter(Visit.date >= start_date)
-            .filter(Visit.date <= end_date)
+        # Carteira efetiva
+        carteira_ids = _build_active_clients_for_seasons(
+            seasons_for_carteira,
+            region_filter=filter_region or None,
         )
-        if filter_region:
-            visits_query = visits_query.filter(Visit.client_id.in_(carteira_ids))
+        total_clients = len(carteira_ids)
+
+        # Lançamentos no período
+        if carteira_ids:
+            visits_query = (
+                Visit.query
+                .filter(Visit.date >= start_date)
+                .filter(Visit.date <= end_date)
+                .filter(Visit.client_id.in_(carteira_ids))
+            )
+            visits_raw = visits_query.order_by(Visit.date.asc().nullslast()).all()
+        else:
+            visits_raw = []
+
+        # Filtro de cultura (após resolver _resolve_visit_culture)
         if season_culture:
-            visits_query = visits_query.filter(Visit.culture == season_culture)
+            sc_norm = season_culture.strip().lower()
+            visits_raw = [
+                v for v in visits_raw
+                if _resolve_visit_culture(v).strip().lower() == sc_norm
+            ]
 
-        visits = visits_query.order_by(Visit.date.asc().nullslast()).all()
+        # Dedup
+        unique_visits = _dedupe_visits(visits_raw)
 
-        client_ids = sorted({v.client_id for v in visits if v.client_id})
-        prop_ids = sorted({v.property_id for v in visits if v.property_id})
-        plot_ids = sorted({v.plot_id for v in visits if v.plot_id})
+        # Maps
+        client_ids_in_visits = sorted({v["client_id"] for v in unique_visits if v["client_id"]})
+        prop_ids = sorted({l.property_id for v in unique_visits for l in v["launches"] if l.property_id})
+        plot_ids = sorted({l.plot_id for v in unique_visits for l in v["launches"] if l.plot_id})
 
-        # mapa unificado: carteira + clientes que aparecem em visitas
-        all_client_ids = sorted(carteira_ids | set(client_ids))
+        all_client_ids = sorted(carteira_ids | set(client_ids_in_visits))
         clients_map = (
             {c.id: c.name for c in Client.query.filter(Client.id.in_(all_client_ids)).all()}
             if all_client_ids else {}
@@ -248,35 +305,37 @@ def generate_monthly_xlsx(request):
             {pl.id: pl.name for pl in Plot.query.filter(Plot.id.in_(plot_ids)).all()}
             if plot_ids else {}
         )
-
         consultants_map = _build_consultants_map()
 
-        total_visits = len(visits)
-        visits_with_photo = sum(1 for v in visits if _has_valid_photo(v))
-        unique_clients = len({v.client_id for v in visits if v.client_id})
-        coverage = (unique_clients / total_clients) if total_clients else 0
+        # KPIs
+        total_visits_unique = len(unique_visits)
+        visits_with_photo = sum(1 for v in unique_visits if v["has_photo"])
+        unique_clients_attended = len({v["client_id"] for v in unique_visits if v["has_photo"]})
+        coverage = (unique_clients_attended / total_clients) if total_clients else 0
 
         photo_visits_by_client = Counter()
-        for v in visits:
-            if v.client_id and _has_valid_photo(v):
-                photo_visits_by_client[v.client_id] += 1
+        for v in unique_visits:
+            if v["has_photo"]:
+                photo_visits_by_client[v["client_id"]] += 1
 
         clients_in_target = sum(
             1 for cnt in photo_visits_by_client.values() if cnt >= META_VISITAS_CLIENTE
         )
-        target_pct = (clients_in_target / total_clients) if total_clients else 0
 
-        # Label dos filtros aplicados (mostrado no banner)
+        meta_total = total_clients * META_VISITAS_CLIENTE
+        target_pct = (visits_with_photo / meta_total) if meta_total else 0
+
+        # Filtros label
         filter_labels = []
         if filter_region:
             filter_labels.append(f"Região: {filter_region}")
         if season:
             filter_labels.append(f"Safra: {season['label']} ({season['culture']})")
-        filters_applied = " • ".join(filter_labels) if filter_labels else "Carteira completa"
+        filters_applied = " • ".join(filter_labels) if filter_labels else "Carteira completa (todas as safras conhecidas)"
 
+        # Workbook
         wb = Workbook()
         wb.remove(wb.active)
-
         ws_dash = wb.create_sheet("Dashboard")
         ws_visits = wb.create_sheet("Visitas")
         ws_atraso = wb.create_sheet("Atraso")
@@ -285,14 +344,16 @@ def generate_monthly_xlsx(request):
         period_label = f"{start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"
 
         _render_dashboard(
-            ws_dash, visits, period_label, filters_applied,
-            total_visits, visits_with_photo, unique_clients, total_clients,
-            coverage, clients_in_target, target_pct,
+            ws_dash, unique_visits, period_label, filters_applied,
+            total_visits_unique, visits_with_photo, total_clients,
+            coverage, clients_in_target, target_pct, meta_total,
+            unique_clients_attended,
             photo_visits_by_client, clients_map, consultants_map,
             carteira_ids
         )
         _render_visits(
-            ws_visits, visits, period_label, total_visits, unique_clients,
+            ws_visits, visits_raw, period_label,
+            len(visits_raw), unique_clients_attended,
             clients_map, props_map, plots_map, consultants_map,
             filters_applied
         )
@@ -301,7 +362,7 @@ def generate_monthly_xlsx(request):
             period_label, filters_applied, carteira_ids
         )
         _render_products(
-            ws_prods, visits, period_label,
+            ws_prods, visits_raw, period_label,
             clients_map, props_map, consultants_map,
             filters_applied
         )
@@ -325,13 +386,11 @@ def generate_monthly_xlsx(request):
         return jsonify(message=f"Erro ao gerar relatório: {e}"), 500
 
 
-# ================================================================
-# Aba 1 — Dashboard premium
-# ================================================================
 def _render_dashboard(
-    ws, visits, period_label, filters_applied,
-    total_visits, visits_with_photo, unique_clients, total_clients,
-    coverage, clients_in_target, target_pct,
+    ws, unique_visits, period_label, filters_applied,
+    total_visits_unique, visits_with_photo, total_clients,
+    coverage, clients_in_target, target_pct, meta_total,
+    unique_clients_attended,
     photo_visits_by_client, clients_map, consultants_map,
     carteira_ids
 ):
@@ -342,7 +401,6 @@ def _render_dashboard(
     for col in range(1, 13):
         ws.column_dimensions[get_column_letter(col)].width = 17
 
-    # ===== Banner =====
     ws.row_dimensions[1].height = 8
     ws.row_dimensions[2].height = 42
     ws.row_dimensions[3].height = 4
@@ -365,60 +423,60 @@ def _render_dashboard(
     ws["A4"].font = Font(name="Calibri Light", color=TEXT_MUTED, size=10, italic=True)
     ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
 
-    # ===== Filtros aplicados =====
     ws.row_dimensions[5].height = 18
     ws.merge_cells("A5:L5")
     ws["A5"] = f"Filtros: {filters_applied}"
     ws["A5"].font = Font(name="Calibri", color=BRAND_GREEN, size=10, bold=True)
     ws["A5"].alignment = Alignment(horizontal="center", vertical="center")
 
-    # ===== Regra =====
     ws.row_dimensions[6].height = 18
     ws.merge_cells("A6:L6")
     ws["A6"] = (
-        f"Regra de cálculo: visita conta como concluída quando há foto.    "
-        f"Meta = {META_VISITAS_CLIENTE} visitas/cliente no período."
+        f"Regra: visita concluída = visita com foto. Lançamentos no mesmo (cliente, dia, cultura) contam como 1 visita.    "
+        f"Meta = {META_VISITAS_CLIENTE} visitas/cliente."
     )
     ws["A6"].font = Font(name="Calibri", color=TEXT_MUTED, size=9, italic=True)
     ws["A6"].alignment = Alignment(horizontal="center", vertical="center")
 
-    # ===== KPIs =====
+    # KPIs
     ws.row_dimensions[8].height = 26
     ws.row_dimensions[9].height = 32
     ws.row_dimensions[10].height = 32
     ws.row_dimensions[11].height = 26
 
-    _kpi_card(ws, "A", "C", 8, "TOTAL DE VISITAS",
-              total_visits, "#,##0", s)
-    _kpi_card(ws, "D", "F", 8, "VISITAS CONCLUÍDAS",
+    _kpi_card(ws, "A", "C", 8, "VISITAS REALIZADAS",
+              total_visits_unique, "#,##0", s)
+    _kpi_card(ws, "D", "F", 8, "VISITAS CONCLUÍDAS (COM FOTO)",
               visits_with_photo, "#,##0", s)
     _kpi_card(ws, "G", "I", 8, f"CLIENTES NA META ({META_VISITAS_CLIENTE}+)",
               clients_in_target, "#,##0", s)
-    _kpi_card(ws, "J", "L", 8, "COBERTURA DA CARTEIRA",
-              coverage, "0.0%", s)
+    _kpi_card(ws, "J", "L", 8, "% DA META TOTAL",
+              target_pct, "0.0%", s)
 
     ws.row_dimensions[13].height = 20
     ws.merge_cells("A13:L13")
     ws["A13"] = (
-        f"Carteira total: {total_clients}  •  Atendidos no período: {unique_clients}  •  "
-        f"% na meta: {target_pct:.1%}"
+        f"Carteira ativa: {total_clients} clientes  •  "
+        f"Atendidos no período: {unique_clients_attended}  •  "
+        f"Cobertura: {coverage:.1%}  •  "
+        f"Meta total: {meta_total} visitas ({total_clients} × {META_VISITAS_CLIENTE})"
     )
     ws["A13"].font = Font(name="Calibri", color=TEXT_MUTED, size=10)
     ws["A13"].alignment = Alignment(horizontal="center", vertical="center")
 
-    # ===== 3 tabelas lado a lado =====
+    # 3 tabelas lado a lado
     _section_title_premium(ws, "A15", "VISITAS POR CONSULTOR", "A15:C15", s)
     ws["A16"] = "Consultor"
     ws["B16"] = "Visitas"
     ws["C16"] = "% do total"
     _style_header_row(ws, 16, 1, 3, s)
 
-    cons_counts = Counter(v.consultant_id for v in visits if v.consultant_id)
+    cons_counts = Counter(v["consultant_id"] for v in unique_visits if v["consultant_id"])
     r = 17
     for cid, cnt in cons_counts.most_common():
         ws[f"A{r}"] = consultants_map.get(cid, f"Consultor #{cid}")
         ws[f"B{r}"] = cnt
-        ws[f"C{r}"] = (cnt / total_visits) if total_visits else 0
+        ws[f"C{r}"] = (cnt / total_visits_unique) if total_visits_unique else 0
         ws[f"C{r}"].number_format = "0.0%"
         for col in range(1, 4):
             ws.cell(r, col).border = s["border_data"]
@@ -435,16 +493,15 @@ def _render_dashboard(
     _style_header_row(ws, 16, 5, 7, s)
 
     cult_counts = Counter()
-    for v in visits:
-        culture = v.culture or (v.planting.culture if getattr(v, "planting", None) else None)
-        culture = (culture or "—").strip()
-        cult_counts[culture] += 1
+    for v in unique_visits:
+        cult = (v["culture"] or "—").strip() or "—"
+        cult_counts[cult] += 1
 
     r = 17
     for culture, cnt in cult_counts.most_common():
         ws[f"E{r}"] = culture
         ws[f"F{r}"] = cnt
-        ws[f"G{r}"] = (cnt / total_visits) if total_visits else 0
+        ws[f"G{r}"] = (cnt / total_visits_unique) if total_visits_unique else 0
         ws[f"G{r}"].number_format = "0.0%"
         for col in range(5, 8):
             ws.cell(r, col).border = s["border_data"]
@@ -453,7 +510,6 @@ def _render_dashboard(
             if (r - 17) % 2 == 1:
                 ws.cell(r, col).fill = s["zebra_fill"]
         r += 1
-    end_cult_row = r - 1
 
     _section_title_premium(ws, "I15", "TOP 5 CLIENTES (CONCLUÍDAS)", "I15:K15", s)
     ws["I16"] = "Cliente"
@@ -476,28 +532,34 @@ def _render_dashboard(
                 ws.cell(r, col).fill = s["zebra_fill"]
         r += 1
 
-    # ===== Visitas por dia + gráficos =====
-    day_counts = defaultdict(int)
-    for v in visits:
-        if v.date:
-            day_counts[v.date] += 1
-    days_sorted = sorted(day_counts.keys())
+    # Visitas por SEMANA
+    week_buckets = defaultdict(lambda: {"label": "", "key": None, "count": 0})
+    for v in unique_visits:
+        if not v["date"]:
+            continue
+        label, key = _week_label(v["date"])
+        bucket = week_buckets[key]
+        bucket["label"] = label
+        bucket["key"] = key
+        bucket["count"] += 1
+
+    weeks_sorted = sorted(week_buckets.values(), key=lambda x: x["key"])
 
     section_row_days = 27
     _section_title_premium(
         ws, f"A{section_row_days}",
-        "EVOLUÇÃO DIÁRIA DE VISITAS",
+        "EVOLUÇÃO SEMANAL DE VISITAS",
         f"A{section_row_days}:B{section_row_days}",
         s
     )
-    ws[f"A{section_row_days+1}"] = "Data"
+    ws[f"A{section_row_days+1}"] = "Semana"
     ws[f"B{section_row_days+1}"] = "Visitas"
     _style_header_row(ws, section_row_days + 1, 1, 2, s)
 
     r = section_row_days + 2
-    for d in days_sorted:
-        ws[f"A{r}"] = d.strftime("%d/%m/%Y")
-        ws[f"B{r}"] = day_counts[d]
+    for w in weeks_sorted:
+        ws[f"A{r}"] = w["label"]
+        ws[f"B{r}"] = w["count"]
         ws[f"A{r}"].border = s["border_data"]
         ws[f"B{r}"].border = s["border_data"]
         ws[f"A{r}"].font = s["row_font"]
@@ -508,24 +570,23 @@ def _render_dashboard(
             ws[f"A{r}"].fill = s["zebra_fill"]
             ws[f"B{r}"].fill = s["zebra_fill"]
         r += 1
-    end_days_row = r - 1
+    end_weeks_row = r - 1
 
-    # gráfico barras com cor única
-    if end_days_row > section_row_days + 1:
+    if end_weeks_row > section_row_days + 1:
         chart = BarChart()
         chart.type = "col"
         chart.style = 2
-        chart.title = "Visitas por dia"
+        chart.title = "Visitas por semana"
         chart.y_axis.title = "Quantidade"
         chart.x_axis.title = None
         chart.legend = None
         chart.height = 11
-        chart.width = 18
+        chart.width = 22
 
         data = Reference(ws, min_col=2, min_row=section_row_days + 1,
-                         max_col=2, max_row=end_days_row)
+                         max_col=2, max_row=end_weeks_row)
         cats = Reference(ws, min_col=1, min_row=section_row_days + 2,
-                         max_col=1, max_row=end_days_row)
+                         max_col=1, max_row=end_weeks_row)
         chart.add_data(data, titles_from_data=True)
         chart.set_categories(cats)
 
@@ -536,30 +597,8 @@ def _render_dashboard(
 
         ws.add_chart(chart, "D" + str(section_row_days))
 
-    # gráfico pizza com legenda lateral
-    if end_cult_row > 16:
-        pie = PieChart()
-        pie.title = "Distribuição por cultura"
-        pie.height = 11
-        pie.width = 12
-
-        labels = Reference(ws, min_col=5, min_row=17, max_row=end_cult_row)
-        data = Reference(ws, min_col=6, min_row=16, max_row=end_cult_row)
-        pie.add_data(data, titles_from_data=True)
-        pie.set_categories(labels)
-
-        pie.dataLabels = DataLabelList(
-            showPercent=True,
-            showCatName=False,
-            showSerName=False,
-        )
-        pie.legend = Legend()
-        pie.legend.position = "r"
-
-        ws.add_chart(pie, "I" + str(section_row_days))
-
-    # ===== Progresso por cliente =====
-    progresso_row = max(end_days_row, section_row_days + 22) + 3
+    # Progresso por cliente
+    progresso_row = max(end_weeks_row, section_row_days + 22) + 3
 
     _section_title_premium(
         ws, f"A{progresso_row}",
@@ -570,7 +609,7 @@ def _render_dashboard(
 
     ws[f"A{progresso_row+1}"] = "Cliente"
     ws[f"B{progresso_row+1}"] = "Concluídas"
-    ws[f"C{progresso_row+1}"] = "% da meta"
+    ws[f"C{progresso_row+1}"] = "% da meta (5)"
     ws[f"D{progresso_row+1}"] = "Progresso"
     _style_header_row(ws, progresso_row + 1, 1, 4, s)
 
@@ -600,9 +639,7 @@ def _render_dashboard(
             end_type="num", end_value=1,
             color=BRAND_MID, showValue=False,
         )
-        ws.conditional_formatting.add(
-            f"D{progresso_row+2}:D{end_meta_row}", rule
-        )
+        ws.conditional_formatting.add(f"D{progresso_row+2}:D{end_meta_row}", rule)
 
         ws.conditional_formatting.add(
             f"B{progresso_row+2}:B{end_meta_row}",
@@ -623,7 +660,6 @@ def _render_dashboard(
                        font=Font(color=STATUS_DONE, bold=True))
         )
 
-    # ===== Rodapé =====
     footer_row = end_meta_row + 3
     ws.row_dimensions[footer_row].height = 6
     ws.merge_cells(f"A{footer_row}:L{footer_row}")
@@ -690,10 +726,7 @@ def _style_header_row(ws, row, col_start, col_end, s):
         cell.alignment = s["center"]
 
 
-# ================================================================
-# Aba 2 — Visitas
-# ================================================================
-def _render_visits(ws, visits, period_label, total_visits, unique_clients,
+def _render_visits(ws, visits_raw, period_label, total_lancamentos, unique_clients,
                    clients_map, props_map, plots_map, consultants_map,
                    filters_applied):
     s = _styles()
@@ -715,9 +748,9 @@ def _render_visits(ws, visits, period_label, total_visits, unique_clients,
     ws["A3"].font = s["bold"]
     ws["B3"] = period_label
     ws["B3"].font = s["row_font"]
-    ws["D3"] = "Total de visitas:"
+    ws["D3"] = "Lançamentos:"
     ws["D3"].font = s["bold"]
-    ws["E3"] = total_visits
+    ws["E3"] = total_lancamentos
     ws["E3"].font = s["row_font"]
     ws["G3"] = "Clientes atendidos:"
     ws["G3"].font = s["bold"]
@@ -743,7 +776,7 @@ def _render_visits(ws, visits, period_label, total_visits, unique_clients,
     ws.freeze_panes = "A7"
 
     row_idx = header_row
-    for v in visits:
+    for v in visits_raw:
         row_idx += 1
 
         client_name = clients_map.get(v.client_id, "—") if v.client_id else "—"
@@ -751,7 +784,7 @@ def _render_visits(ws, visits, period_label, total_visits, unique_clients,
         plot_name = plots_map.get(v.plot_id, "—") if v.plot_id else "—"
         cons_name = consultants_map.get(v.consultant_id, f"#{v.consultant_id}" if v.consultant_id else "—")
 
-        culture = v.culture or (v.planting.culture if getattr(v, "planting", None) else "—")
+        culture = _resolve_visit_culture(v) or "—"
         variety = v.variety or (v.planting.variety if getattr(v, "planting", None) else "—")
 
         dias_plantio = "—"
@@ -800,9 +833,6 @@ def _render_visits(ws, visits, period_label, total_visits, unique_clients,
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
-# ================================================================
-# Aba 3 — Atraso
-# ================================================================
 def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map,
                    period_label, filters_applied, carteira_ids):
     s = _styles()
@@ -842,7 +872,6 @@ def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map,
     ws.row_dimensions[header_row].height = 24
     ws.freeze_panes = "A7"
 
-    # Apenas clientes da carteira filtrada (respeita region aplicada)
     all_clients = []
     for cid in carteira_ids:
         name = clients_map.get(cid, f"Cliente {cid}")
@@ -893,10 +922,7 @@ def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map,
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
-# ================================================================
-# Aba 4 — Produtos
-# ================================================================
-def _render_products(ws, visits, period_label,
+def _render_products(ws, visits_raw, period_label,
                      clients_map, props_map, consultants_map,
                      filters_applied):
     s = _styles()
@@ -938,14 +964,14 @@ def _render_products(ws, visits, period_label,
 
     r = header_row + 1
     has_data = False
-    for v in visits:
+    for v in visits_raw:
         produtos = getattr(v, "products", None) or []
         for p in produtos:
             has_data = True
             client_name = clients_map.get(v.client_id, "—") if v.client_id else "—"
             prop_name = props_map.get(v.property_id, "—") if v.property_id else "—"
             cons_name = consultants_map.get(v.consultant_id, "—") if v.consultant_id else "—"
-            culture = v.culture or "—"
+            culture = _resolve_visit_culture(v) or "—"
             fenologia = v.fenologia_real or "—"
 
             dose_unidade = ""
