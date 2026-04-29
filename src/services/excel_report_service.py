@@ -380,7 +380,7 @@ def generate_monthly_xlsx(request):
         )
         _render_visits(
             ws_visits, visits_raw, period_label,
-            len(visits_raw), unique_clients_attended,
+            total_launches_with_photo, unique_clients_attended,
             clients_map, props_map, plots_map, consultants_map,
             filters_applied
         )
