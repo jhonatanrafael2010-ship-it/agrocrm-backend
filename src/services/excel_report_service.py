@@ -25,7 +25,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.chart import BarChart, Reference
 from openpyxl.chart.shapes import GraphicalProperties
 from openpyxl.formatting.rule import DataBarRule, CellIsRule
-
+from models import db, Visit
 
 META_VISITAS_CLIENTE = 5
 
@@ -232,6 +232,11 @@ def generate_monthly_xlsx(request):
 
         filter_region = (request.args.get("region") or "").strip()
         filter_season_key = (request.args.get("season") or "").strip()
+        filter_consultant_id = (request.args.get("consultant") or "").strip()
+        try:
+            filter_consultant_id = int(filter_consultant_id) if filter_consultant_id else None
+        except ValueError:
+            filter_consultant_id = None
 
         if month:
             y, m = [int(x) for x in month.split("-")]
@@ -264,14 +269,32 @@ def generate_monthly_xlsx(request):
         )
         total_clients = len(carteira_ids)
 
+        # União: clientes com visita no período (caem no relatório mesmo sem Planting)
+        visits_clients_q = (
+            db.session.query(Visit.client_id)
+            .filter(Visit.date >= start_date)
+            .filter(Visit.date <= end_date)
+            .filter(Visit.client_id.isnot(None))
+        )
+        if filter_consultant_id:
+            visits_clients_q = visits_clients_q.filter(Visit.consultant_id == filter_consultant_id)
+
+        visits_clients_ids = {row[0] for row in visits_clients_q.distinct().all()}
+
+        # carteira efetiva = união
+        effective_client_ids = carteira_ids | visits_clients_ids
+        total_clients = len(carteira_ids)  # KPI "carteira" segue regra antiga
+
         # Lançamentos no período
-        if carteira_ids:
+        if effective_client_ids:
             visits_query = (
                 Visit.query
                 .filter(Visit.date >= start_date)
                 .filter(Visit.date <= end_date)
-                .filter(Visit.client_id.in_(carteira_ids))
+                .filter(Visit.client_id.in_(effective_client_ids))
             )
+            if filter_consultant_id:
+                visits_query = visits_query.filter(Visit.consultant_id == filter_consultant_id)
             visits_raw = visits_query.order_by(Visit.date.asc().nullslast()).all()
         else:
             visits_raw = []
