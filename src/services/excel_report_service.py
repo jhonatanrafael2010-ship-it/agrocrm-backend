@@ -372,7 +372,7 @@ def generate_monthly_xlsx(request):
             coverage, clients_in_target, target_pct, meta_total,
             unique_clients_attended,
             photo_visits_by_client, clients_map, consultants_map,
-            carteira_ids
+            set(all_client_ids)
         )
         _render_visits(
             ws_visits, visits_raw, period_label,
@@ -382,7 +382,7 @@ def generate_monthly_xlsx(request):
         )
         _render_atraso(
             ws_atraso, total_clients, photo_visits_by_client, clients_map,
-            period_label, filters_applied, carteira_ids
+            period_label, filters_applied, set(all_client_ids)
         )
         _render_products(
             ws_prods, visits_raw, period_label,
@@ -415,7 +415,7 @@ def _render_dashboard(
     coverage, clients_in_target, target_pct, meta_total,
     unique_clients_attended,
     photo_visits_by_client, clients_map, consultants_map,
-    carteira_ids
+    effective_client_ids
 ):
     s = _styles()
     ws.sheet_view.showGridLines = False
@@ -637,7 +637,8 @@ def _render_dashboard(
     _style_header_row(ws, progresso_row + 1, 1, 4, s)
 
     r = progresso_row + 2
-    for cid in sorted(carteira_ids, key=lambda k: -photo_visits_by_client.get(k, 0)):
+    all_meta_ids = set(effective_client_ids) | set(photo_visits_by_client.keys())
+    for cid in sorted(all_meta_ids, key=lambda k: -photo_visits_by_client.get(k, 0)):
         cnt = photo_visits_by_client.get(cid, 0)
         ws[f"A{r}"] = clients_map.get(cid, f"Cliente {cid}")
         ws[f"B{r}"] = cnt
@@ -857,7 +858,7 @@ def _render_visits(ws, visits_raw, period_label, total_lancamentos, unique_clien
 
 
 def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map,
-                   period_label, filters_applied, carteira_ids):
+                   period_label, filters_applied, effective_client_ids):
     s = _styles()
     ws.sheet_view.showGridLines = False
 
@@ -896,7 +897,8 @@ def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map,
     ws.freeze_panes = "A7"
 
     all_clients = []
-    for cid in carteira_ids:
+    all_meta_ids = set(effective_client_ids) | set(photo_visits_by_client.keys())
+    for cid in all_meta_ids:
         name = clients_map.get(cid, f"Cliente {cid}")
         cnt = photo_visits_by_client.get(cid, 0)
         if cnt < META_VISITAS_CLIENTE:
