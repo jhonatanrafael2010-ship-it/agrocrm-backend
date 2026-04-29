@@ -333,6 +333,9 @@ def generate_monthly_xlsx(request):
         # KPIs
         total_visits_unique = len(unique_visits)
         visits_with_photo = sum(1 for v in unique_visits if v["has_photo"])
+        total_launches_with_photo = sum(
+            1 for v in unique_visits for l in v["launches"] if _has_valid_photo(l)
+        )
         unique_clients_attended = len({v["client_id"] for v in unique_visits if v["has_photo"]})
         coverage = (unique_clients_attended / total_clients) if total_clients else 0
 
@@ -368,7 +371,8 @@ def generate_monthly_xlsx(request):
 
         _render_dashboard(
             ws_dash, unique_visits, period_label, filters_applied,
-            total_visits_unique, visits_with_photo, total_clients,
+            total_visits_unique, visits_with_photo, total_launches_with_photo,
+            total_clients,
             coverage, clients_in_target, target_pct, meta_total,
             unique_clients_attended,
             photo_visits_by_client, clients_map, consultants_map,
@@ -411,7 +415,8 @@ def generate_monthly_xlsx(request):
 
 def _render_dashboard(
     ws, unique_visits, period_label, filters_applied,
-    total_visits_unique, visits_with_photo, total_clients,
+    total_visits_unique, visits_with_photo, total_launches_with_photo,
+    total_clients,
     coverage, clients_in_target, target_pct, meta_total,
     unique_clients_attended,
     photo_visits_by_client, clients_map, consultants_map,
@@ -468,9 +473,9 @@ def _render_dashboard(
     ws.row_dimensions[11].height = 26
 
     _kpi_card(ws, "A", "C", 8, "VISITAS REALIZADAS",
-              total_visits_unique, "#,##0", s)
-    _kpi_card(ws, "D", "F", 8, "VISITAS CONCLUÍDAS (COM FOTO)",
               visits_with_photo, "#,##0", s)
+    _kpi_card(ws, "D", "F", 8, "LANÇAMENTOS",
+              total_launches_with_photo, "#,##0", s)
     _kpi_card(ws, "G", "I", 8, f"CLIENTES NA META ({META_VISITAS_CLIENTE}+)",
               clients_in_target, "#,##0", s)
     _kpi_card(ws, "J", "L", 8, "% DA META TOTAL",
