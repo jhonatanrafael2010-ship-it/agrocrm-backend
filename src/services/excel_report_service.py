@@ -267,7 +267,6 @@ def generate_monthly_xlsx(request):
             seasons_for_carteira,
             region_filter=filter_region or None,
         )
-        total_clients = len(carteira_ids)
 
         # União: clientes com visita no período (caem no relatório mesmo sem Planting)
         visits_clients_q = (
@@ -316,6 +315,7 @@ def generate_monthly_xlsx(request):
         plot_ids = sorted({l.plot_id for v in unique_visits for l in v["launches"] if l.plot_id})
 
         all_client_ids = sorted(carteira_ids | set(client_ids_in_visits))
+        total_clients = len(all_client_ids)
         clients_map = (
             {c.id: c.name for c in Client.query.filter(Client.id.in_(all_client_ids)).all()}
             if all_client_ids else {}
@@ -494,12 +494,15 @@ def _render_dashboard(
     ws["C16"] = "% do total"
     _style_header_row(ws, 16, 1, 3, s)
 
-    cons_counts = Counter(v["consultant_id"] for v in unique_visits if v["consultant_id"])
+    cons_counts = Counter(
+        v["consultant_id"] for v in unique_visits
+        if v["consultant_id"] and v["has_photo"]
+    )
     r = 17
     for cid, cnt in cons_counts.most_common():
         ws[f"A{r}"] = consultants_map.get(cid, f"Consultor #{cid}")
         ws[f"B{r}"] = cnt
-        ws[f"C{r}"] = (cnt / total_visits_unique) if total_visits_unique else 0
+        ws[f"C{r}"] = (cnt / visits_with_photo) if visits_with_photo else 0
         ws[f"C{r}"].number_format = "0.0%"
         for col in range(1, 4):
             ws.cell(r, col).border = s["border_data"]
@@ -517,6 +520,8 @@ def _render_dashboard(
 
     cult_counts = Counter()
     for v in unique_visits:
+        if not v["has_photo"]:
+            continue
         cult = (v["culture"] or "—").strip() or "—"
         cult_counts[cult] += 1
 
@@ -524,7 +529,7 @@ def _render_dashboard(
     for culture, cnt in cult_counts.most_common():
         ws[f"E{r}"] = culture
         ws[f"F{r}"] = cnt
-        ws[f"G{r}"] = (cnt / total_visits_unique) if total_visits_unique else 0
+        ws[f"G{r}"] = (cnt / visits_with_photo) if visits_with_photo else 0
         ws[f"G{r}"].number_format = "0.0%"
         for col in range(5, 8):
             ws.cell(r, col).border = s["border_data"]
@@ -558,7 +563,7 @@ def _render_dashboard(
     # Visitas por SEMANA
     week_buckets = defaultdict(lambda: {"label": "", "key": None, "count": 0})
     for v in unique_visits:
-        if not v["date"]:
+        if not v["date"] or not v["has_photo"]:
             continue
         label, key = _week_label(v["date"])
         bucket = week_buckets[key]
