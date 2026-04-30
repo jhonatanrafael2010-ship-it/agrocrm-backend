@@ -4647,6 +4647,57 @@ def start_guided_visit_flow_from_agent(
         "require_cycle_link": inferred_visit_kind == "cycle",
     }
 
+    # PRIORIDADE 1: visitas pendentes existentes — se existirem, oferecer edição
+    pending_visits, same_culture_found = find_pending_visits(
+        client_id=matched_client.id,
+        property_id=matched_property.id if matched_property else None,
+        culture=culture or None,
+        consultant_id=consultant.id if consultant else None,
+        limit=5,
+    )
+
+    if pending_visits:
+        suggestions = []
+        for visit in pending_visits:
+            suggestions.append({
+                "id": visit.id,
+                "planting_id": visit.planting_id,
+                "client_id": visit.client_id,
+                "property_id": visit.property_id,
+                "plot_id": visit.plot_id,
+                "culture": visit.culture,
+                "variety": visit.variety,
+                "date": visit.date.isoformat() if visit.date else None,
+                "recommendation": visit.recommendation or "",
+                "fenologia_real": visit.fenologia_real,
+                "property_name": visit.property.name if getattr(visit, "property", None) else None,
+                "plot_name": visit.plot.name if getattr(visit, "plot", None) else None,
+            })
+
+        confirmation_text = build_pending_visits_confirmation_text(
+            client_name=matched_client.name,
+            requested_culture=culture or "",
+            suggestions=suggestions,
+            same_culture_found=same_culture_found,
+        )
+
+        state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
+        state.visit_preview_json = json.dumps(visit_preview, ensure_ascii=False)
+        state.confirmation_text = confirmation_text
+        state.status = "awaiting_confirmation"
+        db.session.commit()
+
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text=confirmation_text,
+        )
+
+        return jsonify({
+            "ok": True,
+            "message": "agente iniciou fluxo guiado com pendências encontradas",
+        }), 200
+
+    # PRIORIDADE 2: ciclo ativo — sem pendências, tentar vincular a um planting
     active_cycle, cycle_candidates = find_active_cycle_for_agent(
         client_id=matched_client.id,
         property_id=matched_property.id if matched_property else None,
@@ -4694,93 +4745,43 @@ def start_guided_visit_flow_from_agent(
             "message": "aguardando confirmação de ciclo",
         }), 200
 
-    # fallback secundário: pendências antigas
-    pending_visits, same_culture_found = find_pending_visits(
-        client_id=matched_client.id,
-        property_id=matched_property.id if matched_property else None,
-        culture=culture or None,
-        consultant_id=consultant.id if consultant else None,
-        limit=5,
-    )
-
-    if not pending_visits:
-        # ✅ visita de ciclo sem planting_id resolvido NÃO pode seguir direto
-        if should_require_cycle_link(visit_preview) and not visit_preview.get("planting_id"):
-            warning_text = (
-                f"Consegui identificar o cliente {matched_client.name}, "
-                f"mas ainda não consegui vincular essa visita com segurança ao ciclo correto.\n\n"
-                f"Para continuar, me informe pelo menos a fazenda e o talhão.\n"
-                f"Exemplo:\n"
-                f"cliente {matched_client.name} fazenda Santa Luzia talhão 7 {culture or 'milho'} {fenologia_real or 'V4'} hoje observações ..."
-            )
-
-            state.pending_visit_suggestions_json = json.dumps([], ensure_ascii=False)
-            state.visit_preview_json = json.dumps({
-                "visit_preview": visit_preview,
-                "original_message": original_message_text,
-                "reason": "cycle_link_required",
-            }, ensure_ascii=False)
-            state.confirmation_text = warning_text
-            state.status = "cancelled"
-            db.session.commit()
-
-            send_telegram_message(
-                chat_id=chat_message.chat_id,
-                text=warning_text,
-            )
-
-            return jsonify({
-                "ok": True,
-                "message": "visita de ciclo bloqueada por ausência de planting_id",
-            }), 200
-
-        return start_new_visit_direct_confirmation(
-            state=state,
-            chat_message=chat_message,
-            visit_preview=visit_preview,
-            matched_client=matched_client,
-            matched_property=matched_property,
+    # Sem pendências e sem ciclo identificável
+    if should_require_cycle_link(visit_preview) and not visit_preview.get("planting_id"):
+        warning_text = (
+            f"Consegui identificar o cliente {matched_client.name}, "
+            f"mas ainda não consegui vincular essa visita com segurança ao ciclo correto.\n\n"
+            f"Para continuar, me informe pelo menos a fazenda e o talhão.\n"
+            f"Exemplo:\n"
+            f"cliente {matched_client.name} fazenda Santa Luzia talhão 7 {culture or 'milho'} {fenologia_real or 'V4'} hoje observações ..."
         )
 
-    suggestions = []
-    for visit in pending_visits:
-        suggestions.append({
-            "id": visit.id,
-            "planting_id": visit.planting_id,
-            "client_id": visit.client_id,
-            "property_id": visit.property_id,
-            "plot_id": visit.plot_id,
-            "culture": visit.culture,
-            "variety": visit.variety,
-            "date": visit.date.isoformat() if visit.date else None,
-            "recommendation": visit.recommendation or "",
-            "fenologia_real": visit.fenologia_real,
-            "property_name": visit.property.name if getattr(visit, "property", None) else None,
-            "plot_name": visit.plot.name if getattr(visit, "plot", None) else None,
-        })
+        state.pending_visit_suggestions_json = json.dumps([], ensure_ascii=False)
+        state.visit_preview_json = json.dumps({
+            "visit_preview": visit_preview,
+            "original_message": original_message_text,
+            "reason": "cycle_link_required",
+        }, ensure_ascii=False)
+        state.confirmation_text = warning_text
+        state.status = "cancelled"
+        db.session.commit()
 
-    confirmation_text = build_pending_visits_confirmation_text(
-        client_name=matched_client.name,
-        requested_culture=culture or "",
-        suggestions=suggestions,
-        same_culture_found=same_culture_found,
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text=warning_text,
+        )
+
+        return jsonify({
+            "ok": True,
+            "message": "visita de ciclo bloqueada por ausência de planting_id",
+        }), 200
+
+    return start_new_visit_direct_confirmation(
+        state=state,
+        chat_message=chat_message,
+        visit_preview=visit_preview,
+        matched_client=matched_client,
+        matched_property=matched_property,
     )
-
-    state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
-    state.visit_preview_json = json.dumps(visit_preview, ensure_ascii=False)
-    state.confirmation_text = confirmation_text
-    state.status = "awaiting_confirmation"
-    db.session.commit()
-
-    send_telegram_message(
-        chat_id=chat_message.chat_id,
-        text=confirmation_text,
-    )
-
-    return jsonify({
-        "ok": True,
-        "message": "agente iniciou fluxo guiado com pendências encontradas",
-    }), 200
 
 
 
