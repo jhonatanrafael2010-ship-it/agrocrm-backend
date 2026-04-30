@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c//**)",
+      "Read(//c/AgroCRM//**)",
+      "Read(//c/Celular//**)",
+      "Bash(python -c ' *)",
+      "Bash(npm run *)"
+    ]
+  }
+}

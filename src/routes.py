@@ -10420,3 +10420,547 @@ def me():
         return jsonify(message=err), 401
     return jsonify(id=user.id, email=user.email), 200
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MOBILE CHAT ENDPOINT
+# POST /api/mobile/chat
+# Processa mensagens do app mobile pela mesma pipeline do bot Telegram,
+# mas retorna o texto da resposta diretamente no JSON em vez de enviar via API Telegram.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _mob_get_state(session_id: str):
+    return ChatbotConversationState.query.filter_by(
+        platform="mobile", chat_id=session_id
+    ).first()
+
+
+def _mob_ensure_state(session_id: str):
+    st = _mob_get_state(session_id)
+    if not st:
+        st = ChatbotConversationState(platform="mobile", chat_id=session_id)
+        db.session.add(st)
+    return st
+
+
+@bp.route("/mobile/chat", methods=["POST"])
+def mobile_chat():
+    data = request.get_json(force=True) or {}
+    session_id = (data.get("session_id") or request.headers.get("X-Session-Id", "")).strip()
+    message_text = (data.get("message") or "").strip()
+    consultant_id_raw = data.get("consultant_id") or request.headers.get("X-Consultant-Id")
+    photos = data.get("photos") or []
+
+    if not session_id:
+        return jsonify({"ok": False, "error": "session_id obrigatório"}), 400
+
+    # Resolve consultant from DB (same IDs used by Telegram)
+    consultant = None
+    resolved_consultant_id = None
+    if consultant_id_raw:
+        try:
+            cid = int(consultant_id_raw)
+            consultant = Consultant.query.get(cid)
+            if consultant:
+                resolved_consultant_id = cid
+        except (ValueError, TypeError):
+            pass
+
+    state = _mob_get_state(session_id)
+    status = state.status if state else None
+
+    if status == "awaiting_final_confirmation":
+        resp = _mob_final_confirmation(session_id, state, message_text, resolved_consultant_id, photos)
+    elif status == "awaiting_confirmation":
+        resp = _mob_awaiting_confirmation(session_id, state, message_text, resolved_consultant_id)
+    elif status == "awaiting_client_confirmation":
+        resp = _mob_client_confirmation(session_id, state, message_text, consultant, resolved_consultant_id)
+    elif status in ("awaiting_fenologia", "awaiting_date", "awaiting_observations", "awaiting_culture"):
+        resp = _mob_guided_field(session_id, state, message_text, status)
+    else:
+        resp = _mob_new_message(session_id, message_text, photos, consultant, resolved_consultant_id)
+
+    return jsonify({"ok": True, "response": resp}), 200
+
+
+def _mob_new_message(session_id, message_text, photos, consultant, resolved_consultant_id):
+    context = {
+        "platform": "mobile",
+        "chat_id": session_id,
+        "consultant_id": resolved_consultant_id,
+        "consultant_name": consultant.name if consultant else None,
+        "current_state": "",
+        "message_text": message_text,
+    }
+
+    agent_result = AGENT_SERVICE.process(message_text=message_text, context=context)
+    execution = agent_result.get("execution") or {}
+    action = execution.get("action")
+    entities = execution.get("entities") or {}
+
+    if not action or execution.get("should_fallback", True):
+        return (
+            "Não entendi. Exemplos:\n"
+            "• cliente João Silva soja R5 ontem observação...\n"
+            "• agenda da semana\n"
+            "• meu dia"
+        )
+
+    if action == "START_GUIDED_VISIT_FROM_FREE_TEXT":
+        return _mob_start_visit_flow(session_id, message_text, entities, consultant, resolved_consultant_id, photos)
+
+    if action == "ROUTE_TO_WEEK_SCHEDULE":
+        return _mob_week_schedule_text(consultant, resolved_consultant_id)
+
+    if action == "ROUTE_TO_DAILY_ROUTINE":
+        return _mob_daily_routine_text(consultant, resolved_consultant_id)
+
+    return "Ação reconhecida mas ainda não suportada no app. Use: 'cliente Nome cultura fenologia data observações'."
+
+
+def _mob_start_visit_flow(session_id, original_message, entities, consultant, resolved_consultant_id, photos):
+    client_name = (entities.get("client_name") or "").strip()
+    culture = (entities.get("culture") or "").strip()
+    fenologia_real = (entities.get("fenologia_real") or "").strip()
+    recommendation = (entities.get("recommendation") or "").strip()
+    date_value = entities.get("date")
+    products = normalize_products_from_parsed(entities.get("products") or [])
+    property_name = (entities.get("property_name") or "").strip()
+
+    if not client_name:
+        return "Informe o nome do cliente. Exemplo: 'cliente João Silva soja R5 hoje'"
+
+    matched_client, client_candidates, needs_confirmation = find_client_by_name(client_name)
+
+    if needs_confirmation and client_candidates:
+        state = _mob_ensure_state(session_id)
+        state.last_message = original_message
+        state.pending_visit_suggestions_json = json.dumps(
+            [{"id": c.id, "name": c.name} for c in client_candidates[:3]], ensure_ascii=False
+        )
+        state.visit_preview_json = json.dumps({}, ensure_ascii=False)
+        state.status = "awaiting_client_confirmation"
+        db.session.commit()
+
+        lines = ["Encontrei mais de um cliente com esse nome. Qual deles?\n"]
+        for i, c in enumerate(client_candidates[:3], 1):
+            lines.append(f"{i}. {c.name}")
+        return "\n".join(lines)
+
+    if not matched_client:
+        return f"Cliente '{client_name}' não encontrado. Verifique o nome e tente novamente."
+
+    matched_property = None
+    if property_name:
+        matched_property, _, _ = find_property_by_name(property_name, matched_client.id)
+
+    # Resolve date
+    resolved_date = None
+    if date_value:
+        d = parse_human_date(date_value)
+        resolved_date = d.isoformat() if d else parse_date_flexible(date_value)
+
+    parsed_recommendation = extract_recommendation_fallback(original_message) or recommendation
+
+    visit_preview = {
+        "client_id": matched_client.id,
+        "property_id": matched_property.id if matched_property else None,
+        "plot_id": None,
+        "consultant_id": resolved_consultant_id,
+        "date": resolved_date,
+        "status": "planned",
+        "culture": culture,
+        "variety": "",
+        "fenologia_real": fenologia_real or None,
+        "recommendation": parsed_recommendation,
+        "products": products,
+        "latitude": None,
+        "longitude": None,
+        "generate_schedule": False,
+        "source": "mobile",
+    }
+
+    pending_visits, same_culture_found = find_pending_visits(
+        client_id=matched_client.id,
+        property_id=matched_property.id if matched_property else None,
+        culture=culture or None,
+        consultant_id=resolved_consultant_id,
+        limit=5,
+    )
+
+    suggestions = []
+    for v in pending_visits:
+        suggestions.append({
+            "id": v.id,
+            "date": v.date.isoformat() if v.date else None,
+            "status": v.status,
+            "culture": v.culture,
+            "variety": v.variety,
+            "fenologia_real": v.fenologia_real,
+            "recommendation": (v.recommendation or "").strip(),
+            "client_id": v.client_id,
+            "property_id": v.property_id,
+            "plot_id": v.plot_id,
+            "property_name": v.property.name if getattr(v, "property", None) else "",
+            "plot_name": v.plot.name if getattr(v, "plot", None) else "",
+            "display_text": v.to_dict().get("display_text"),
+        })
+
+    confirmation_text = build_pending_visits_confirmation_text(
+        client_name=matched_client.name,
+        requested_culture=culture or None,
+        suggestions=suggestions,
+        same_culture_found=same_culture_found,
+    )
+
+    state = _mob_ensure_state(session_id)
+    state.last_message = original_message
+    state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
+    state.visit_preview_json = json.dumps(visit_preview, ensure_ascii=False)
+    state.confirmation_text = confirmation_text
+    state.status = "awaiting_confirmation"
+    db.session.commit()
+
+    return confirmation_text
+
+
+def _mob_awaiting_confirmation(session_id, state, message_text, resolved_consultant_id):
+    parsed_reply = parse_pending_reply(message_text)
+
+    if not parsed_reply:
+        return state.confirmation_text or "Responda com o número da visita ou NOVA VISITA."
+
+    pending_visit_suggestions = json.loads(state.pending_visit_suggestions_json or "[]")
+    visit_preview = json.loads(state.visit_preview_json or "{}")
+    mode = parsed_reply["mode"]
+
+    if mode == "create_new":
+        final_visit_payload = {
+            **visit_preview,
+            "culture": "",
+            "fenologia_real": None,
+            "date": None,
+            "recommendation": "",
+        }
+        state.visit_preview_json = json.dumps(
+            build_guided_state_payload("create_new_visit", final_visit_payload, None, False),
+            ensure_ascii=False,
+        )
+        state.status = "awaiting_culture"
+        db.session.commit()
+        return "🌱 Informe a cultura da visita.\nExemplo: Milho, Soja, Algodão"
+
+    idx = parsed_reply.get("index", -1)
+    if idx < 0 or idx >= len(pending_visit_suggestions):
+        return "Número inválido. Revise as opções e tente novamente."
+
+    selected = pending_visit_suggestions[idx]
+    action = "use_existing_pending_visit"
+    close_only = (mode == "close_only")
+
+    final_visit_payload = {
+        **visit_preview,
+        "client_id": selected.get("client_id") or visit_preview.get("client_id"),
+        "property_id": selected.get("property_id") or visit_preview.get("property_id"),
+        "plot_id": selected.get("plot_id") or visit_preview.get("plot_id"),
+        "consultant_id": resolved_consultant_id or visit_preview.get("consultant_id"),
+        "linked_pending_visit_id": selected.get("id"),
+        "status": "done",
+        "culture": visit_preview.get("culture") or selected.get("culture") or "",
+        "variety": selected.get("variety") or visit_preview.get("variety") or "",
+        "fenologia_real": visit_preview.get("fenologia_real"),
+        "date": visit_preview.get("date"),
+        "recommendation": visit_preview.get("recommendation") or "",
+        "products": visit_preview.get("products") or [],
+        "latitude": visit_preview.get("latitude"),
+        "longitude": visit_preview.get("longitude"),
+        "source": "mobile",
+    }
+
+    # Prefill missing fields from original message
+    original_message = (state.last_message or "").strip()
+    robust_prefill = extract_prefill_from_message_text(original_message)
+    original_parsed = parse_chatbot_message(original_message) or {}
+
+    composite_fenologia = (parsed_reply or {}).get("fenologia")
+    if composite_fenologia:
+        final_visit_payload["fenologia_real"] = composite_fenologia
+
+    if not (final_visit_payload.get("fenologia_real") or "").strip():
+        final_visit_payload["fenologia_real"] = (
+            (robust_prefill.get("fenologia_real") or "").strip()
+            or (original_parsed.get("fenologia_real") or "").strip()
+            or None
+        )
+
+    if not final_visit_payload.get("date"):
+        fallback_date = robust_prefill.get("date") or original_parsed.get("date")
+        if fallback_date:
+            d = parse_human_date(fallback_date)
+            fallback_date = d.isoformat() if d else parse_date_flexible(fallback_date)
+        final_visit_payload["date"] = fallback_date
+
+    if not (final_visit_payload.get("recommendation") or "").strip():
+        final_visit_payload["recommendation"] = (
+            (robust_prefill.get("recommendation") or "").strip()
+            or (original_parsed.get("recommendation") or "").strip()
+            or (selected.get("recommendation") or "").strip()
+            or ""
+        )
+
+    has_fenologia = bool((final_visit_payload.get("fenologia_real") or "").strip())
+    has_date = bool(final_visit_payload.get("date"))
+    has_obs = bool((final_visit_payload.get("recommendation") or "").strip())
+
+    if close_only or (has_fenologia and has_date and has_obs):
+        summary_text = build_visit_summary_text(action, final_visit_payload, selected, close_only)
+        state.visit_preview_json = json.dumps(
+            build_guided_state_payload(action, final_visit_payload, selected, close_only),
+            ensure_ascii=False,
+        )
+        state.confirmation_text = summary_text
+        state.status = "awaiting_final_confirmation"
+        db.session.commit()
+        return summary_text
+
+    if not has_fenologia:
+        next_status, next_msg = "awaiting_fenologia", "🌿 Informe a fenologia observada.\nExemplo: V4, V5, R1"
+    elif not has_date:
+        next_status, next_msg = "awaiting_date", "📅 Informe a data da visita.\nExemplo: hoje, ontem ou 24/02/2026"
+    else:
+        next_status, next_msg = "awaiting_observations", "💬 Informe as observações da visita."
+
+    state.visit_preview_json = json.dumps(
+        build_guided_state_payload(action, final_visit_payload, selected, close_only),
+        ensure_ascii=False,
+    )
+    state.status = next_status
+    db.session.commit()
+    return next_msg
+
+
+def _mob_client_confirmation(session_id, state, message_text, consultant, resolved_consultant_id):
+    text = message_text.strip()
+    candidates = json.loads(state.pending_visit_suggestions_json or "[]")
+    original_message = (state.last_message or "").strip()
+
+    if text.isdigit():
+        idx = int(text) - 1
+        if 0 <= idx < len(candidates):
+            chosen = candidates[idx]
+            from models import Client as ClientModel
+            matched_client = ClientModel.query.get(chosen["id"])
+            if matched_client:
+                state.status = None
+                db.session.commit()
+                return _mob_start_visit_flow(
+                    session_id, original_message,
+                    {"client_name": matched_client.name, **_extract_entities_from_text(original_message)},
+                    consultant, resolved_consultant_id, [],
+                )
+    return (
+        "Número inválido. Escolha:\n"
+        + "\n".join(f"{i+1}. {c['name']}" for i, c in enumerate(candidates))
+    )
+
+
+def _extract_entities_from_text(text):
+    parsed = parse_chatbot_message(text) or {}
+    return {
+        "culture": parsed.get("culture") or "",
+        "fenologia_real": parsed.get("fenologia_real") or "",
+        "date": parsed.get("date"),
+        "recommendation": parsed.get("recommendation") or "",
+        "products": parsed.get("products") or [],
+        "property_name": parsed.get("property_name") or "",
+    }
+
+
+def _mob_guided_field(session_id, state, message_text, current_status):
+    try:
+        preview_data = json.loads(state.visit_preview_json or "{}")
+    except Exception:
+        preview_data = {}
+
+    final_visit_payload = preview_data.get("final_visit_payload") or {}
+    selected_pending_visit = preview_data.get("selected_pending_visit") or {}
+    action = preview_data.get("action") or "create_new_visit"
+    close_only = bool(preview_data.get("close_only"))
+    next_status = None
+    next_msg = ""
+
+    if current_status == "awaiting_culture":
+        culture = normalize_culture_input(message_text.strip())
+        if not culture:
+            return "Cultura não reconhecida. Exemplos: Soja, Milho, Algodão."
+        final_visit_payload["culture"] = culture
+        next_status, next_msg = "awaiting_fenologia", "🌿 Informe a fenologia.\nExemplo: V4, R1"
+
+    elif current_status == "awaiting_fenologia":
+        if not is_valid_fenologia(message_text.strip()):
+            return "Fenologia inválida. Exemplo: V4, V10, VT, R1."
+        final_visit_payload["fenologia_real"] = message_text.strip().upper()
+        next_status, next_msg = "awaiting_date", "📅 Informe a data da visita.\nExemplo: hoje, ontem ou 24/02/2026"
+
+    elif current_status == "awaiting_date":
+        d = parse_human_date(message_text.strip())
+        if d:
+            final_visit_payload["date"] = d.isoformat()
+        else:
+            iso = parse_date_flexible(message_text.strip())
+            if not iso:
+                return "Data não reconhecida. Exemplo: hoje, ontem, 24/02/2026."
+            final_visit_payload["date"] = iso
+        next_status, next_msg = "awaiting_observations", "💬 Informe as observações da visita."
+
+    elif current_status == "awaiting_observations":
+        final_visit_payload["recommendation"] = message_text.strip()
+        summary_text = build_visit_summary_text(action, final_visit_payload, selected_pending_visit or None, close_only)
+        state.visit_preview_json = json.dumps(
+            build_guided_state_payload(action, final_visit_payload, selected_pending_visit or None, close_only),
+            ensure_ascii=False,
+        )
+        state.confirmation_text = summary_text
+        state.status = "awaiting_final_confirmation"
+        db.session.commit()
+        return summary_text
+
+    state.visit_preview_json = json.dumps(
+        build_guided_state_payload(action, final_visit_payload, selected_pending_visit or None, close_only),
+        ensure_ascii=False,
+    )
+    state.status = next_status
+    db.session.commit()
+    return next_msg
+
+
+def _mob_final_confirmation(session_id, state, message_text, resolved_consultant_id, photos):
+    reply = parse_pending_reply(message_text)
+
+    if not reply:
+        return (
+            "Não entendi. Responda com:\n"
+            "✅ CONFIRMAR\n"
+            "❌ CANCELAR"
+        )
+
+    if reply["mode"] == "cancel_final":
+        db.session.delete(state)
+        db.session.commit()
+        return "Operação cancelada."
+
+    if reply["mode"] != "confirm_final":
+        return "Para confirmar responda CONFIRMAR. Para cancelar responda CANCELAR."
+
+    try:
+        preview_data = json.loads(state.visit_preview_json or "{}")
+    except Exception:
+        preview_data = {}
+
+    action = preview_data.get("action") or "create_new_visit"
+    base_preview = preview_data.get("final_visit_payload") or {}
+    selected_pending_visit = preview_data.get("selected_pending_visit") or {}
+    close_only = bool(preview_data.get("close_only"))
+
+    final_visit_payload = build_final_visit_payload(
+        base_preview=base_preview,
+        selected_pending_visit=selected_pending_visit,
+        resolved_consultant_id=base_preview.get("consultant_id") or resolved_consultant_id or 1,
+        close_only=close_only,
+    )
+
+    try:
+        visit = None
+
+        if action == "use_existing_pending_visit":
+            visit_id = (
+                final_visit_payload.get("linked_pending_visit_id")
+                or selected_pending_visit.get("id")
+            )
+            if not visit_id:
+                raise ValueError("ID da visita pendente não encontrado")
+            visit = Visit.query.get(visit_id)
+            if not visit:
+                raise ValueError(f"Visita {visit_id} não encontrada")
+            visit = apply_payload_to_existing_visit(visit=visit, final_visit_payload=final_visit_payload, close_only=close_only)
+        elif action == "create_new_visit":
+            visit = create_visit_from_payload(final_visit_payload)
+        else:
+            raise ValueError(f"Ação inválida: {action}")
+
+        auto_closed_ids = auto_close_previous_cycle_visits(visit)
+
+        # Attach photos sent via mobile (URLs or uploaded files)
+        attached_count = 0
+        if photos and visit:
+            for photo_info in photos:
+                url = photo_info.get("url") or photo_info.get("filename")
+                if url:
+                    from models import Photo
+                    p = Photo(visit_id=visit.id, filename=url, source="mobile")
+                    db.session.add(p)
+                    attached_count += 1
+            if attached_count:
+                db.session.commit()
+
+        db.session.delete(state)
+        db.session.commit()
+
+        lines = []
+        if action == "use_existing_pending_visit":
+            lines.append(f"✅ Visita {visit.id} atualizada e concluída com sucesso.")
+        else:
+            lines.append(f"✅ Nova visita criada com sucesso. ID {visit.id}.")
+
+        if auto_closed_ids:
+            lines.append(f"🔄 Fechei automaticamente {len(auto_closed_ids)} visita(s) anterior(es) do mesmo ciclo.")
+
+        if attached_count:
+            lines.append(f"📸 {attached_count} foto(s) vinculada(s).")
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Erro ao confirmar visita mobile: {e}")
+        return f"Erro ao salvar visita: {str(e)}"
+
+
+def _mob_week_schedule_text(consultant, resolved_consultant_id) -> str:
+    from datetime import date as _d, timedelta as _td
+    today = _d.today()
+    start = today - _timedelta(days=today.weekday())
+    end = start + _timedelta(days=6)
+    visits = Visit.query.filter(
+        Visit.date >= start,
+        Visit.date <= end,
+        Visit.consultant_id == resolved_consultant_id,
+    ).order_by(Visit.date).limit(20).all() if resolved_consultant_id else []
+
+    if not visits:
+        return "Nenhuma visita encontrada para esta semana."
+
+    lines = [f"📅 Agenda da semana ({start.strftime('%d/%m')} – {end.strftime('%d/%m')}):\n"]
+    for v in visits:
+        date_str = v.date.strftime("%d/%m") if v.date else "—"
+        client_name = v.client.name if getattr(v, "client", None) else "—"
+        lines.append(f"• {date_str} – {client_name} ({v.culture or '?'})")
+    return "\n".join(lines)
+
+
+def _mob_daily_routine_text(consultant, resolved_consultant_id) -> str:
+    from datetime import date as _d
+    today = _d.today()
+    visits = Visit.query.filter(
+        Visit.date == today,
+        Visit.consultant_id == resolved_consultant_id,
+    ).order_by(Visit.id).limit(10).all() if resolved_consultant_id else []
+
+    if not visits:
+        return f"Nenhuma visita agendada para hoje ({today.strftime('%d/%m/%Y')})."
+
+    lines = [f"📋 Sua rotina de hoje ({today.strftime('%d/%m/%Y')}):\n"]
+    for i, v in enumerate(visits, 1):
+        client_name = v.client.name if getattr(v, "client", None) else "—"
+        lines.append(f"{i}. {client_name} – {v.culture or '?'} ({v.status})")
+    return "\n".join(lines)
+
