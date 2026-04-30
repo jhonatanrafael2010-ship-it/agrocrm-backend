@@ -78,11 +78,26 @@ def extract_date_iso(message: str) -> Optional[str]:
     if "hoje" in msg:
         return today.isoformat()
 
+    if "depois de amanha" in msg or "depois de amanhã" in message.lower():
+        return (today + timedelta(days=2)).isoformat()
+
     if "amanha" in msg or "amanhã" in message.lower():
         return (today + timedelta(days=1)).isoformat()
 
-    if "depois de amanha" in msg or "depois de amanhã" in message.lower():
-        return (today + timedelta(days=2)).isoformat()
+    if "anteontem" in msg:
+        return (today - timedelta(days=2)).isoformat()
+
+    if "ontem" in msg:
+        return (today - timedelta(days=1)).isoformat()
+
+    # "X dias atrás" / "há X dias"
+    match_days_ago = re.search(r"(\d+)\s*dias?\s*atr[aá]s", msg)
+    if match_days_ago:
+        return (today - timedelta(days=int(match_days_ago.group(1)))).isoformat()
+
+    match_ha_days = re.search(r"h[aá]\s+(\d+)\s*dias?", msg)
+    if match_ha_days:
+        return (today - timedelta(days=int(match_ha_days.group(1)))).isoformat()
 
     # formato YYYY-MM-DD
     match_iso = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", message)
