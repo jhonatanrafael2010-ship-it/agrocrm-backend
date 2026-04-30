@@ -2,6 +2,7 @@
 # Python (stdlib)
 # =========================
 from datetime import datetime, date, timedelta
+import base64
 import calendar
 import os
 import re
@@ -10442,6 +10443,29 @@ def _mob_ensure_state(session_id: str):
     return st
 
 
+def _upload_base64_to_r2(data_url: str, filename: str):
+    try:
+        bucket = os.environ.get("R2_BUCKET")
+        public_base = (os.environ.get("R2_PUBLIC_BASE_URL") or "").rstrip("/")
+        if not bucket or not public_base:
+            return None
+        b64data = data_url.split(",", 1)[1] if "," in data_url else data_url
+        img_bytes = base64.b64decode(b64data)
+        r2 = get_r2_client()
+        safe_name = secure_filename(filename or "foto.jpg")
+        key = f"mobile_chat/{uuid.uuid4().hex}_{safe_name}"
+        r2.upload_fileobj(
+            Fileobj=io.BytesIO(img_bytes),
+            Bucket=bucket,
+            Key=key,
+            ExtraArgs={"ContentType": "image/jpeg"},
+        )
+        return f"{public_base}/{key}"
+    except Exception as e:
+        print(f"❌ Erro ao enviar foto para R2: {e}")
+        return None
+
+
 @bp.route("/mobile/chat", methods=["POST"])
 def mobile_chat():
     data = request.get_json(force=True) or {}
@@ -10476,6 +10500,8 @@ def mobile_chat():
         resp = _mob_client_confirmation(session_id, state, message_text, consultant, resolved_consultant_id)
     elif status in ("awaiting_fenologia", "awaiting_date", "awaiting_observations", "awaiting_culture"):
         resp = _mob_guided_field(session_id, state, message_text, status)
+    elif status == "awaiting_visit_details":
+        resp = _mob_visit_details_with_stored_photos(session_id, state, message_text, photos, consultant, resolved_consultant_id)
     else:
         resp = _mob_new_message(session_id, message_text, photos, consultant, resolved_consultant_id)
 
@@ -10483,6 +10509,26 @@ def mobile_chat():
 
 
 def _mob_new_message(session_id, message_text, photos, consultant, resolved_consultant_id):
+    # Photo-only: upload to R2, store URLs, ask for visit details
+    is_photo_only = (not message_text or message_text == "(foto)") and bool(photos)
+    if is_photo_only:
+        photo_urls = []
+        for p in photos:
+            url = _upload_base64_to_r2(p.get("dataUrl", ""), p.get("filename", "foto.jpg"))
+            if url:
+                photo_urls.append(url)
+        state = _mob_ensure_state(session_id)
+        state.visit_preview_json = json.dumps({"pending_photos": photo_urls}, ensure_ascii=False)
+        state.status = "awaiting_visit_details"
+        db.session.commit()
+        n = len(photo_urls)
+        s = "s" if n != 1 else ""
+        return (
+            f"📸 {n} foto{s} recebida{s}!\n"
+            "Agora informe os detalhes da visita:\n"
+            "Exemplo: cliente João Silva soja R5 ontem"
+        )
+
     context = {
         "platform": "mobile",
         "chat_id": session_id,
@@ -10515,6 +10561,22 @@ def _mob_new_message(session_id, message_text, photos, consultant, resolved_cons
         return _mob_daily_routine_text(consultant, resolved_consultant_id)
 
     return "Ação reconhecida mas ainda não suportada no app. Use: 'cliente Nome cultura fenologia data observações'."
+
+
+def _mob_visit_details_with_stored_photos(session_id, state, message_text, photos, consultant, resolved_consultant_id):
+    """Called when status == 'awaiting_visit_details' (photos were uploaded, now user sent visit text)."""
+    try:
+        preview_data = json.loads(state.visit_preview_json or "{}")
+    except Exception:
+        preview_data = {}
+    stored_photo_urls = preview_data.get("pending_photos") or []
+    # Convert stored URLs to the format _mob_start_visit_flow expects
+    stored_photos = [{"url": u, "filename": u.split("/")[-1]} for u in stored_photo_urls]
+    combined_photos = stored_photos + list(photos or [])
+    state.status = None
+    state.visit_preview_json = None
+    db.session.commit()
+    return _mob_new_message(session_id, message_text, combined_photos, consultant, resolved_consultant_id)
 
 
 def _mob_start_visit_flow(session_id, original_message, entities, consultant, resolved_consultant_id, photos):
@@ -10561,6 +10623,13 @@ def _mob_start_visit_flow(session_id, original_message, entities, consultant, re
 
     parsed_recommendation = extract_recommendation_fallback(original_message) or recommendation
 
+    # Upload photos to R2 immediately so URLs survive across state transitions
+    photo_urls = []
+    for p in (photos or []):
+        url = _upload_base64_to_r2(p.get("dataUrl", ""), p.get("filename", "foto.jpg"))
+        if url:
+            photo_urls.append(url)
+
     visit_preview = {
         "client_id": matched_client.id,
         "property_id": matched_property.id if matched_property else None,
@@ -10577,6 +10646,7 @@ def _mob_start_visit_flow(session_id, original_message, entities, consultant, re
         "longitude": None,
         "generate_schedule": False,
         "source": "mobile",
+        "photos": photo_urls,
     }
 
     pending_visits, same_culture_found = find_pending_visits(
@@ -10649,7 +10719,15 @@ def _mob_awaiting_confirmation(session_id, state, message_text, resolved_consult
         db.session.commit()
         return "🌱 Informe a cultura da visita.\nExemplo: Milho, Soja, Algodão"
 
-    idx = parsed_reply.get("index", -1)
+    if mode == "cancel_final":
+        db.session.delete(state)
+        db.session.commit()
+        return "Operação cancelada."
+
+    if mode == "confirm_final":
+        return state.confirmation_text or "Responda com o número da visita ou NOVA VISITA."
+
+    idx = parsed_reply.get("index") if parsed_reply.get("index") is not None else -1
     if idx < 0 or idx >= len(pending_visit_suggestions):
         return "Número inválido. Revise as opções e tente novamente."
 
@@ -10889,16 +10967,26 @@ def _mob_final_confirmation(session_id, state, message_text, resolved_consultant
 
         auto_closed_ids = auto_close_previous_cycle_visits(visit)
 
-        # Attach photos sent via mobile (URLs or uploaded files)
+        # Attach photos: stored R2 URLs from state + any new base64 in this request
+        stored_photo_urls = base_preview.get("photos") or []
+        stored_photo_infos = [{"url": u} for u in stored_photo_urls]
+        all_photos = stored_photo_infos + list(photos or [])
         attached_count = 0
-        if photos and visit:
-            for photo_info in photos:
-                url = photo_info.get("url") or photo_info.get("filename")
-                if url:
-                    from models import Photo
-                    p = Photo(visit_id=visit.id, filename=url, source="mobile")
-                    db.session.add(p)
-                    attached_count += 1
+        if all_photos and visit:
+            from models import Photo as PhotoModel
+            for photo_info in all_photos:
+                raw = photo_info.get("url") or photo_info.get("filename") or photo_info.get("dataUrl") or ""
+                if not raw:
+                    continue
+                if raw.startswith("data:"):
+                    photo_url = _upload_base64_to_r2(raw, photo_info.get("filename") or "foto.jpg")
+                    if not photo_url:
+                        continue
+                else:
+                    photo_url = raw
+                p = PhotoModel(visit_id=visit.id, filename=photo_url, source="mobile")
+                db.session.add(p)
+                attached_count += 1
             if attached_count:
                 db.session.commit()
 
@@ -10963,4 +11051,30 @@ def _mob_daily_routine_text(consultant, resolved_consultant_id) -> str:
         client_name = v.client.name if getattr(v, "client", None) else "—"
         lines.append(f"{i}. {client_name} – {v.culture or '?'} ({v.status})")
     return "\n".join(lines)
+
+
+@bp.route("/mobile/transcribe", methods=["POST"])
+def mobile_transcribe():
+    data = request.get_json(force=True) or {}
+    audio_b64 = (data.get("audio_base64") or "").strip()
+    audio_format = (data.get("format") or "webm").strip().lstrip(".")
+
+    if not audio_b64:
+        return jsonify({"ok": False, "error": "audio_base64 obrigatório"}), 400
+
+    try:
+        b64clean = audio_b64.split(",", 1)[1] if "," in audio_b64 else audio_b64
+        audio_bytes = base64.b64decode(b64clean)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Base64 inválido: {e}"}), 400
+
+    wav_bytes, err = convert_audio_bytes_to_wav(audio_bytes, input_suffix=f".{audio_format}")
+    if err or not wav_bytes:
+        return jsonify({"ok": False, "error": f"Conversão de áudio falhou: {err}"}), 500
+
+    text, err = transcribe_audio_bytes(wav_bytes, filename="audio.wav")
+    if err or not text:
+        return jsonify({"ok": False, "error": f"Transcrição falhou: {err}"}), 500
+
+    return jsonify({"ok": True, "text": text}), 200
 

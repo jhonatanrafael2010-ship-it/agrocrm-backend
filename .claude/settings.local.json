@@ -5,7 +5,9 @@
       "Read(//c/AgroCRM//**)",
       "Read(//c/Celular//**)",
       "Bash(python -c ' *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(grep -n \"\\\\\\\\\\(foto\\\\\\\\\\)\\\\\\\\|foto\\)\" /c/agrocrm-backend/src/routes.py)",
+      "Bash(npx tsc *)"
     ]
   }
 }
