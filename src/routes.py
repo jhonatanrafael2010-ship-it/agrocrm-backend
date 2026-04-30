@@ -10573,8 +10573,7 @@ def _mob_visit_details_with_stored_photos(session_id, state, message_text, photo
     # Convert stored URLs to the format _mob_start_visit_flow expects
     stored_photos = [{"url": u, "filename": u.split("/")[-1]} for u in stored_photo_urls]
     combined_photos = stored_photos + list(photos or [])
-    state.status = None
-    state.visit_preview_json = None
+    db.session.delete(state)
     db.session.commit()
     return _mob_new_message(session_id, message_text, combined_photos, consultant, resolved_consultant_id)
 
@@ -10828,7 +10827,7 @@ def _mob_client_confirmation(session_id, state, message_text, consultant, resolv
             from models import Client as ClientModel
             matched_client = ClientModel.query.get(chosen["id"])
             if matched_client:
-                state.status = None
+                db.session.delete(state)
                 db.session.commit()
                 return _mob_start_visit_flow(
                     session_id, original_message,
