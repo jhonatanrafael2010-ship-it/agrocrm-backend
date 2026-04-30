@@ -4637,7 +4637,7 @@ def start_guided_visit_flow_from_agent(
         "culture": culture or "",
         "variety": "",
         "fenologia_real": fenologia_real or None,
-        "date": parse_date_flexible(date_value) if date_value else None,
+        "date": (lambda d: d.isoformat() if d else None)(parse_human_date(date_value)) if date_value else None,
         "recommendation": recommendation,
         "products": products,
         "latitude": None,
