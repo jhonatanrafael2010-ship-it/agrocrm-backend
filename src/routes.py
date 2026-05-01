@@ -10443,6 +10443,57 @@ def _mob_ensure_state(session_id: str):
     return st
 
 
+def _upload_pdf_to_r2(pdf_bytes: bytes, filename: str):
+    try:
+        bucket = os.environ.get("R2_BUCKET")
+        public_base = (os.environ.get("R2_PUBLIC_BASE_URL") or "").rstrip("/")
+        if not bucket or not public_base:
+            return None
+        r2 = get_r2_client()
+        safe_name = secure_filename(filename or "visita.pdf")
+        key = f"mobile_pdf/{uuid.uuid4().hex}_{safe_name}"
+        r2.upload_fileobj(
+            Fileobj=io.BytesIO(pdf_bytes),
+            Bucket=bucket,
+            Key=key,
+            ExtraArgs={"ContentType": "application/pdf"},
+        )
+        return f"{public_base}/{key}"
+    except Exception as e:
+        print(f"❌ Erro ao enviar PDF para R2: {e}")
+        return None
+
+
+def _mob_pdf_flow(message_text: str, consultant, resolved_consultant_id):
+    if not consultant:
+        return "Nenhum consultor selecionado. Volte e escolha seu nome."
+
+    client_ref = parse_pdf_client_reference(message_text)
+    if client_ref:
+        visit = find_last_completed_visit_for_client_reference(
+            consultant_id=consultant.id,
+            client_name=client_ref,
+        )
+        if not visit:
+            return f"Não encontrei visita concluída para {client_ref}."
+    else:
+        recent = find_last_completed_visits_for_consultant(consultant.id, limit=1)
+        if not recent:
+            return "Não encontrei nenhuma visita concluída para gerar PDF."
+        visit = recent[0]
+
+    try:
+        buffer, filename = build_visit_pdf_file(visit.id)
+        pdf_bytes = buffer.getvalue()
+        url = _upload_pdf_to_r2(pdf_bytes, filename)
+        if not url:
+            return "PDF gerado, mas falhou ao salvar. Verifique a configuração do R2."
+        client_name = visit.client.name if visit.client else f"visita {visit.id}"
+        return {"text": f"📄 PDF de {client_name} pronto!", "pdf_url": url}
+    except Exception as e:
+        return f"Erro ao gerar PDF: {str(e)}"
+
+
 def _upload_base64_to_r2(data_url: str, filename: str):
     try:
         bucket = os.environ.get("R2_BUCKET")
@@ -10505,6 +10556,8 @@ def mobile_chat():
     else:
         resp = _mob_new_message(session_id, message_text, photos, consultant, resolved_consultant_id)
 
+    if isinstance(resp, dict):
+        return jsonify({"ok": True, "response": resp.get("text", ""), "pdf_url": resp.get("pdf_url")}), 200
     return jsonify({"ok": True, "response": resp}), 200
 
 
@@ -10559,6 +10612,9 @@ def _mob_new_message(session_id, message_text, photos, consultant, resolved_cons
 
     if action == "ROUTE_TO_DAILY_ROUTINE":
         return _mob_daily_routine_text(consultant, resolved_consultant_id)
+
+    if action == "ROUTE_TO_PDF":
+        return _mob_pdf_flow(message_text, consultant, resolved_consultant_id)
 
     return "Ação reconhecida mas ainda não suportada no app. Use: 'cliente Nome cultura fenologia data observações'."
 
