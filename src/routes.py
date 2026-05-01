@@ -1538,6 +1538,7 @@ def build_visit_pdf_file(visit_id: int):
             try:
                 img = PILImage.open(variety_logo_path)
                 aspect = img.height / float(img.width)
+                img.close()
                 w = 110
                 h = w * aspect
                 x = pad
@@ -1549,6 +1550,7 @@ def build_visit_pdf_file(visit_id: int):
             try:
                 img = PILImage.open(nutriverde_logo_path)
                 aspect = img.height / float(img.width)
+                img.close()
                 w = 70
                 h = w * aspect
                 x = A4[0] - pad - w
@@ -1681,6 +1683,7 @@ def build_visit_pdf_file(visit_id: int):
         if os.path.exists(logo_path):
             img = PILImage.open(logo_path)
             aspect = img.height / float(img.width)
+            img.close()
             width = 160
             story.append(Image(logo_path, width=width, height=width * aspect))
             story.append(Spacer(1, 20))
