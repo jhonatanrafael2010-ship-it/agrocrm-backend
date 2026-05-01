@@ -4,6 +4,7 @@
 from datetime import datetime, date, timedelta
 import base64
 import calendar
+import gc
 import os
 import re
 import uuid
@@ -10530,6 +10531,10 @@ def _mob_pdf_selection(session_id: str, state, message_text: str):
     if not selected_indexes:
         return "Opção inválida. Responda com um número ou vários, como 1,3 ou 1 3 5.\nDigite CANCELAR para sair."
 
+    # Limite de 3 PDFs por vez para evitar estouro de memória
+    if len(selected_indexes) > 3:
+        return "Selecione no máximo 3 PDFs por vez para evitar sobrecarga. Ex: 1,2,3"
+
     pdf_candidates = json.loads(state.pending_visit_suggestions_json or "[]")
     invalid = [i for i in selected_indexes if i < 0 or i >= len(pdf_candidates)]
     if invalid:
@@ -10541,7 +10546,12 @@ def _mob_pdf_selection(session_id: str, state, message_text: str):
         try:
             visit = Visit.query.get(visit_id)
             buffer, filename = build_visit_pdf_file(visit_id)
-            url = _upload_pdf_to_r2(buffer.getvalue(), filename)
+            pdf_bytes = buffer.getvalue()
+            buffer.close()
+            del buffer
+            url = _upload_pdf_to_r2(pdf_bytes, filename)
+            del pdf_bytes
+            gc.collect()
             if url:
                 items.append({"url": url, "label": _visit_pdf_label(visit), "filename": filename})
         except Exception:
