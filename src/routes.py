@@ -2559,40 +2559,44 @@ def extract_field_data_payload_from_text(message_text: str):
 
 
 
+def _format_recommendation(text: str) -> str:
+    """Remove rótulo 'observações' residual e adiciona quebras de linha entre frases."""
+    if not text:
+        return ""
+    text = re.sub(
+        r"^(?:observacoes|observações|observação|observacao|obs)\s*[:\-,]?\s*",
+        "", text, flags=re.IGNORECASE
+    ).strip()
+    # Se não há quebras de linha naturais, insere após cada ponto final
+    if "\n" not in text:
+        text = re.sub(r"\.\s+(?=\S)", ".\n", text)
+    return text.strip()
+
+
 def extract_recommendation_fallback(message_text: str) -> str:
     if not message_text:
         return ""
 
     raw = message_text.strip()
-
-    # preserva quebra de linha original para pegar observações abaixo do rótulo
-    raw_multiline = raw
     raw_single = re.sub(r"\s*\n\s*", " ", raw).strip()
 
-    patterns = [
-        r"(?:observacoes|observação|observacao|obs)\s*[:,\-]?\s*([\s\S]+)$",
-    ]
+    pattern = r"(?:observacoes|observação|observacao|obs)\s*[:,\-]?\s*([\s\S]+)$"
 
-    for pattern in patterns:
-        match = re.search(pattern, raw_multiline, re.IGNORECASE)
-        if match:
-            value = match.group(1).strip(" .,-;:")
-            if value:
-                return re.sub(r"\s*\n\s*", " ", value).strip()
+    # Tenta primeiro no texto com quebras de linha preservadas
+    match = re.search(pattern, raw, re.IGNORECASE)
+    if match:
+        value = match.group(1).strip(" .,-;:")
+        if value:
+            return _format_recommendation(value)
 
-        match = re.search(pattern, raw_single, re.IGNORECASE)
-        if match:
-            value = match.group(1).strip(" .,-;:")
-            if value:
-                return value
+    # Tenta no texto linearizado (tudo em uma linha)
+    match = re.search(pattern, raw_single, re.IGNORECASE)
+    if match:
+        value = match.group(1).strip(" .,-;:")
+        if value:
+            return _format_recommendation(value)
 
-    # fallback extra:
-    # quando vier algo como:
-    # Cliente X
-    # Fenologia R3
-    # Data hoje
-    # Observações plantas com boa sanidade
-    # Baixa incidência de pragas
+    # Fallback linha-a-linha: "Observações" pode ser um rótulo isolado numa linha
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     for idx, line in enumerate(lines):
         normalized = normalize_lookup_text(line)
@@ -2603,9 +2607,9 @@ def extract_recommendation_fallback(message_text: str) -> str:
             if remainder:
                 parts.append(remainder)
             parts.extend(tail)
-            joined = " ".join([p for p in parts if p]).strip()
+            joined = "\n".join([p for p in parts if p]).strip()
             if joined:
-                return joined
+                return _format_recommendation(joined)
 
     return ""
 
@@ -10464,7 +10468,7 @@ def _upload_pdf_to_r2(pdf_bytes: bytes, filename: str):
         return None
 
 
-def _mob_pdf_flow(message_text: str, consultant, resolved_consultant_id):
+def _mob_pdf_flow(message_text: str, consultant, resolved_consultant_id, session_id: str):
     if not consultant:
         return "Nenhum consultor selecionado. Volte e escolha seu nome."
 
@@ -10476,22 +10480,70 @@ def _mob_pdf_flow(message_text: str, consultant, resolved_consultant_id):
         )
         if not visit:
             return f"Não encontrei visita concluída para {client_ref}."
-    else:
-        recent = find_last_completed_visits_for_consultant(consultant.id, limit=1)
-        if not recent:
-            return "Não encontrei nenhuma visita concluída para gerar PDF."
-        visit = recent[0]
+        try:
+            buffer, filename = build_visit_pdf_file(visit.id)
+            url = _upload_pdf_to_r2(buffer.getvalue(), filename)
+            if not url:
+                return "PDF gerado, mas falhou ao salvar. Verifique a configuração do R2."
+            client_name = visit.client.name if visit.client else f"visita {visit.id}"
+            return {"text": f"📄 PDF de {client_name} pronto!", "pdf_urls": [url]}
+        except Exception as e:
+            return f"Erro ao gerar PDF: {str(e)}"
 
-    try:
-        buffer, filename = build_visit_pdf_file(visit.id)
-        pdf_bytes = buffer.getvalue()
-        url = _upload_pdf_to_r2(pdf_bytes, filename)
-        if not url:
-            return "PDF gerado, mas falhou ao salvar. Verifique a configuração do R2."
-        client_name = visit.client.name if visit.client else f"visita {visit.id}"
-        return {"text": f"📄 PDF de {client_name} pronto!", "pdf_url": url}
-    except Exception as e:
-        return f"Erro ao gerar PDF: {str(e)}"
+    # Sem cliente específico → listar as 10 últimas para o usuário escolher
+    recent = find_last_completed_visits_for_consultant(consultant.id, limit=10)
+    if not recent:
+        return "Não encontrei nenhuma visita concluída para gerar PDF."
+
+    state = _mob_ensure_state(session_id)
+    state.pending_visit_suggestions_json = json.dumps(
+        [{"id": v.id} for v in recent], ensure_ascii=False
+    )
+    state.status = "awaiting_pdf_selection"
+    db.session.commit()
+    return build_pdf_visit_selection_text(recent)
+
+
+def _mob_pdf_selection(session_id: str, state, message_text: str):
+    if message_text.strip().upper() == "CANCELAR":
+        state.status = ""
+        db.session.commit()
+        return "Cancelado."
+
+    selected_indexes = parse_pdf_selection(message_text)
+    if not selected_indexes:
+        return "Opção inválida. Responda com um número ou vários, como 1,3 ou 1 3 5.\nDigite CANCELAR para sair."
+
+    pdf_candidates = json.loads(state.pending_visit_suggestions_json or "[]")
+    invalid = [i for i in selected_indexes if i < 0 or i >= len(pdf_candidates)]
+    if invalid:
+        return "Uma ou mais opções são inválidas. Revise os números e tente novamente."
+
+    urls = []
+    names = []
+    for idx in selected_indexes:
+        visit_id = pdf_candidates[idx]["id"]
+        try:
+            visit = Visit.query.get(visit_id)
+            buffer, filename = build_visit_pdf_file(visit_id)
+            url = _upload_pdf_to_r2(buffer.getvalue(), filename)
+            if url:
+                client_name = visit.client.name if visit and visit.client else f"visita {visit_id}"
+                urls.append(url)
+                names.append(client_name)
+        except Exception:
+            pass
+
+    state.status = ""
+    db.session.commit()
+
+    if not urls:
+        return "Erro ao gerar os PDFs. Tente novamente."
+
+    if len(urls) == 1:
+        return {"text": f"📄 PDF de {names[0]} pronto!", "pdf_urls": urls}
+    text = f"📄 {len(urls)} PDFs prontos!\n" + "\n".join(f"• {n}" for n in names)
+    return {"text": text, "pdf_urls": urls}
 
 
 def _upload_base64_to_r2(data_url: str, filename: str):
@@ -10553,11 +10605,13 @@ def mobile_chat():
         resp = _mob_guided_field(session_id, state, message_text, status)
     elif status == "awaiting_visit_details":
         resp = _mob_visit_details_with_stored_photos(session_id, state, message_text, photos, consultant, resolved_consultant_id)
+    elif status == "awaiting_pdf_selection":
+        resp = _mob_pdf_selection(session_id, state, message_text)
     else:
         resp = _mob_new_message(session_id, message_text, photos, consultant, resolved_consultant_id)
 
     if isinstance(resp, dict):
-        return jsonify({"ok": True, "response": resp.get("text", ""), "pdf_url": resp.get("pdf_url")}), 200
+        return jsonify({"ok": True, "response": resp.get("text", ""), "pdf_urls": resp.get("pdf_urls")}), 200
     return jsonify({"ok": True, "response": resp}), 200
 
 
@@ -10614,7 +10668,7 @@ def _mob_new_message(session_id, message_text, photos, consultant, resolved_cons
         return _mob_daily_routine_text(consultant, resolved_consultant_id)
 
     if action == "ROUTE_TO_PDF":
-        return _mob_pdf_flow(message_text, consultant, resolved_consultant_id)
+        return _mob_pdf_flow(message_text, consultant, resolved_consultant_id, session_id)
 
     return "Ação reconhecida mas ainda não suportada no app. Use: 'cliente Nome cultura fenologia data observações'."
 
@@ -10946,7 +11000,7 @@ def _mob_guided_field(session_id, state, message_text, current_status):
         next_status, next_msg = "awaiting_observations", "💬 Informe as observações da visita."
 
     elif current_status == "awaiting_observations":
-        final_visit_payload["recommendation"] = message_text.strip()
+        final_visit_payload["recommendation"] = _format_recommendation(message_text.strip()) or message_text.strip()
         summary_text = build_visit_summary_text(action, final_visit_payload, selected_pending_visit or None, close_only)
         state.visit_preview_json = json.dumps(
             build_guided_state_payload(action, final_visit_payload, selected_pending_visit or None, close_only),
