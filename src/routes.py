@@ -10447,6 +10447,20 @@ def _mob_ensure_state(session_id: str):
     return st
 
 
+def _visit_pdf_label(visit) -> str:
+    parts = []
+    if visit.client:
+        parts.append(visit.client.name)
+    culture_variety = " ".join(filter(None, [visit.culture or "", visit.variety or ""])).strip()
+    if culture_variety:
+        parts.append(culture_variety)
+    if visit.property:
+        parts.append(visit.property.name)
+    if visit.plot:
+        parts.append(visit.plot.name)
+    return " • ".join(parts) if parts else f"Visita {visit.id}"
+
+
 def _upload_pdf_to_r2(pdf_bytes: bytes, filename: str):
     try:
         bucket = os.environ.get("R2_BUCKET")
@@ -10485,8 +10499,10 @@ def _mob_pdf_flow(message_text: str, consultant, resolved_consultant_id, session
             url = _upload_pdf_to_r2(buffer.getvalue(), filename)
             if not url:
                 return "PDF gerado, mas falhou ao salvar. Verifique a configuração do R2."
-            client_name = visit.client.name if visit.client else f"visita {visit.id}"
-            return {"text": f"📄 PDF de {client_name} pronto!", "pdf_urls": [url]}
+            return {
+                "text": "📄 PDF pronto!",
+                "pdf_items": [{"url": url, "label": _visit_pdf_label(visit), "filename": filename}],
+            }
         except Exception as e:
             return f"Erro ao gerar PDF: {str(e)}"
 
@@ -10519,8 +10535,7 @@ def _mob_pdf_selection(session_id: str, state, message_text: str):
     if invalid:
         return "Uma ou mais opções são inválidas. Revise os números e tente novamente."
 
-    urls = []
-    names = []
+    items = []
     for idx in selected_indexes:
         visit_id = pdf_candidates[idx]["id"]
         try:
@@ -10528,22 +10543,19 @@ def _mob_pdf_selection(session_id: str, state, message_text: str):
             buffer, filename = build_visit_pdf_file(visit_id)
             url = _upload_pdf_to_r2(buffer.getvalue(), filename)
             if url:
-                client_name = visit.client.name if visit and visit.client else f"visita {visit_id}"
-                urls.append(url)
-                names.append(client_name)
+                items.append({"url": url, "label": _visit_pdf_label(visit), "filename": filename})
         except Exception:
             pass
 
     state.status = ""
     db.session.commit()
 
-    if not urls:
+    if not items:
         return "Erro ao gerar os PDFs. Tente novamente."
 
-    if len(urls) == 1:
-        return {"text": f"📄 PDF de {names[0]} pronto!", "pdf_urls": urls}
-    text = f"📄 {len(urls)} PDFs prontos!\n" + "\n".join(f"• {n}" for n in names)
-    return {"text": text, "pdf_urls": urls}
+    n = len(items)
+    text = "📄 PDF pronto!" if n == 1 else f"📄 {n} PDFs prontos!"
+    return {"text": text, "pdf_items": items}
 
 
 def _upload_base64_to_r2(data_url: str, filename: str):
@@ -10611,7 +10623,7 @@ def mobile_chat():
         resp = _mob_new_message(session_id, message_text, photos, consultant, resolved_consultant_id)
 
     if isinstance(resp, dict):
-        return jsonify({"ok": True, "response": resp.get("text", ""), "pdf_urls": resp.get("pdf_urls")}), 200
+        return jsonify({"ok": True, "response": resp.get("text", ""), "pdf_items": resp.get("pdf_items")}), 200
     return jsonify({"ok": True, "response": resp}), 200
 
 
