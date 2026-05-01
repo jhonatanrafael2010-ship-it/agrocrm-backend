@@ -36,6 +36,7 @@ from flask import (
     Blueprint,
     current_app,
     jsonify,
+    make_response,
     render_template_string,
     request,
     send_file,
@@ -10589,6 +10590,26 @@ def _upload_base64_to_r2(data_url: str, filename: str):
     except Exception as e:
         print(f"❌ Erro ao enviar foto para R2: {e}")
         return None
+
+
+@bp.route("/mobile/pdf-proxy", methods=["GET"])
+def mobile_pdf_proxy():
+    """Proxy para PDFs no R2 — contorna CORS no WebView."""
+    target_url = request.args.get("url", "").strip()
+    public_base = (os.environ.get("R2_PUBLIC_BASE_URL") or "").rstrip("/")
+    if not target_url or not public_base or not target_url.startswith(public_base + "/"):
+        return jsonify({"error": "URL inválida ou não autorizada"}), 403
+    try:
+        r = requests.get(target_url, timeout=30)
+        r.raise_for_status()
+        filename = target_url.split("/")[-1].split("?")[0] or "visita.pdf"
+        resp = make_response(r.content)
+        resp.headers["Content-Type"] = "application/pdf"
+        resp.headers["Content-Disposition"] = f"inline; filename={filename}"
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @bp.route("/mobile/chat", methods=["POST"])
