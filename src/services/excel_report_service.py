@@ -1,16 +1,5 @@
 """
-excel_report_service.py — v4
-
-Regras:
-1. Visita = (cliente, dia, cultura). Lançamentos com mesma chave = 1 visita.
-2. Concluída = visita com pelo menos 1 lançamento com foto.
-3. KPIs usam visitas deduplicadas.
-4. % na meta = concluídas / (carteira × 5).
-5. Carteira derivada de Plantings (cultura + janela da safra).
-   Sem filtro: clientes com Planting em qualquer das 4 safras.
-6. Cultura vazia na visita: infere de planting.culture.
-7. Gráfico semanal. Tabela diária removida.
-8. Sem gráfico de pizza.
+excel_report_service.py — v5 (PowerBI-inspired redesign)
 """
 
 from io import BytesIO
@@ -29,48 +18,74 @@ from models import db, Visit
 
 META_VISITAS_CLIENTE = 5
 
+# ── Palette ──────────────────────────────────────────────────────────
+NAV_DARKEST    = "0F172A"   # banner background (near-black navy)
+NAV_DARK       = "1E293B"   # sub-bar / footer bar
+SURFACE_WHITE  = "FFFFFF"
+SURFACE_F8     = "F8FAFC"   # zebra row tint
+BORDER_LINE    = "E2E8F0"   # hairline separators
 
-# Paleta
-BRAND_DARKEST = "0A2818"
-BRAND_DARK = "0F5132"
-BRAND_GREEN = "14532D"
-BRAND_MID = "166534"
-BRAND_LIGHT = "DCFCE7"
-GOLD = "C8A857"
-NEUTRAL_WHITE = "FFFFFF"
-NEUTRAL_OFFWHITE = "FAFAF9"
-NEUTRAL_GREY_LIGHT = "E4E4E7"
-NEUTRAL_TEXT = "18181B"
-TEXT_MUTED = "71717A"
-STATUS_DONE = "16A34A"
-STATUS_CANCELED = "DC2626"
-STATUS_DONE_BG = "DCFCE7"
-STATUS_PENDING_BG = "FEF3C7"
+ACCENT_EMERALD = "10B981"   # KPI 1 / primary section accent
+ACCENT_BLUE    = "3B82F6"   # KPI 2
+ACCENT_PURPLE  = "8B5CF6"   # KPI 3
+ACCENT_AMBER   = "F59E0B"   # KPI 4 / Atraso accent
+ACCENT_DEFAULT = ACCENT_EMERALD
+
+TEXT_DARK  = "0F172A"
+TEXT_MID   = "475569"
+TEXT_LIGHT = "94A3B8"
+
+STATUS_DONE        = "16A34A"
+STATUS_CANCELED    = "DC2626"
+STATUS_DONE_BG     = "DCFCE7"
+STATUS_PENDING_BG  = "FEF3C7"
 STATUS_CANCELED_BG = "FEE2E2"
+
+BRAND_MID = "166534"   # kept for legacy DataBarRule colour arg
 
 
 def _styles():
     return {
-        "banner_fill": PatternFill("solid", fgColor=BRAND_DARKEST),
-        "banner_font": Font(name="Calibri", color=NEUTRAL_WHITE, bold=True, size=18),
-        "gold_fill": PatternFill("solid", fgColor=GOLD),
-        "header_fill": PatternFill("solid", fgColor=BRAND_GREEN),
-        "header_font": Font(name="Calibri", color=NEUTRAL_WHITE, bold=True, size=10),
-        "kpi_label_fill": PatternFill("solid", fgColor=BRAND_GREEN),
-        "kpi_value_fill": PatternFill("solid", fgColor=BRAND_DARK),
-        "kpi_label_font": Font(name="Calibri", color=NEUTRAL_WHITE, bold=True, size=10),
-        "kpi_value_font": Font(name="Calibri", color=NEUTRAL_WHITE, bold=True, size=22),
-        "section_font": Font(name="Calibri", bold=True, color=BRAND_GREEN, size=11),
-        "muted_italic": Font(name="Calibri", color=TEXT_MUTED, size=9, italic=True),
-        "footer": Font(name="Calibri", color=TEXT_MUTED, size=8, italic=True),
-        "bold": Font(name="Calibri", bold=True, color=NEUTRAL_TEXT),
-        "row_font": Font(name="Calibri", color=NEUTRAL_TEXT, size=10),
-        "zebra_fill": PatternFill("solid", fgColor=NEUTRAL_OFFWHITE),
-        "center": Alignment(horizontal="center", vertical="center", wrap_text=True),
-        "left": Alignment(horizontal="left", vertical="top", wrap_text=True),
-        "left_center": Alignment(horizontal="left", vertical="center", wrap_text=True),
-        "border_data": Border(bottom=Side(style="hair", color=NEUTRAL_GREY_LIGHT)),
-        "border_section": Border(bottom=Side(style="medium", color=GOLD)),
+        # Banner
+        "banner_fill": PatternFill("solid", fgColor=NAV_DARKEST),
+        "banner_font": Font(name="Calibri", color=SURFACE_WHITE, bold=True, size=20),
+        "nav_dark_fill": PatternFill("solid", fgColor=NAV_DARK),
+
+        # KPI card accents
+        "kpi_accent_emerald": PatternFill("solid", fgColor=ACCENT_EMERALD),
+        "kpi_accent_blue":    PatternFill("solid", fgColor=ACCENT_BLUE),
+        "kpi_accent_purple":  PatternFill("solid", fgColor=ACCENT_PURPLE),
+        "kpi_accent_amber":   PatternFill("solid", fgColor=ACCENT_AMBER),
+        "kpi_body_fill":      PatternFill("solid", fgColor=SURFACE_WHITE),
+        "kpi_value_font":     Font(name="Calibri", color=TEXT_DARK, bold=True, size=28),
+        "kpi_label_font":     Font(name="Calibri", color=TEXT_MID, bold=False, size=9),
+
+        # Table header
+        "header_fill": PatternFill("solid", fgColor=NAV_DARKEST),
+        "header_font": Font(name="Calibri", color=SURFACE_WHITE, bold=True, size=10),
+
+        # Section title
+        "section_fill": PatternFill("solid", fgColor="F0FDF4"),
+        "section_font": Font(name="Calibri", color=TEXT_DARK, bold=True, size=11),
+
+        # Table rows
+        "row_font":    Font(name="Calibri", color=TEXT_DARK, size=10),
+        "zebra_fill":  PatternFill("solid", fgColor=SURFACE_F8),
+        "white_fill":  PatternFill("solid", fgColor=SURFACE_WHITE),
+        "border_data": Border(bottom=Side(style="hair", color=BORDER_LINE)),
+
+        # Typography
+        "bold":         Font(name="Calibri", bold=True, color=TEXT_DARK),
+        "muted_italic": Font(name="Calibri", color=TEXT_MID, size=9, italic=True),
+        "footer":       Font(name="Calibri", color=TEXT_LIGHT, size=8, italic=True),
+
+        # Alignments
+        "center":      Alignment(horizontal="center", vertical="center", wrap_text=True),
+        "left":        Alignment(horizontal="left",   vertical="top",    wrap_text=True),
+        "left_center": Alignment(horizontal="left",   vertical="center", wrap_text=True),
+
+        # Legacy key (used in _render_visits/_render_atraso style references)
+        "border_section": Border(bottom=Side(style="medium", color=ACCENT_EMERALD)),
     }
 
 
@@ -129,7 +144,6 @@ def _build_consultants_map():
 
 
 def _resolve_visit_culture(visit):
-    """Cultura da visita; infere de planting se vazia."""
     c = (visit.culture or "").strip()
     if c:
         return c
@@ -142,7 +156,6 @@ def _resolve_visit_culture(visit):
 
 
 def _build_active_clients_for_seasons(seasons_list, region_filter=None):
-    """Clientes com Planting que bate cultura+janela de alguma safra."""
     from models import Planting, Plot, Property, Client
 
     if not seasons_list:
@@ -185,7 +198,6 @@ def _build_active_clients_for_seasons(seasons_list, region_filter=None):
 
 
 def _dedupe_visits(visits_list):
-    """Lançamentos → visitas únicas por (cliente, data, cultura)."""
     grouped = {}
     for v in visits_list:
         if not v.client_id or not v.date:
@@ -212,7 +224,6 @@ def _dedupe_visits(visits_list):
 
 
 def _week_label(d):
-    """Label semana ISO formato 'DD/MM–DD/MM'."""
     iso_year, iso_week, _ = d.isocalendar()
     monday = d - timedelta(days=d.weekday())
     sunday = monday + timedelta(days=6)
@@ -249,7 +260,6 @@ def generate_monthly_xlsx(request):
             start_date = _date.fromisoformat(start)
             end_date = _date.fromisoformat(end)
 
-        # Resolução de safra(s)
         season = get_season_by_key(filter_season_key) if filter_season_key else None
         if season:
             season_start = _date.fromisoformat(season["start"])
@@ -262,13 +272,11 @@ def generate_monthly_xlsx(request):
             seasons_for_carteira = AVAILABLE_SEASONS
             season_culture = None
 
-        # Carteira efetiva
         carteira_ids = _build_active_clients_for_seasons(
             seasons_for_carteira,
             region_filter=filter_region or None,
         )
 
-        # União: clientes com visita no período (caem no relatório mesmo sem Planting)
         visits_clients_q = (
             db.session.query(Visit.client_id)
             .filter(Visit.date >= start_date)
@@ -279,12 +287,9 @@ def generate_monthly_xlsx(request):
             visits_clients_q = visits_clients_q.filter(Visit.consultant_id == filter_consultant_id)
 
         visits_clients_ids = {row[0] for row in visits_clients_q.distinct().all()}
-
-        # carteira efetiva = união
         effective_client_ids = carteira_ids | visits_clients_ids
-        total_clients = len(carteira_ids)  # KPI "carteira" segue regra antiga
+        total_clients = len(carteira_ids)
 
-        # Lançamentos no período
         if effective_client_ids:
             visits_query = (
                 Visit.query
@@ -298,7 +303,6 @@ def generate_monthly_xlsx(request):
         else:
             visits_raw = []
 
-        # Filtro de cultura (após resolver _resolve_visit_culture)
         if season_culture:
             sc_norm = season_culture.strip().lower()
             visits_raw = [
@@ -306,10 +310,8 @@ def generate_monthly_xlsx(request):
                 if _resolve_visit_culture(v).strip().lower() == sc_norm
             ]
 
-        # Dedup
         unique_visits = _dedupe_visits(visits_raw)
 
-        # Maps
         client_ids_in_visits = sorted({v["client_id"] for v in unique_visits if v["client_id"]})
         prop_ids = sorted({l.property_id for v in unique_visits for l in v["launches"] if l.property_id})
         plot_ids = sorted({l.plot_id for v in unique_visits for l in v["launches"] if l.plot_id})
@@ -330,7 +332,6 @@ def generate_monthly_xlsx(request):
         )
         consultants_map = _build_consultants_map()
 
-        # KPIs
         total_visits_unique = len(unique_visits)
         visits_with_photo = sum(1 for v in unique_visits if v["has_photo"])
         total_launches_with_photo = sum(
@@ -351,7 +352,6 @@ def generate_monthly_xlsx(request):
         meta_total = total_clients * META_VISITAS_CLIENTE
         target_pct = (visits_with_photo / meta_total) if meta_total else 0
 
-        # Filtros label
         filter_labels = []
         if filter_region:
             filter_labels.append(f"Região: {filter_region}")
@@ -359,7 +359,6 @@ def generate_monthly_xlsx(request):
             filter_labels.append(f"Safra: {season['label']} ({season['culture']})")
         filters_applied = " • ".join(filter_labels) if filter_labels else "Carteira completa (todas as safras conhecidas)"
 
-        # Workbook
         wb = Workbook()
         wb.remove(wb.active)
         ws_dash = wb.create_sheet("Dashboard")
@@ -413,6 +412,74 @@ def generate_monthly_xlsx(request):
         return jsonify(message=f"Erro ao gerar relatório: {e}"), 500
 
 
+# ── Visual helpers ────────────────────────────────────────────────────
+
+def _kpi_card(ws, col1, col2, row, title, value, fmt, s, accent_fill=None):
+    """PowerBI-style KPI tile: colored top accent → label → big number → pad."""
+    if accent_fill is None:
+        accent_fill = s["kpi_accent_emerald"]
+    c1 = ord(col1) - 64
+    c2 = ord(col2) - 64
+
+    # Row N — accent color bar
+    ws.merge_cells(f"{col1}{row}:{col2}{row}")
+    for cc in range(c1, c2 + 1):
+        ws.cell(row, cc).fill = accent_fill
+
+    # Row N+1 — label (small, muted)
+    ws.merge_cells(f"{col1}{row+1}:{col2}{row+1}")
+    lbl = ws[f"{col1}{row+1}"]
+    lbl.value = title
+    lbl.fill = s["kpi_body_fill"]
+    lbl.font = s["kpi_label_font"]
+    lbl.alignment = Alignment(horizontal="center", vertical="bottom")
+
+    # Row N+2 — big number
+    ws.merge_cells(f"{col1}{row+2}:{col2}{row+2}")
+    val = ws[f"{col1}{row+2}"]
+    val.value = value
+    val.fill = s["kpi_body_fill"]
+    val.font = s["kpi_value_font"]
+    val.alignment = Alignment(horizontal="center", vertical="center")
+    if fmt:
+        val.number_format = fmt
+
+    # Row N+3 — bottom padding
+    ws.merge_cells(f"{col1}{row+3}:{col2}{row+3}")
+    for cc in range(c1, c2 + 1):
+        ws.cell(row + 3, cc).fill = s["kpi_body_fill"]
+
+    # Subtle right border to separate cards
+    right_b = Border(right=Side(style="thin", color=BORDER_LINE))
+    for rr in range(row, row + 4):
+        ws.cell(rr, c2).border = right_b
+
+
+def _section_title_premium(ws, cell_ref, text, merge_range, s,
+                            accent_color=None, bg_color="F0FDF4"):
+    """Section header with thick left accent border — PowerBI style."""
+    if accent_color is None:
+        accent_color = ACCENT_EMERALD
+    ws.merge_cells(merge_range)
+    cell = ws[cell_ref]
+    cell.value = text
+    cell.font = s["section_font"]
+    cell.fill = PatternFill("solid", fgColor=bg_color)
+    cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    cell.border = Border(
+        left=Side(style="thick", color=accent_color),
+        bottom=Side(style="thin", color=BORDER_LINE),
+    )
+
+
+def _style_header_row(ws, row, col_start, col_end, s):
+    for col in range(col_start, col_end + 1):
+        cell = ws.cell(row=row, column=col)
+        cell.fill = s["header_fill"]
+        cell.font = s["header_font"]
+        cell.alignment = s["center"]
+
+
 def _render_dashboard(
     ws, unique_visits, period_label, filters_applied,
     total_visits_unique, visits_with_photo, total_launches_with_photo,
@@ -429,71 +496,82 @@ def _render_dashboard(
     for col in range(1, 13):
         ws.column_dimensions[get_column_letter(col)].width = 17
 
-    ws.row_dimensions[1].height = 8
-    ws.row_dimensions[2].height = 42
-    ws.row_dimensions[3].height = 4
-    ws.row_dimensions[4].height = 22
-
+    # ── Banner ────────────────────────────────────────────────────────
+    ws.row_dimensions[1].height = 6
+    ws.row_dimensions[2].height = 52
     ws.merge_cells("A2:L2")
     ws["A2"] = "PAINEL GERENCIAL — NutriCRM"
     ws["A2"].fill = s["banner_fill"]
     ws["A2"].font = s["banner_font"]
     ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
 
+    ws.row_dimensions[3].height = 3
     ws.merge_cells("A3:L3")
-    ws["A3"].fill = s["gold_fill"]
+    ws["A3"].fill = s["nav_dark_fill"]
 
+    ws.row_dimensions[4].height = 20
     ws.merge_cells("A4:L4")
     ws["A4"] = (
         f"Período: {period_label}    •    "
         f"Gerado em: {datetime.now().strftime('%d/%m/%Y às %H:%M')}"
     )
-    ws["A4"].font = Font(name="Calibri Light", color=TEXT_MUTED, size=10, italic=True)
+    ws["A4"].font = Font(name="Calibri Light", color=TEXT_MID, size=10, italic=True)
     ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
 
     ws.row_dimensions[5].height = 18
     ws.merge_cells("A5:L5")
     ws["A5"] = f"Filtros: {filters_applied}"
-    ws["A5"].font = Font(name="Calibri", color=BRAND_GREEN, size=10, bold=True)
+    ws["A5"].font = Font(name="Calibri", color=ACCENT_EMERALD, size=10, bold=True)
     ws["A5"].alignment = Alignment(horizontal="center", vertical="center")
 
-    ws.row_dimensions[6].height = 18
+    ws.row_dimensions[6].height = 16
     ws.merge_cells("A6:L6")
     ws["A6"] = (
-        f"Regra: visita concluída = visita com foto. Lançamentos no mesmo (cliente, dia, cultura) contam como 1 visita.    "
+        f"Regra: visita concluída = visita com foto. "
+        f"Lançamentos no mesmo (cliente, dia, cultura) contam como 1 visita.    "
         f"Meta = {META_VISITAS_CLIENTE} visitas/cliente."
     )
-    ws["A6"].font = Font(name="Calibri", color=TEXT_MUTED, size=9, italic=True)
+    ws["A6"].font = Font(name="Calibri", color=TEXT_LIGHT, size=9, italic=True)
     ws["A6"].alignment = Alignment(horizontal="center", vertical="center")
 
-    # KPIs
-    ws.row_dimensions[8].height = 26
-    ws.row_dimensions[9].height = 32
-    ws.row_dimensions[10].height = 32
-    ws.row_dimensions[11].height = 26
+    # ── KPI cards (rows 8–11) ─────────────────────────────────────────
+    ws.row_dimensions[7].height = 10   # gutter
+    ws.row_dimensions[8].height = 6    # accent bar
+    ws.row_dimensions[9].height = 18   # label
+    ws.row_dimensions[10].height = 40  # value
+    ws.row_dimensions[11].height = 10  # bottom pad
 
-    _kpi_card(ws, "A", "C", 8, "VISITAS REALIZADAS",
-              visits_with_photo, "#,##0", s)
-    _kpi_card(ws, "D", "F", 8, "LANÇAMENTOS",
-              total_launches_with_photo, "#,##0", s)
-    _kpi_card(ws, "G", "I", 8, f"CLIENTES NA META ({META_VISITAS_CLIENTE}+)",
-              clients_in_target, "#,##0", s)
-    _kpi_card(ws, "J", "L", 8, "% DA META TOTAL",
-              target_pct, "0.0%", s)
+    _kpi_card(ws, "A", "C",  8, "VISITAS REALIZADAS",
+              visits_with_photo, "#,##0", s, s["kpi_accent_emerald"])
+    _kpi_card(ws, "D", "F",  8, "LANÇAMENTOS",
+              total_launches_with_photo, "#,##0", s, s["kpi_accent_blue"])
+    _kpi_card(ws, "G", "I",  8, f"NA META ({META_VISITAS_CLIENTE}+)",
+              clients_in_target, "#,##0", s, s["kpi_accent_purple"])
+    _kpi_card(ws, "J", "L",  8, "% DA META",
+              target_pct, "0.0%", s, s["kpi_accent_amber"])
 
+    # ── Summary stats bar (row 13) ────────────────────────────────────
+    ws.row_dimensions[12].height = 8
     ws.row_dimensions[13].height = 20
     ws.merge_cells("A13:L13")
     ws["A13"] = (
         f"Carteira ativa: {total_clients} clientes  •  "
-        f"Atendidos no período: {unique_clients_attended}  •  "
+        f"Atendidos: {unique_clients_attended}  •  "
         f"Cobertura: {coverage:.1%}  •  "
         f"Meta total: {meta_total} visitas ({total_clients} × {META_VISITAS_CLIENTE})"
     )
-    ws["A13"].font = Font(name="Calibri", color=TEXT_MUTED, size=10)
+    ws["A13"].font = Font(name="Calibri", color=TEXT_MID, size=10)
+    ws["A13"].fill = PatternFill("solid", fgColor=SURFACE_F8)
     ws["A13"].alignment = Alignment(horizontal="center", vertical="center")
 
-    # 3 tabelas lado a lado
-    _section_title_premium(ws, "A15", "VISITAS POR CONSULTOR", "A15:C15", s)
+    # ── Three tables side by side (rows 15+) ──────────────────────────
+    ws.row_dimensions[14].height = 14
+    ws.row_dimensions[15].height = 24
+    ws.row_dimensions[16].height = 22
+
+    _section_title_premium(ws, "A15", "VISITAS POR CONSULTOR",
+                            "A15:C15", s,
+                            accent_color=ACCENT_EMERALD, bg_color="F0FDF4")
     ws["A16"] = "Consultor"
     ws["B16"] = "Visitas"
     ws["C16"] = "% do total"
@@ -509,6 +587,7 @@ def _render_dashboard(
         ws[f"B{r}"] = cnt
         ws[f"C{r}"] = (cnt / visits_with_photo) if visits_with_photo else 0
         ws[f"C{r}"].number_format = "0.0%"
+        ws.row_dimensions[r].height = 22
         for col in range(1, 4):
             ws.cell(r, col).border = s["border_data"]
             ws.cell(r, col).font = s["row_font"]
@@ -517,7 +596,9 @@ def _render_dashboard(
                 ws.cell(r, col).fill = s["zebra_fill"]
         r += 1
 
-    _section_title_premium(ws, "E15", "VISITAS POR CULTURA", "E15:G15", s)
+    _section_title_premium(ws, "E15", "VISITAS POR CULTURA",
+                            "E15:G15", s,
+                            accent_color=ACCENT_BLUE, bg_color="EFF6FF")
     ws["E16"] = "Cultura"
     ws["F16"] = "Visitas"
     ws["G16"] = "% do total"
@@ -536,6 +617,7 @@ def _render_dashboard(
         ws[f"F{r}"] = cnt
         ws[f"G{r}"] = (cnt / visits_with_photo) if visits_with_photo else 0
         ws[f"G{r}"].number_format = "0.0%"
+        ws.row_dimensions[r].height = 22
         for col in range(5, 8):
             ws.cell(r, col).border = s["border_data"]
             ws.cell(r, col).font = s["row_font"]
@@ -544,7 +626,9 @@ def _render_dashboard(
                 ws.cell(r, col).fill = s["zebra_fill"]
         r += 1
 
-    _section_title_premium(ws, "I15", "TOP 5 CLIENTES (CONCLUÍDAS)", "I15:K15", s)
+    _section_title_premium(ws, "I15", "TOP 5 CLIENTES (CONCLUÍDAS)",
+                            "I15:K15", s,
+                            accent_color=ACCENT_PURPLE, bg_color="FAF5FF")
     ws["I16"] = "Cliente"
     ws["J16"] = "Visitas"
     ws["K16"] = "% da meta"
@@ -557,6 +641,7 @@ def _render_dashboard(
         ws[f"J{r}"] = cnt
         ws[f"K{r}"] = min(cnt / META_VISITAS_CLIENTE, 1.0)
         ws[f"K{r}"].number_format = "0%"
+        ws.row_dimensions[r].height = 22
         for col in range(9, 12):
             ws.cell(r, col).border = s["border_data"]
             ws.cell(r, col).font = s["row_font"]
@@ -565,7 +650,7 @@ def _render_dashboard(
                 ws.cell(r, col).fill = s["zebra_fill"]
         r += 1
 
-    # Visitas por SEMANA
+    # ── Weekly chart ─────────────────────────────────────────────────
     week_buckets = defaultdict(lambda: {"label": "", "key": None, "count": 0})
     for v in unique_visits:
         if not v["date"] or not v["has_photo"]:
@@ -579,11 +664,13 @@ def _render_dashboard(
     weeks_sorted = sorted(week_buckets.values(), key=lambda x: x["key"])
 
     section_row_days = 27
+    ws.row_dimensions[section_row_days].height = 24
+    ws.row_dimensions[section_row_days + 1].height = 22
     _section_title_premium(
         ws, f"A{section_row_days}",
         "EVOLUÇÃO SEMANAL DE VISITAS",
         f"A{section_row_days}:B{section_row_days}",
-        s
+        s, accent_color=ACCENT_BLUE, bg_color="EFF6FF"
     )
     ws[f"A{section_row_days+1}"] = "Semana"
     ws[f"B{section_row_days+1}"] = "Visitas"
@@ -593,22 +680,20 @@ def _render_dashboard(
     for w in weeks_sorted:
         ws[f"A{r}"] = w["label"]
         ws[f"B{r}"] = w["count"]
-        ws[f"A{r}"].border = s["border_data"]
-        ws[f"B{r}"].border = s["border_data"]
-        ws[f"A{r}"].font = s["row_font"]
-        ws[f"B{r}"].font = s["row_font"]
-        ws[f"A{r}"].alignment = s["center"]
-        ws[f"B{r}"].alignment = s["center"]
-        if (r - (section_row_days + 2)) % 2 == 1:
-            ws[f"A{r}"].fill = s["zebra_fill"]
-            ws[f"B{r}"].fill = s["zebra_fill"]
+        ws.row_dimensions[r].height = 22
+        for col in (1, 2):
+            ws.cell(r, col).border = s["border_data"]
+            ws.cell(r, col).font = s["row_font"]
+            ws.cell(r, col).alignment = s["center"]
+            if (r - (section_row_days + 2)) % 2 == 1:
+                ws.cell(r, col).fill = s["zebra_fill"]
         r += 1
     end_weeks_row = r - 1
 
     if end_weeks_row > section_row_days + 1:
         chart = BarChart()
         chart.type = "col"
-        chart.style = 2
+        chart.style = 10
         chart.title = "Visitas por semana"
         chart.y_axis.title = "Quantidade"
         chart.x_axis.title = None
@@ -624,20 +709,22 @@ def _render_dashboard(
         chart.set_categories(cats)
 
         if chart.series:
-            gp = GraphicalProperties(solidFill=BRAND_GREEN)
-            gp.line.solidFill = BRAND_DARK
+            gp = GraphicalProperties(solidFill=ACCENT_EMERALD)
+            gp.line.solidFill = "059669"
             chart.series[0].graphicalProperties = gp
 
         ws.add_chart(chart, "D" + str(section_row_days))
 
-    # Progresso por cliente
+    # ── Client progress table ─────────────────────────────────────────
     progresso_row = max(end_weeks_row, section_row_days + 22) + 3
 
+    ws.row_dimensions[progresso_row].height = 24
+    ws.row_dimensions[progresso_row + 1].height = 22
     _section_title_premium(
         ws, f"A{progresso_row}",
         "PROGRESSO DA META POR CLIENTE",
         f"A{progresso_row}:L{progresso_row}",
-        s
+        s, accent_color=ACCENT_AMBER, bg_color="FFFBEB"
     )
 
     ws[f"A{progresso_row+1}"] = "Cliente"
@@ -657,7 +744,7 @@ def _render_dashboard(
         ws[f"D{r}"] = pct
         ws[f"C{r}"].number_format = "0%"
         ws[f"D{r}"].number_format = "0%"
-
+        ws.row_dimensions[r].height = 22
         for col in range(1, 5):
             ws.cell(r, col).border = s["border_data"]
             ws.cell(r, col).font = s["row_font"]
@@ -671,7 +758,7 @@ def _render_dashboard(
         rule = DataBarRule(
             start_type="num", start_value=0,
             end_type="num", end_value=1,
-            color=BRAND_MID, showValue=False,
+            color=ACCENT_EMERALD, showValue=False,
         )
         ws.conditional_formatting.add(f"D{progresso_row+2}:D{end_meta_row}", rule)
 
@@ -694,10 +781,11 @@ def _render_dashboard(
                        font=Font(color=STATUS_DONE, bold=True))
         )
 
+    # ── Footer ────────────────────────────────────────────────────────
     footer_row = end_meta_row + 3
-    ws.row_dimensions[footer_row].height = 6
+    ws.row_dimensions[footer_row].height = 3
     ws.merge_cells(f"A{footer_row}:L{footer_row}")
-    ws[f"A{footer_row}"].fill = s["gold_fill"]
+    ws[f"A{footer_row}"].fill = s["nav_dark_fill"]
 
     ws.merge_cells(f"A{footer_row+1}:L{footer_row+1}")
     ws[f"A{footer_row+1}"] = "NutriCRM  •  Documento gerencial  •  Confidencial"
@@ -718,64 +806,22 @@ def _render_dashboard(
     ws.column_dimensions["L"].width = 14
 
 
-def _kpi_card(ws, col1, col2, row, title, value, fmt, s):
-    ws.merge_cells(f"{col1}{row}:{col2}{row}")
-    label_cell = ws[f"{col1}{row}"]
-    label_cell.value = title
-    label_cell.fill = s["kpi_label_fill"]
-    label_cell.font = s["kpi_label_font"]
-    label_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-    ws.merge_cells(f"{col1}{row+1}:{col2}{row+3}")
-    val_cell = ws[f"{col1}{row+1}"]
-    val_cell.value = value
-    val_cell.fill = s["kpi_value_fill"]
-    val_cell.font = s["kpi_value_font"]
-    val_cell.alignment = Alignment(horizontal="center", vertical="center")
-    if fmt:
-        val_cell.number_format = fmt
-
-    c1 = ord(col1) - 64
-    c2 = ord(col2) - 64
-    for rr in range(row + 1, row + 4):
-        for cc in range(c1, c2 + 1):
-            cell = ws.cell(rr, cc)
-            cell.fill = s["kpi_value_fill"]
-
-
-def _section_title_premium(ws, cell_ref, text, merge_range, s):
-    ws.merge_cells(merge_range)
-    cell = ws[cell_ref]
-    cell.value = text
-    cell.font = s["section_font"]
-    cell.alignment = Alignment(horizontal="left", vertical="bottom")
-    cell.border = s["border_section"]
-
-
-def _style_header_row(ws, row, col_start, col_end, s):
-    for col in range(col_start, col_end + 1):
-        cell = ws.cell(row=row, column=col)
-        cell.fill = s["header_fill"]
-        cell.font = s["header_font"]
-        cell.alignment = s["center"]
-
-
 def _render_visits(ws, visits_raw, period_label, total_lancamentos, unique_clients,
                    clients_map, props_map, plots_map, consultants_map,
                    filters_applied):
     s = _styles()
     ws.sheet_view.showGridLines = False
 
-    ws.row_dimensions[1].height = 28
+    ws.row_dimensions[1].height = 48
     ws.merge_cells("A1:L1")
     ws["A1"] = "RELATÓRIO DE VISITAS TÉCNICAS"
     ws["A1"].fill = s["banner_fill"]
     ws["A1"].font = s["banner_font"]
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
 
+    ws.row_dimensions[2].height = 3
     ws.merge_cells("A2:L2")
-    ws["A2"].fill = s["gold_fill"]
-    ws.row_dimensions[2].height = 4
+    ws["A2"].fill = s["nav_dark_fill"]
 
     ws.row_dimensions[3].height = 22
     ws["A3"] = "Período:"
@@ -791,11 +837,11 @@ def _render_visits(ws, visits_raw, period_label, total_lancamentos, unique_clien
     ws["H3"] = unique_clients
     ws["H3"].font = s["row_font"]
 
+    ws.row_dimensions[4].height = 20
     ws.merge_cells("A4:L4")
     ws["A4"] = f"Filtros: {filters_applied}"
-    ws["A4"].font = Font(name="Calibri", color=BRAND_GREEN, size=10, bold=True)
+    ws["A4"].font = Font(name="Calibri", color=ACCENT_EMERALD, size=10, bold=True)
     ws["A4"].alignment = Alignment(horizontal="left", vertical="center")
-    ws.row_dimensions[4].height = 20
 
     headers = [
         "Data", "Cliente", "Propriedade", "Talhão", "Consultor",
@@ -812,6 +858,7 @@ def _render_visits(ws, visits_raw, period_label, total_lancamentos, unique_clien
     row_idx = header_row
     for v in visits_raw:
         row_idx += 1
+        ws.row_dimensions[row_idx].height = 18
 
         client_name = clients_map.get(v.client_id, "—") if v.client_id else "—"
         prop_name = props_map.get(v.property_id, "—") if v.property_id else "—"
@@ -872,17 +919,18 @@ def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map,
     s = _styles()
     ws.sheet_view.showGridLines = False
 
-    ws.row_dimensions[1].height = 28
+    ws.row_dimensions[1].height = 48
     ws.merge_cells("A1:E1")
     ws["A1"] = "CLIENTES EM ATRASO — AÇÃO PRIORITÁRIA"
     ws["A1"].fill = s["banner_fill"]
     ws["A1"].font = s["banner_font"]
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
 
+    ws.row_dimensions[2].height = 3
     ws.merge_cells("A2:E2")
-    ws["A2"].fill = s["gold_fill"]
-    ws.row_dimensions[2].height = 4
+    ws["A2"].fill = s["nav_dark_fill"]
 
+    ws.row_dimensions[3].height = 18
     ws.merge_cells("A3:E3")
     ws["A3"] = (
         f"Período: {period_label}    •    "
@@ -890,20 +938,19 @@ def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map,
     )
     ws["A3"].font = s["muted_italic"]
     ws["A3"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[3].height = 18
 
+    ws.row_dimensions[4].height = 20
     ws.merge_cells("A4:E4")
     ws["A4"] = f"Filtros: {filters_applied}"
-    ws["A4"].font = Font(name="Calibri", color=BRAND_GREEN, size=10, bold=True)
+    ws["A4"].font = Font(name="Calibri", color=ACCENT_AMBER, size=10, bold=True)
     ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[4].height = 20
 
     headers = ["Cliente", "Concluídas", "Faltam", "% da meta", "Prioridade"]
     header_row = 6
     for i, h in enumerate(headers, start=1):
         ws.cell(row=header_row, column=i).value = h
     _style_header_row(ws, header_row, 1, 5, s)
-    ws.row_dimensions[header_row].height = 24
+    ws.row_dimensions[header_row].height = 26
     ws.freeze_panes = "A7"
 
     all_clients = []
@@ -928,6 +975,7 @@ def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map,
         ws.cell(r, 4).value = pct
         ws.cell(r, 4).number_format = "0%"
         ws.cell(r, 5).value = prioridade
+        ws.row_dimensions[r].height = 20
 
         for col in range(1, 6):
             ws.cell(r, col).border = s["border_data"]
@@ -963,28 +1011,28 @@ def _render_products(ws, visits_raw, period_label,
     s = _styles()
     ws.sheet_view.showGridLines = False
 
-    ws.row_dimensions[1].height = 28
+    ws.row_dimensions[1].height = 48
     ws.merge_cells("A1:I1")
     ws["A1"] = "PRODUTOS APLICADOS"
     ws["A1"].fill = s["banner_fill"]
     ws["A1"].font = s["banner_font"]
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
 
+    ws.row_dimensions[2].height = 3
     ws.merge_cells("A2:I2")
-    ws["A2"].fill = s["gold_fill"]
-    ws.row_dimensions[2].height = 4
+    ws["A2"].fill = s["nav_dark_fill"]
 
+    ws.row_dimensions[3].height = 18
     ws.merge_cells("A3:I3")
     ws["A3"] = f"Período: {period_label}"
     ws["A3"].font = s["muted_italic"]
     ws["A3"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[3].height = 18
 
+    ws.row_dimensions[4].height = 20
     ws.merge_cells("A4:I4")
     ws["A4"] = f"Filtros: {filters_applied}"
-    ws["A4"].font = Font(name="Calibri", color=BRAND_GREEN, size=10, bold=True)
+    ws["A4"].font = Font(name="Calibri", color=ACCENT_BLUE, size=10, bold=True)
     ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.row_dimensions[4].height = 20
 
     headers = [
         "Data", "Cliente", "Propriedade", "Cultura", "Fenologia",
@@ -994,7 +1042,7 @@ def _render_products(ws, visits_raw, period_label,
     for i, h in enumerate(headers, start=1):
         ws.cell(row=header_row, column=i).value = h
     _style_header_row(ws, header_row, 1, len(headers), s)
-    ws.row_dimensions[header_row].height = 24
+    ws.row_dimensions[header_row].height = 26
     ws.freeze_panes = "A7"
 
     r = header_row + 1
@@ -1018,16 +1066,12 @@ def _render_products(ws, visits_raw, period_label,
                 pass
 
             row_values = [
-                _br_date(v.date),
-                client_name,
-                prop_name,
-                culture,
-                fenologia,
-                cons_name,
-                getattr(p, "product_name", "—"),
-                dose_unidade,
+                _br_date(v.date), client_name, prop_name,
+                culture, fenologia, cons_name,
+                getattr(p, "product_name", "—"), dose_unidade,
                 _br_date(getattr(p, "application_date", None) or v.date),
             ]
+            ws.row_dimensions[r].height = 18
             for i, val in enumerate(row_values, start=1):
                 cell = ws.cell(row=r, column=i)
                 cell.value = val
@@ -1043,9 +1087,9 @@ def _render_products(ws, visits_raw, period_label,
                        end_row=header_row + 2, end_column=9)
         empty_cell = ws.cell(row=header_row + 2, column=1)
         empty_cell.value = "Nenhum produto registrado neste período."
-        empty_cell.font = s["muted_italic"]
+        empty_cell.font = Font(name="Calibri", color=TEXT_MID, size=10, italic=True)
         empty_cell.alignment = Alignment(horizontal="center", vertical="center")
-        ws.row_dimensions[header_row + 2].height = 32
+        ws.row_dimensions[header_row + 2].height = 36
 
     if r > header_row + 1:
         ws.auto_filter.ref = f"A{header_row}:I{r-1}"
