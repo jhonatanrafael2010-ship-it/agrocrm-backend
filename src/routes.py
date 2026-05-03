@@ -1431,8 +1431,16 @@ def transcribe_audio_bytes(audio_bytes: bytes, filename: str = "audio.wav"):
         audio_file.name = filename
 
         transcript = client.audio.transcriptions.create(
-            model="gpt-4o-mini-transcribe",
+            model="gpt-4o-transcribe",
             file=audio_file,
+            language="pt",
+            prompt=(
+                "Contexto: assistente agrícola para consultores. "
+                "Termos comuns: visita, lavoura, soja, milho, fazenda, propriedade, talhão, "
+                "plantio, pulverização, pragas, doenças, defensivo, fertilizante, "
+                "V3, V4, V5, R1, R2, R3, R4, R5, R6, R7, R8, "
+                "variedades como AS 3815, AS 3707, K8575, S7025."
+            ),
         )
 
         text = getattr(transcript, "text", None) or ""
