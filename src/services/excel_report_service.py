@@ -22,14 +22,20 @@ META_VISITAS_CLIENTE = 5
 NAV_DARKEST    = "0F172A"   # banner background (near-black navy)
 NAV_DARK       = "1E293B"   # sub-bar / footer bar
 SURFACE_WHITE  = "FFFFFF"
-SURFACE_F8     = "F8FAFC"   # zebra row tint
-BORDER_LINE    = "E2E8F0"   # hairline separators
+BORDER_LINE    = "CBD5E1"   # row separator (slightly more visible)
 
 ACCENT_EMERALD = "10B981"   # KPI 1 / primary section accent
 ACCENT_BLUE    = "3B82F6"   # KPI 2
 ACCENT_PURPLE  = "8B5CF6"   # KPI 3
 ACCENT_AMBER   = "F59E0B"   # KPI 4 / Atraso accent
 ACCENT_DEFAULT = ACCENT_EMERALD
+
+# Tints — KPI card body + zebra rows + section headers
+TINT_EMERALD = "DCFCE7"   # light mint green
+TINT_BLUE    = "DBEAFE"   # light blue
+TINT_PURPLE  = "EDE9FE"   # light purple
+TINT_AMBER   = "FEF3C7"   # light amber
+ZEBRA_ROW    = "F0FDF4"   # very light mint — more visible than near-white
 
 TEXT_DARK  = "0F172A"
 TEXT_MID   = "475569"
@@ -51,26 +57,30 @@ def _styles():
         "banner_font": Font(name="Calibri", color=SURFACE_WHITE, bold=True, size=20),
         "nav_dark_fill": PatternFill("solid", fgColor=NAV_DARK),
 
-        # KPI card accents
+        # KPI card accents (solid bar) + tinted body fills
         "kpi_accent_emerald": PatternFill("solid", fgColor=ACCENT_EMERALD),
         "kpi_accent_blue":    PatternFill("solid", fgColor=ACCENT_BLUE),
         "kpi_accent_purple":  PatternFill("solid", fgColor=ACCENT_PURPLE),
         "kpi_accent_amber":   PatternFill("solid", fgColor=ACCENT_AMBER),
+        "kpi_tint_emerald":   PatternFill("solid", fgColor=TINT_EMERALD),
+        "kpi_tint_blue":      PatternFill("solid", fgColor=TINT_BLUE),
+        "kpi_tint_purple":    PatternFill("solid", fgColor=TINT_PURPLE),
+        "kpi_tint_amber":     PatternFill("solid", fgColor=TINT_AMBER),
         "kpi_body_fill":      PatternFill("solid", fgColor=SURFACE_WHITE),
         "kpi_value_font":     Font(name="Calibri", color=TEXT_DARK, bold=True, size=28),
-        "kpi_label_font":     Font(name="Calibri", color=TEXT_MID, bold=False, size=9),
+        "kpi_label_font":     Font(name="Calibri", color=TEXT_MID, bold=True, size=9),
 
         # Table header
         "header_fill": PatternFill("solid", fgColor=NAV_DARKEST),
         "header_font": Font(name="Calibri", color=SURFACE_WHITE, bold=True, size=10),
 
         # Section title
-        "section_fill": PatternFill("solid", fgColor="F0FDF4"),
+        "section_fill": PatternFill("solid", fgColor=TINT_EMERALD),
         "section_font": Font(name="Calibri", color=TEXT_DARK, bold=True, size=11),
 
         # Table rows
         "row_font":    Font(name="Calibri", color=TEXT_DARK, size=10),
-        "zebra_fill":  PatternFill("solid", fgColor=SURFACE_F8),
+        "zebra_fill":  PatternFill("solid", fgColor=ZEBRA_ROW),
         "white_fill":  PatternFill("solid", fgColor=SURFACE_WHITE),
         "border_data": Border(bottom=Side(style="hair", color=BORDER_LINE)),
 
@@ -414,27 +424,30 @@ def generate_monthly_xlsx(request):
 
 # ── Visual helpers ────────────────────────────────────────────────────
 
-def _kpi_card(ws, col1, col2, row, title, value, fmt, s, accent_fill=None):
-    """PowerBI-style KPI tile: colored top accent → label → big number → pad."""
+def _kpi_card(ws, col1, col2, row, title, value, fmt, s,
+              accent_fill=None, tint_fill=None):
+    """PowerBI-style KPI tile: colored accent bar → tinted label → white number → tinted pad."""
     if accent_fill is None:
         accent_fill = s["kpi_accent_emerald"]
+    if tint_fill is None:
+        tint_fill = s["kpi_tint_emerald"]
     c1 = ord(col1) - 64
     c2 = ord(col2) - 64
 
-    # Row N — accent color bar
+    # Row N — solid accent color bar
     ws.merge_cells(f"{col1}{row}:{col2}{row}")
     for cc in range(c1, c2 + 1):
         ws.cell(row, cc).fill = accent_fill
 
-    # Row N+1 — label (small, muted)
+    # Row N+1 — tinted label row
     ws.merge_cells(f"{col1}{row+1}:{col2}{row+1}")
     lbl = ws[f"{col1}{row+1}"]
     lbl.value = title
-    lbl.fill = s["kpi_body_fill"]
+    lbl.fill = tint_fill
     lbl.font = s["kpi_label_font"]
-    lbl.alignment = Alignment(horizontal="center", vertical="bottom")
+    lbl.alignment = Alignment(horizontal="center", vertical="center")
 
-    # Row N+2 — big number
+    # Row N+2 — white body with big number
     ws.merge_cells(f"{col1}{row+2}:{col2}{row+2}")
     val = ws[f"{col1}{row+2}"]
     val.value = value
@@ -444,12 +457,12 @@ def _kpi_card(ws, col1, col2, row, title, value, fmt, s, accent_fill=None):
     if fmt:
         val.number_format = fmt
 
-    # Row N+3 — bottom padding
+    # Row N+3 — tinted bottom padding (mirrors label)
     ws.merge_cells(f"{col1}{row+3}:{col2}{row+3}")
     for cc in range(c1, c2 + 1):
-        ws.cell(row + 3, cc).fill = s["kpi_body_fill"]
+        ws.cell(row + 3, cc).fill = tint_fill
 
-    # Subtle right border to separate cards
+    # Thin right border to visually separate cards
     right_b = Border(right=Side(style="thin", color=BORDER_LINE))
     for rr in range(row, row + 4):
         ws.cell(rr, c2).border = right_b
@@ -542,13 +555,17 @@ def _render_dashboard(
     ws.row_dimensions[11].height = 10  # bottom pad
 
     _kpi_card(ws, "A", "C",  8, "VISITAS REALIZADAS",
-              visits_with_photo, "#,##0", s, s["kpi_accent_emerald"])
+              visits_with_photo, "#,##0", s,
+              s["kpi_accent_emerald"], s["kpi_tint_emerald"])
     _kpi_card(ws, "D", "F",  8, "LANÇAMENTOS",
-              total_launches_with_photo, "#,##0", s, s["kpi_accent_blue"])
+              total_launches_with_photo, "#,##0", s,
+              s["kpi_accent_blue"], s["kpi_tint_blue"])
     _kpi_card(ws, "G", "I",  8, f"NA META ({META_VISITAS_CLIENTE}+)",
-              clients_in_target, "#,##0", s, s["kpi_accent_purple"])
+              clients_in_target, "#,##0", s,
+              s["kpi_accent_purple"], s["kpi_tint_purple"])
     _kpi_card(ws, "J", "L",  8, "% DA META",
-              target_pct, "0.0%", s, s["kpi_accent_amber"])
+              target_pct, "0.0%", s,
+              s["kpi_accent_amber"], s["kpi_tint_amber"])
 
     # ── Summary stats bar (row 13) ────────────────────────────────────
     ws.row_dimensions[12].height = 8
@@ -561,7 +578,7 @@ def _render_dashboard(
         f"Meta total: {meta_total} visitas ({total_clients} × {META_VISITAS_CLIENTE})"
     )
     ws["A13"].font = Font(name="Calibri", color=TEXT_MID, size=10)
-    ws["A13"].fill = PatternFill("solid", fgColor=SURFACE_F8)
+    ws["A13"].fill = PatternFill("solid", fgColor=TINT_EMERALD)
     ws["A13"].alignment = Alignment(horizontal="center", vertical="center")
 
     # ── Three tables side by side (rows 15+) ──────────────────────────
@@ -571,7 +588,7 @@ def _render_dashboard(
 
     _section_title_premium(ws, "A15", "VISITAS POR CONSULTOR",
                             "A15:C15", s,
-                            accent_color=ACCENT_EMERALD, bg_color="F0FDF4")
+                            accent_color=ACCENT_EMERALD, bg_color=TINT_EMERALD)
     ws["A16"] = "Consultor"
     ws["B16"] = "Visitas"
     ws["C16"] = "% do total"
@@ -598,7 +615,7 @@ def _render_dashboard(
 
     _section_title_premium(ws, "E15", "VISITAS POR CULTURA",
                             "E15:G15", s,
-                            accent_color=ACCENT_BLUE, bg_color="EFF6FF")
+                            accent_color=ACCENT_BLUE, bg_color=TINT_BLUE)
     ws["E16"] = "Cultura"
     ws["F16"] = "Visitas"
     ws["G16"] = "% do total"
@@ -628,7 +645,7 @@ def _render_dashboard(
 
     _section_title_premium(ws, "I15", "TOP 5 CLIENTES (CONCLUÍDAS)",
                             "I15:K15", s,
-                            accent_color=ACCENT_PURPLE, bg_color="FAF5FF")
+                            accent_color=ACCENT_PURPLE, bg_color=TINT_PURPLE)
     ws["I16"] = "Cliente"
     ws["J16"] = "Visitas"
     ws["K16"] = "% da meta"
@@ -670,7 +687,7 @@ def _render_dashboard(
         ws, f"A{section_row_days}",
         "EVOLUÇÃO SEMANAL DE VISITAS",
         f"A{section_row_days}:B{section_row_days}",
-        s, accent_color=ACCENT_BLUE, bg_color="EFF6FF"
+        s, accent_color=ACCENT_BLUE, bg_color=TINT_BLUE
     )
     ws[f"A{section_row_days+1}"] = "Semana"
     ws[f"B{section_row_days+1}"] = "Visitas"
@@ -724,7 +741,7 @@ def _render_dashboard(
         ws, f"A{progresso_row}",
         "PROGRESSO DA META POR CLIENTE",
         f"A{progresso_row}:L{progresso_row}",
-        s, accent_color=ACCENT_AMBER, bg_color="FFFBEB"
+        s, accent_color=ACCENT_AMBER, bg_color=TINT_AMBER
     )
 
     ws[f"A{progresso_row+1}"] = "Cliente"
@@ -841,6 +858,7 @@ def _render_visits(ws, visits_raw, period_label, total_lancamentos, unique_clien
     ws.merge_cells("A4:L4")
     ws["A4"] = f"Filtros: {filters_applied}"
     ws["A4"].font = Font(name="Calibri", color=ACCENT_EMERALD, size=10, bold=True)
+    ws["A4"].fill = PatternFill("solid", fgColor=TINT_EMERALD)
     ws["A4"].alignment = Alignment(horizontal="left", vertical="center")
 
     headers = [
@@ -943,6 +961,7 @@ def _render_atraso(ws, total_clients, photo_visits_by_client, clients_map,
     ws.merge_cells("A4:E4")
     ws["A4"] = f"Filtros: {filters_applied}"
     ws["A4"].font = Font(name="Calibri", color=ACCENT_AMBER, size=10, bold=True)
+    ws["A4"].fill = PatternFill("solid", fgColor=TINT_AMBER)
     ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
 
     headers = ["Cliente", "Concluídas", "Faltam", "% da meta", "Prioridade"]
@@ -1032,6 +1051,7 @@ def _render_products(ws, visits_raw, period_label,
     ws.merge_cells("A4:I4")
     ws["A4"] = f"Filtros: {filters_applied}"
     ws["A4"].font = Font(name="Calibri", color=ACCENT_BLUE, size=10, bold=True)
+    ws["A4"].fill = PatternFill("solid", fgColor=TINT_BLUE)
     ws["A4"].alignment = Alignment(horizontal="center", vertical="center")
 
     headers = [
