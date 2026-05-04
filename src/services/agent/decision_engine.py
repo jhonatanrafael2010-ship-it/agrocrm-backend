@@ -91,6 +91,14 @@ class DecisionEngine:
             })
             return decision
 
+        if intent == "PLANTING_DAYS":
+            decision.update({
+                "action": "ROUTE_TO_PLANTING_DAYS",
+                "should_fallback": False,
+                "reason": "planting days portfolio request",
+            })
+            return decision
+
         if intent == "FIELD_DATA_SAVE":
             decision.update({
                 "action": "ROUTE_TO_FIELD_DATA_SAVE",

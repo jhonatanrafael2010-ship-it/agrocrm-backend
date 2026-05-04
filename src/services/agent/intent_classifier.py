@@ -33,6 +33,9 @@ AI_INTENT_MAP = {
     "complete_week_visit": "STATEFUL_REPLY",
     "contextual_visit_reference": "STATEFUL_REPLY",
     "edit_summary": "STATEFUL_REPLY",
+    "planting_days_request": "PLANTING_DAYS",
+    "stale_clients_request": "LIST_LATE",
+    "month_visits_request": "LIST_MONTH",
     "confirm": "CONFIRM",
     "cancel": "CANCEL",
     "unknown": "UNKNOWN",
@@ -63,7 +66,11 @@ def classify_with_ai_fallback(message_text: str, current_state: str = ""):
             "daily_routine_request, pdf_last_visit, pdf_recent_visits, "
             "pdf_by_client_reference, create_visit_like_message, launch_week_visit, "
             "complete_week_visit, contextual_visit_reference, edit_summary, "
+            "planting_days_request, stale_clients_request, month_visits_request, "
             "confirm, cancel, unknown. "
+            "planting_days_request: quando o usuario pergunta quantos dias de plantado tem cada cliente ou lavoura. "
+            "stale_clients_request: quando pede clientes mais atrasados, sem visita ou ranking de atraso. "
+            "month_visits_request: quando pede as visitas do mes. "
             "Seja tolerante a erros de digitacao, falta de acento e portugues informal."
         )
 
@@ -191,6 +198,16 @@ class IntentClassifier:
         ]
         if any(t in normalized for t in stale_triggers):
             result.update({"intent": "LIST_LATE", "confidence": "high", "matched_by": "keyword"})
+            return result
+
+        planting_days_triggers = [
+            "dias de plantado",
+            "quantos dias de plantado",
+            "quanto tempo de plantado",
+            "dias plantados",
+        ]
+        if any(t in normalized for t in planting_days_triggers):
+            result.update({"intent": "PLANTING_DAYS", "confidence": "high", "matched_by": "keyword"})
             return result
 
         daily_triggers = [

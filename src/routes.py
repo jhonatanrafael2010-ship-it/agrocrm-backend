@@ -10741,6 +10741,15 @@ def _mob_new_message(session_id, message_text, photos, consultant, resolved_cons
     if action == "ROUTE_TO_PDF":
         return _mob_pdf_flow(message_text, consultant, resolved_consultant_id, session_id)
 
+    if action == "ROUTE_TO_PLANTING_DAYS":
+        return _mob_planting_days_text(consultant)
+
+    if action == "ROUTE_TO_STALE_CLIENTS":
+        return _mob_stale_clients_text(consultant)
+
+    if action == "ROUTE_TO_MONTH_VISITS":
+        return _mob_month_visits_text(consultant, resolved_consultant_id)
+
     return "Ação reconhecida mas ainda não suportada no app. Use: 'cliente Nome cultura fenologia data observações'."
 
 
@@ -11231,6 +11240,34 @@ def _mob_daily_routine_text(consultant, resolved_consultant_id) -> str:
         client_name = v.client.name if getattr(v, "client", None) else "—"
         lines.append(f"{i}. {client_name} – {v.culture or '?'} ({v.status})")
     return "\n".join(lines)
+
+
+def _mob_planting_days_text(consultant) -> str:
+    if not consultant:
+        return "Você precisa estar vinculado a um consultor para ver os dias de plantado."
+    items = build_consultant_days_planted_portfolio(consultant.id)
+    return build_consultant_days_planted_text(consultant.name, items)
+
+
+def _mob_stale_clients_text(consultant) -> str:
+    if not consultant:
+        return "Você precisa estar vinculado a um consultor para ver os clientes atrasados."
+    ranking = find_stale_clients_ranking(consultant_id=consultant.id, limit=15)
+    return build_stale_clients_ranking_text(consultant.name, ranking)
+
+
+def _mob_month_visits_text(consultant, resolved_consultant_id) -> str:
+    if not consultant:
+        return "Você precisa estar vinculado a um consultor para ver as visitas do mês."
+    from datetime import date as _d
+    today = _d.today()
+    visits = Visit.query.filter(
+        db.extract("month", Visit.date) == today.month,
+        db.extract("year", Visit.date) == today.year,
+        Visit.consultant_id == resolved_consultant_id,
+    ).order_by(Visit.date).all() if resolved_consultant_id else []
+    visit_dicts = [v.to_dict() for v in visits]
+    return build_month_visits_text(consultant.name, visit_dicts)
 
 
 @bp.route("/mobile/transcribe", methods=["POST"])
