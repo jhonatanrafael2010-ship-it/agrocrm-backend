@@ -9,7 +9,12 @@
       "Bash(grep -n \"\\\\\\\\\\(foto\\\\\\\\\\)\\\\\\\\|foto\\)\" /c/agrocrm-backend/src/routes.py)",
       "Bash(npx tsc *)",
       "Bash(npm install *)",
-      "Bash(npx cap *)"
+      "Bash(npx cap *)",
+      "Bash(xargs wc *)",
+      "Bash(grep -n \"fetch\\(\\\\`\\\\${API_BASE}\" \"C:\\\\agrocrm-frontend\\\\src\\\\pages\\\\Calendar.tsx\")",
+      "Bash(C:/agrocrm-frontend/node_modules/.bin/tsc --noEmit --project C:/agrocrm-frontend/tsconfig.json)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
