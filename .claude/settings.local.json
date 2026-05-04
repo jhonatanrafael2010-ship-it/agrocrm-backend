@@ -14,7 +14,10 @@
       "Bash(grep -n \"fetch\\(\\\\`\\\\${API_BASE}\" \"C:\\\\agrocrm-frontend\\\\src\\\\pages\\\\Calendar.tsx\")",
       "Bash(C:/agrocrm-frontend/node_modules/.bin/tsc --noEmit --project C:/agrocrm-frontend/tsconfig.json)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(python -m py_compile C:/agrocrm-backend/src/routes.py)",
+      "Bash(python -m py_compile C:/agrocrm-backend/src/services/agent/intent_classifier.py)",
+      "Bash(python -m py_compile C:/agrocrm-backend/src/services/agent/decision_engine.py)"
     ]
   }
 }
