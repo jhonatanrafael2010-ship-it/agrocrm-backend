@@ -23,6 +23,7 @@ import requests
 from PIL import Image as PILImage
 from PIL import ImageFile, ImageOps
 from sqlalchemy import text
+from sqlalchemy.orm import joinedload
 from werkzeug.utils import secure_filename
 from flask_cors import cross_origin
 
@@ -8707,14 +8708,15 @@ def get_visits():
     try:
         month = request.args.get("month")
         scope = request.args.get("scope")
+        today = date.today()
 
         # ============================================
         # 🍏 iOS → apenas visitas do mês atual
         # ============================================
         if month == "current":
-            today = date.today()
             visits = (
                 Visit.query
+                .options(joinedload(Visit.photos), joinedload(Visit.products))
                 .filter(db.extract('month', Visit.date) == today.month)
                 .filter(db.extract('year', Visit.date) == today.year)
                 .order_by(Visit.date.asc())
@@ -8725,7 +8727,16 @@ def get_visits():
         # 🔵 Acompanhamentos / Calendar Desktop → all
         # ============================================
         elif scope == "all":
-            visits = Visit.query.order_by(Visit.date.asc().nullslast()).all()
+            _window_start = today - timedelta(days=365)
+            visits = (
+                Visit.query
+                .options(joinedload(Visit.photos), joinedload(Visit.products))
+                .filter(
+                    db.or_(Visit.date.is_(None), Visit.date >= _window_start)
+                )
+                .order_by(Visit.date.asc().nullslast())
+                .all()
+            )
 
         # ============================================
         # 🔧 Filtros normais (client_id, talhão, etc.)
@@ -8737,7 +8748,7 @@ def get_visits():
             consultant_id = request.args.get('consultant_id', type=int)
             status = request.args.get('status', type=str)
 
-            q = Visit.query
+            q = Visit.query.options(joinedload(Visit.photos), joinedload(Visit.products))
             if client_id:
                 q = q.filter_by(client_id=client_id)
             if property_id:
@@ -8755,9 +8766,15 @@ def get_visits():
         result = []
         backend_url = os.environ.get("RENDER_EXTERNAL_URL") or "https://agrocrm-backend.onrender.com"
 
+        # Bulk-load clients and consultants to avoid N+1
+        client_ids = {v.client_id for v in visits if v.client_id}
+        consultant_ids = {v.consultant_id for v in visits if v.consultant_id}
+        clients_map = {c.id: c for c in Client.query.filter(Client.id.in_(client_ids)).all()} if client_ids else {}
+        consultants_map = {c.id: c for c in Consultant.query.filter(Consultant.id.in_(consultant_ids)).all()} if consultant_ids else {}
+
         for v in visits:
-            client = Client.query.get(v.client_id)
-            consultant = Consultant.query.get(v.consultant_id) if v.consultant_id else None
+            client = clients_map.get(v.client_id)
+            consultant = consultants_map.get(v.consultant_id) if v.consultant_id else None
             consultant_name = consultant.name if consultant else None
 
             photos = []
