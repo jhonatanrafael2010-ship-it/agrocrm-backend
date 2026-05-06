@@ -35,9 +35,41 @@ SEGURANCA:
 """
 
 import re
+import time
 import unicodedata
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
+
+
+# ================================================================
+# Cache em memória com TTL (evita queries repetidas)
+# ================================================================
+_CACHE_TTL_SECONDS = 300  # 5 minutos
+_cache: Dict[str, Any] = {}
+_cache_timestamps: Dict[str, float] = {}
+
+
+def _get_cached(key: str) -> Optional[Any]:
+    """Retorna valor do cache se ainda válido, None caso contrário."""
+    if key not in _cache:
+        return None
+    if time.time() - _cache_timestamps.get(key, 0) > _CACHE_TTL_SECONDS:
+        _cache.pop(key, None)
+        _cache_timestamps.pop(key, None)
+        return None
+    return _cache[key]
+
+
+def _set_cached(key: str, value: Any) -> None:
+    """Armazena valor no cache com timestamp atual."""
+    _cache[key] = value
+    _cache_timestamps[key] = time.time()
+
+
+def invalidate_entity_cache() -> None:
+    """Limpa todo o cache. Chamar após criar/editar cliente/propriedade/talhão."""
+    _cache.clear()
+    _cache_timestamps.clear()
 
 
 # Stopwords usadas pelo find_client_by_name do routes.py,
@@ -152,8 +184,10 @@ class EntityResolver:
         result["property"] = _empty_resolved(result.get("property_name"))
         result["plot"] = _empty_resolved(result.get("plot_name"))
 
+        consultant_id = context.get("consultant_id")
+
         try:
-            client = self._resolve_client(result.get("client_name"))
+            client = self._resolve_client(result.get("client_name"), consultant_id=consultant_id)
             result["client"] = client
 
             client_id = client.get("id")
@@ -173,7 +207,7 @@ class EntityResolver:
     # ================================================================
     # Cliente
     # ================================================================
-    def _resolve_client(self, client_name: Optional[str]) -> Dict[str, Any]:
+    def _resolve_client(self, client_name: Optional[str], consultant_id: Optional[int] = None) -> Dict[str, Any]:
         if not client_name:
             return _empty_resolved(client_name)
 
@@ -193,7 +227,22 @@ class EntityResolver:
         target_clean = " ".join(target_tokens).strip() or target
 
         try:
-            clients = Client.query.all()
+            # Cache key baseada no consultant_id
+            cache_key = f"clients:{consultant_id or 'all'}"
+            clients = _get_cached(cache_key)
+
+            if clients is None:
+                # Prioriza clientes da carteira do consultor, mas inclui todos como fallback
+                query = Client.query
+                if consultant_id:
+                    # Busca primeiro na carteira do consultor
+                    portfolio_clients = query.filter_by(consultant_id=consultant_id).all()
+                    # Se não encontrar na carteira, busca em todos
+                    all_clients = query.all() if not portfolio_clients else []
+                    clients = portfolio_clients + [c for c in all_clients if c not in portfolio_clients]
+                else:
+                    clients = query.all()
+                _set_cached(cache_key, clients)
         except Exception as e:
             print(f"[EntityResolver] warning - query Client falhou: {e}")
             return _empty_resolved(client_name)
@@ -201,6 +250,9 @@ class EntityResolver:
         scored = []
         for client in clients:
             score = _score_against(target_clean, client.name or "")
+            # Bonus de 0.05 para clientes da carteira do consultor
+            if consultant_id and getattr(client, "consultant_id", None) == consultant_id:
+                score = min(1.0, score + 0.05)
             scored.append((client, score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -246,10 +298,15 @@ class EntityResolver:
             return _empty_resolved(property_name)
 
         try:
-            query = Property.query
-            if client_id:
-                query = query.filter_by(client_id=client_id)
-            properties = query.all()
+            cache_key = f"properties:{client_id or 'all'}"
+            properties = _get_cached(cache_key)
+
+            if properties is None:
+                query = Property.query
+                if client_id:
+                    query = query.filter_by(client_id=client_id)
+                properties = query.all()
+                _set_cached(cache_key, properties)
         except Exception as e:
             print(f"[EntityResolver] warning - query Property falhou: {e}")
             return _empty_resolved(property_name)
@@ -300,10 +357,15 @@ class EntityResolver:
             return _empty_resolved(plot_name)
 
         try:
-            query = Plot.query
-            if property_id:
-                query = query.filter_by(property_id=property_id)
-            plots = query.all()
+            cache_key = f"plots:{property_id or 'all'}"
+            plots = _get_cached(cache_key)
+
+            if plots is None:
+                query = Plot.query
+                if property_id:
+                    query = query.filter_by(property_id=property_id)
+                plots = query.all()
+                _set_cached(cache_key, plots)
         except Exception as e:
             print(f"[EntityResolver] warning - query Plot falhou: {e}")
             return _empty_resolved(plot_name)

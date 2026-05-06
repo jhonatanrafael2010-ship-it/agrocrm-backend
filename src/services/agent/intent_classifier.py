@@ -1,6 +1,7 @@
 import re
 import json
 import os
+import time
 import unicodedata
 from typing import Any, Dict
 
@@ -42,6 +43,24 @@ AI_INTENT_MAP = {
 }
 
 
+def _call_openai_with_retry(client, messages, max_retries: int = 3) -> str:
+    """Chama OpenAI com retry e exponential backoff."""
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+            )
+            return (response.choices[0].message.content or "").strip()
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 0.5  # 0.5s, 1s, 2s
+                time.sleep(wait_time)
+    raise last_error
+
+
 def classify_with_ai_fallback(message_text: str, current_state: str = ""):
     """
     So chama a OpenAI se existir chave configurada.
@@ -79,15 +98,12 @@ def classify_with_ai_fallback(message_text: str, current_state: str = ""):
             f"Mensagem do usuario: {message_text}"
         )
 
-        response = client.responses.create(
-            model="gpt-4.1-mini",
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
 
-        output_text = (response.output_text or "").strip()
+        output_text = _call_openai_with_retry(client, messages)
         if not output_text:
             return None
 

@@ -1,18 +1,34 @@
 import os
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 
 SKILLS_DIR = Path(__file__).parent / "skills"
 
+# Cache de skills (carregadas uma vez, ficam em memória)
+_skills_cache: Dict[str, str] = {}
+
 
 def load_skill(skill_name: str) -> Optional[str]:
+    """Carrega skill do disco com cache em memória."""
+    if skill_name in _skills_cache:
+        return _skills_cache[skill_name]
+
     path = SKILLS_DIR / skill_name / "SKILL.md"
     if not path.exists():
         return None
-    return path.read_text(encoding="utf-8")
+
+    content = path.read_text(encoding="utf-8")
+    _skills_cache[skill_name] = content
+    return content
+
+
+def invalidate_skills_cache() -> None:
+    """Limpa cache de skills. Chamar após editar SKILL.md em dev."""
+    _skills_cache.clear()
 
 
 def list_skills_metadata() -> Dict[str, str]:
@@ -28,6 +44,24 @@ def list_skills_metadata() -> Dict[str, str]:
         if match:
             metadata[skill_folder.name] = match.group(1).strip()
     return metadata
+
+
+def _call_openai_with_retry(client, messages, max_retries: int = 3) -> str:
+    """Chama OpenAI com retry e exponential backoff."""
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+            )
+            return (response.choices[0].message.content or "").strip()
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                wait_time = (2 ** attempt) * 0.5  # 0.5s, 1s, 2s
+                time.sleep(wait_time)
+    raise last_error
 
 
 def interpret_with_skill(
@@ -56,15 +90,12 @@ def interpret_with_skill(
             f"Mensagem: {message_text}"
         )
 
-        response = client.responses.create(
-            model="gpt-4.1-mini",
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
 
-        output = (response.output_text or "").strip()
+        output = _call_openai_with_retry(client, messages)
         if not output:
             return None
 

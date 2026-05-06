@@ -170,3 +170,54 @@ def metrics_unknown():
 
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@agent_metrics_bp.route("/ai-usage", methods=["GET"])
+def metrics_ai_usage():
+    """
+    Retorna estatísticas de uso de IA vs heurística.
+    Útil para saber quando a heurística está falhando e
+    precisando do fallback de IA.
+    """
+    try:
+        total = db.session.query(func.count(AgentDecisionLog.id)).scalar() or 0
+
+        # Conta por tipo de matching
+        by_matched_by = (
+            db.session.query(AgentDecisionLog.intent_matched_by, func.count(AgentDecisionLog.id))
+            .group_by(AgentDecisionLog.intent_matched_by)
+            .all()
+        )
+
+        # Agrupa em categorias
+        heuristic_count = 0
+        ai_fallback_count = 0
+        skill_count = 0
+        other_count = 0
+
+        for matched_by, count in by_matched_by:
+            matched_by = (matched_by or "").lower()
+            if matched_by == "ai_fallback":
+                ai_fallback_count += count
+            elif matched_by.startswith("skill:"):
+                skill_count += count
+            elif matched_by in ("keyword", "exact", "heuristic", "state"):
+                heuristic_count += count
+            else:
+                other_count += count
+
+        return jsonify({
+            "ok": True,
+            "total": total,
+            "heuristic_count": heuristic_count,
+            "ai_fallback_count": ai_fallback_count,
+            "skill_count": skill_count,
+            "other_count": other_count,
+            "heuristic_rate_pct": round((heuristic_count / total) * 100, 1) if total else 0.0,
+            "ai_rate_pct": round((ai_fallback_count / total) * 100, 1) if total else 0.0,
+            "skill_rate_pct": round((skill_count / total) * 100, 1) if total else 0.0,
+            "breakdown": [{"matched_by": k or "NULL", "count": v} for k, v in by_matched_by],
+        }), 200
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500

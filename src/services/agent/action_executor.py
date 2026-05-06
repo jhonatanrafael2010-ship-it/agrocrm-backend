@@ -3,9 +3,24 @@ from typing import Any, Dict
 
 class ActionExecutor:
     """
-    Nesta fase o executor não salva nada sozinho.
-    Ele apenas devolve um envelope estruturado para o routes.py.
-    O routes.py continua chamando as funções reais já existentes.
+    Executor de ações do agente.
+
+    STATUS ATUAL (v1):
+        Este executor NÃO executa ações diretamente. Ele apenas
+        devolve um envelope estruturado para o routes.py, que
+        contém a lógica real de execução (~11k linhas).
+
+    TODO FUTURO (v2):
+        Migrar a lógica de execução do routes.py para cá,
+        transformando o ActionExecutor no ponto único de
+        execução. Isso permitirá:
+        - Testes unitários isolados
+        - Reutilização entre plataformas (Telegram, WhatsApp, App)
+        - Código mais organizado e manutenível
+
+    COMPATIBILIDADE:
+        O envelope retornado é consumido pelo routes.py que
+        decide qual função chamar baseado em decision['action'].
     """
 
     def execute(
