@@ -47,14 +47,14 @@ class EntityExtractor:
     def extract_fenology(self, message: str) -> Optional[str]:
         raw = message.strip()
         normalized = normalize_text(raw)
-        patterns = [r"\b(v\d+)\b", r"\b(r\d+)\b", r"\b(vt)\b", r"\b(vc)\b", r"\bve\b"]
+        patterns = [r"\b(v\d+)\b", r"\b(r\d+)\b", r"\b(vt)\b", r"\b(vc)\b", r"\b(ve)\b"]
         for pattern in patterns:
             match = re.search(pattern, raw, flags=re.IGNORECASE)
             if match:
                 return match.group(1).upper()
         if "emergencia" in normalized:
             return "Emergência"
-        if "floracao" in normalized or "floração" in normalized.replace("a", "ã"):
+        if "floracao" in normalized:
             return "Floração"
         if "maturacao" in normalized:
             return "Maturação"
