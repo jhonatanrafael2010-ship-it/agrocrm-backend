@@ -1253,75 +1253,13 @@ def find_pending_visits(
     """
     Busca visitas pendentes do cliente.
 
-    REGRAS:
-    - prioriza a mesma cultura, se existir
-    - ordena pelas mais recentes primeiro
-    - se houver mesma fazenda, separa por variedade
-    - FILTRA por consultant_id quando fornecido (isolamento de carteira)
+    DESATIVADO: Desde maio/2026, a geração automática de eventos
+    fenológicos foi removida. O agente agora sempre cria visitas
+    novas em vez de oferecer edição de pendentes.
+
+    Mantemos a função para compatibilidade, mas sempre retorna vazio.
     """
-    base_query = Visit.query.filter(Visit.client_id == client_id)
-    base_query = base_query.filter(Visit.status.in_(["planned", "pendente", "planejada", "planejado"]))
-
-    if consultant_id:
-        base_query = base_query.filter(Visit.consultant_id == consultant_id)
-
-    if property_id:
-        base_query = base_query.filter(Visit.property_id == property_id)
-
-    def sort_query(q):
-        return (
-            q.order_by(
-                Visit.date.desc().nullslast(),
-                Visit.id.desc()
-            )
-        )
-
-    working_query = base_query
-    same_culture_found = False
-
-    if culture:
-        same_culture_items = sort_query(
-            working_query.filter(Visit.culture == culture)
-        ).all()
-
-        if same_culture_items:
-            working_query_items = same_culture_items
-            same_culture_found = True
-        else:
-            working_query_items = sort_query(working_query).all()
-    else:
-        working_query_items = sort_query(working_query).all()
-
-    if not working_query_items:
-        return [], same_culture_found
-
-    # separa por variedade
-    grouped_by_variety = {}
-    for visit in working_query_items:
-        variety_key = (visit.variety or "Sem variedade").strip() or "Sem variedade"
-        grouped_by_variety.setdefault(variety_key, []).append(visit)
-
-    # se só existe uma variedade, mantém comportamento simples
-    if len(grouped_by_variety) == 1:
-        only_items = list(grouped_by_variety.values())[0][:limit]
-        return only_items, same_culture_found
-
-    # se existem várias variedades, pega até `limit` por variedade
-    merged = []
-    for variety_name in sorted(grouped_by_variety.keys()):
-        variety_visits = grouped_by_variety[variety_name][:limit]
-        merged.extend(variety_visits)
-
-    # ordena de novo no final para manter as mais recentes no topo
-    merged.sort(
-        key=lambda v: (
-            v.date or _date.min,
-            v.id or 0
-        ),
-        reverse=True
-    )
-
-    return merged, same_culture_found
+    return [], False
 
 
 
@@ -2594,7 +2532,7 @@ def extract_recommendation_fallback(message_text: str) -> str:
     raw = message_text.strip()
     raw_single = re.sub(r"\s*\n\s*", " ", raw).strip()
 
-    pattern = r"(?:observacoes|observação|observacao|obs)\s*[:,\-]?\s*([\s\S]+)$"
+    pattern = r"(?:observações|observacoes|observação|observacao|obs)\s*[:,\-]?\s*([\s\S]+)$"
 
     # Tenta primeiro no texto com quebras de linha preservadas
     match = re.search(pattern, raw, re.IGNORECASE)
@@ -2615,7 +2553,7 @@ def extract_recommendation_fallback(message_text: str) -> str:
     for idx, line in enumerate(lines):
         normalized = normalize_lookup_text(line)
         if normalized.startswith("observacoes") or normalized.startswith("observacao") or normalized.startswith("obs"):
-            remainder = re.sub(r"^(observacoes|observação|observacao|obs)\s*[:\-]?\s*", "", line, flags=re.IGNORECASE).strip()
+            remainder = re.sub(r"^(observações|observacoes|observação|observacao|obs)\s*[:\-]?\s*", "", line, flags=re.IGNORECASE).strip()
             tail = lines[idx + 1:]
             parts = []
             if remainder:

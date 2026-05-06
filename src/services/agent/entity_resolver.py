@@ -184,10 +184,8 @@ class EntityResolver:
         result["property"] = _empty_resolved(result.get("property_name"))
         result["plot"] = _empty_resolved(result.get("plot_name"))
 
-        consultant_id = context.get("consultant_id")
-
         try:
-            client = self._resolve_client(result.get("client_name"), consultant_id=consultant_id)
+            client = self._resolve_client(result.get("client_name"))
             result["client"] = client
 
             client_id = client.get("id")
@@ -207,7 +205,7 @@ class EntityResolver:
     # ================================================================
     # Cliente
     # ================================================================
-    def _resolve_client(self, client_name: Optional[str], consultant_id: Optional[int] = None) -> Dict[str, Any]:
+    def _resolve_client(self, client_name: Optional[str]) -> Dict[str, Any]:
         if not client_name:
             return _empty_resolved(client_name)
 
@@ -227,21 +225,12 @@ class EntityResolver:
         target_clean = " ".join(target_tokens).strip() or target
 
         try:
-            # Cache key baseada no consultant_id
-            cache_key = f"clients:{consultant_id or 'all'}"
+            # Cache de clientes (todos, pois Client não tem consultant_id)
+            cache_key = "clients:all"
             clients = _get_cached(cache_key)
 
             if clients is None:
-                # Prioriza clientes da carteira do consultor, mas inclui todos como fallback
-                query = Client.query
-                if consultant_id:
-                    # Busca primeiro na carteira do consultor
-                    portfolio_clients = query.filter_by(consultant_id=consultant_id).all()
-                    # Se não encontrar na carteira, busca em todos
-                    all_clients = query.all() if not portfolio_clients else []
-                    clients = portfolio_clients + [c for c in all_clients if c not in portfolio_clients]
-                else:
-                    clients = query.all()
+                clients = Client.query.all()
                 _set_cached(cache_key, clients)
         except Exception as e:
             print(f"[EntityResolver] warning - query Client falhou: {e}")
@@ -250,9 +239,6 @@ class EntityResolver:
         scored = []
         for client in clients:
             score = _score_against(target_clean, client.name or "")
-            # Bonus de 0.05 para clientes da carteira do consultor
-            if consultant_id and getattr(client, "consultant_id", None) == consultant_id:
-                score = min(1.0, score + 0.05)
             scored.append((client, score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
