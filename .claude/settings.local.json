@@ -17,7 +17,8 @@
       "Bash(git commit -m ' *)",
       "Bash(python -m py_compile C:/agrocrm-backend/src/routes.py)",
       "Bash(python -m py_compile C:/agrocrm-backend/src/services/agent/intent_classifier.py)",
-      "Bash(python -m py_compile C:/agrocrm-backend/src/services/agent/decision_engine.py)"
+      "Bash(python -m py_compile C:/agrocrm-backend/src/services/agent/decision_engine.py)",
+      "Bash(git push *)"
     ]
   }
 }
