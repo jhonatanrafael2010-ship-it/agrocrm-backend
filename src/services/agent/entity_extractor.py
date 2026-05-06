@@ -46,11 +46,20 @@ class EntityExtractor:
 
     def extract_fenology(self, message: str) -> Optional[str]:
         raw = message.strip()
+        normalized = normalize_text(raw)
         patterns = [r"\b(v\d+)\b", r"\b(r\d+)\b", r"\b(vt)\b", r"\b(vc)\b", r"\bve\b"]
         for pattern in patterns:
             match = re.search(pattern, raw, flags=re.IGNORECASE)
             if match:
                 return match.group(1).upper()
+        if "emergencia" in normalized:
+            return "Emergência"
+        if "floracao" in normalized or "floração" in normalized.replace("a", "ã"):
+            return "Floração"
+        if "maturacao" in normalized:
+            return "Maturação"
+        if "enchimento" in normalized:
+            return "Enchimento de grãos"
         return None
 
     def extract_date_token(self, message: str) -> Optional[str]:
@@ -89,8 +98,8 @@ class EntityExtractor:
 
     def extract_client_name(self, message: str) -> Optional[str]:
         patterns = [
-            r"cliente[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|produto|produtos|id|visita)\b|$)",
-            r"produtor[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|produto|produtos|id|visita)\b|$)",
+            r"cliente[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|produto|produtos|id|visita|data|fenologia|observacoes|observações|observacao|observação|emergencia|emergência)\b|$)",
+            r"produtor[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|produto|produtos|id|visita|data|fenologia|observacoes|observações|observacao|observação|emergencia|emergência)\b|$)",
         ]
         for pattern in patterns:
             match = re.search(pattern, message, flags=re.IGNORECASE)
@@ -132,6 +141,7 @@ class EntityExtractor:
             r"aplicar[:\s]+(.+)",
             r"recomendacao[:\s]+(.+)",
             r"recomendação[:\s]+(.+)",
+            r"observações[:\s]+(.+)",
             r"observacoes[:\s]+(.+)",
             r"observação[:\s]+(.+)",
             r"observacao[:\s]+(.+)",

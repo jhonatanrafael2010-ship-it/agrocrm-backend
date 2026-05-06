@@ -280,8 +280,13 @@ class IntentClassifier:
             "ontem",
             "amanha",
             "amanhã",
+            "data",
+            "fenologia",
+            "observacoes",
+            "observacao",
+            "emergencia",
         ]
-        fenology_match = re.search(r"\b(v\d{1,2}|r\d{1,2}|ve|vc|vt)\b", normalized)
+        fenology_match = re.search(r"\b(v\d{1,2}|r\d{1,2}|ve|vc|vt|emergencia)\b", normalized)
 
         hit_count = sum(1 for signal in visit_signals if signal in normalized)
         if fenology_match or hit_count >= 2:
