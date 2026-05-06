@@ -10962,6 +10962,13 @@ def _extract_entities_from_text(text):
 
 
 def _mob_guided_field(session_id, state, message_text, current_status):
+    # Verifica cancelamento antes de processar
+    normalized = normalize_lookup_text(message_text)
+    if normalized in ("cancelar", "cancela", "cancel", "sair", "voltar"):
+        db.session.delete(state)
+        db.session.commit()
+        return "❌ Operação cancelada."
+
     try:
         preview_data = json.loads(state.visit_preview_json or "{}")
     except Exception:
