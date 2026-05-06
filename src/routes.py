@@ -10776,48 +10776,29 @@ def _mob_start_visit_flow(session_id, original_message, entities, consultant, re
         "photos": photo_urls,
     }
 
-    pending_visits, same_culture_found = find_pending_visits(
-        client_id=matched_client.id,
-        property_id=matched_property.id if matched_property else None,
-        culture=culture or None,
-        consultant_id=resolved_consultant_id,
-        limit=5,
+    # Visitas pendentes desativadas (maio/2026) - vai direto para confirmação final
+    guided_payload = build_guided_state_payload(
+        action="create_new_visit",
+        final_visit_payload=visit_preview,
+        selected_pending_visit=None,
+        close_only=False,
     )
-
-    suggestions = []
-    for v in pending_visits:
-        suggestions.append({
-            "id": v.id,
-            "date": v.date.isoformat() if v.date else None,
-            "status": v.status,
-            "culture": v.culture,
-            "variety": v.variety,
-            "fenologia_real": v.fenologia_real,
-            "recommendation": (v.recommendation or "").strip(),
-            "client_id": v.client_id,
-            "property_id": v.property_id,
-            "plot_id": v.plot_id,
-            "property_name": v.property.name if getattr(v, "property", None) else "",
-            "plot_name": v.plot.name if getattr(v, "plot", None) else "",
-            "display_text": v.to_dict().get("display_text"),
-        })
-
-    confirmation_text = build_pending_visits_confirmation_text(
-        client_name=matched_client.name,
-        requested_culture=culture or None,
-        suggestions=suggestions,
-        same_culture_found=same_culture_found,
+    summary_text = build_visit_summary_text(
+        action="create_new_visit",
+        final_visit_payload=visit_preview,
+        selected_pending_visit=None,
+        close_only=False,
     )
 
     state = _mob_ensure_state(session_id)
     state.last_message = original_message
-    state.pending_visit_suggestions_json = json.dumps(suggestions, ensure_ascii=False)
-    state.visit_preview_json = json.dumps(visit_preview, ensure_ascii=False)
-    state.confirmation_text = confirmation_text
-    state.status = "awaiting_confirmation"
+    state.pending_visit_suggestions_json = json.dumps([], ensure_ascii=False)
+    state.visit_preview_json = json.dumps(guided_payload, ensure_ascii=False)
+    state.confirmation_text = summary_text
+    state.status = "awaiting_final_confirmation"
     db.session.commit()
 
-    return confirmation_text
+    return summary_text
 
 
 def _mob_awaiting_confirmation(session_id, state, message_text, resolved_consultant_id):
