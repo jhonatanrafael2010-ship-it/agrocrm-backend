@@ -261,6 +261,7 @@ class Visit(db.Model):
     culture = db.Column(db.String(120), nullable=True)
     variety = db.Column(db.String(200), nullable=True)
     fenologia_real = db.Column(db.String(120), nullable=True)
+    visit_purpose = db.Column(db.String(50), nullable=True)  # Plantio, Emergência, Vegetativo, Reprodutivo, Colheita
     latitude = db.Column(db.Float, nullable=True)
     longitude = db.Column(db.Float, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
@@ -308,6 +309,7 @@ class Visit(db.Model):
             'culture': self.culture,
             'variety': self.variety,
             'fenologia_real': self.fenologia_real,
+            'visit_purpose': self.visit_purpose,
             'latitude': self.latitude,
             'longitude': self.longitude,
             'created_at': self.created_at.isoformat() if self.created_at else None,

@@ -655,11 +655,11 @@ def normalize_culture_input(value: str):
 
 
 def is_valid_fenologia(value: str) -> bool:
+    """Valida fenologia técnica (apenas códigos V/R)."""
     if not value:
         return False
 
     value = value.strip().upper()
-    normalized = normalize_lookup_text(value)
 
     valid_patterns = [
         r"^V\d{1,2}$",   # V1, V4, V10
@@ -673,15 +673,188 @@ def is_valid_fenologia(value: str) -> bool:
         if re.match(pattern, value):
             return True
 
-    # Fenologias descritivas
-    descriptive = {
-        "plantio", "emergencia", "floracao", "maturacao",
-        "enchimento", "colheita", "dessecacao",
-    }
-    if normalized in descriptive:
-        return True
-
     return False
+
+
+# Objetivos válidos de visita
+VISIT_PURPOSES = {
+    "plantio": "Plantio",
+    "emergencia": "Emergência",
+    "vegetativo": "Vegetativo",
+    "reprodutivo": "Reprodutivo",
+    "colheita": "Colheita",
+}
+
+
+def parse_visit_purpose(text: str) -> Optional[str]:
+    """Interpreta objetivo da visita com tolerância a erros."""
+    if not text:
+        return None
+
+    normalized = normalize_lookup_text(text)
+
+    # Aceita números (1-5)
+    number_map = {
+        "1": "Plantio",
+        "2": "Emergência",
+        "3": "Vegetativo",
+        "4": "Reprodutivo",
+        "5": "Colheita",
+    }
+    if normalized in number_map:
+        return number_map[normalized]
+
+    # Match direto
+    if normalized in VISIT_PURPOSES:
+        return VISIT_PURPOSES[normalized]
+
+    # Variações comuns e erros de digitação
+    variations = {
+        # Plantio
+        "plantio": "Plantio",
+        "platio": "Plantio",
+        "plantiu": "Plantio",
+        "plantioo": "Plantio",
+        "prantio": "Plantio",
+        "planting": "Plantio",
+        # Emergência
+        "emergencia": "Emergência",
+        "emergenca": "Emergência",
+        "emergemcia": "Emergência",
+        "emergncia": "Emergência",
+        "emrgencia": "Emergência",
+        "emergindo": "Emergência",
+        # Vegetativo
+        "vegetativo": "Vegetativo",
+        "vegetatvo": "Vegetativo",
+        "vejetativo": "Vegetativo",
+        "veg": "Vegetativo",
+        "vegeta": "Vegetativo",
+        # Reprodutivo
+        "reprodutivo": "Reprodutivo",
+        "reprodutvo": "Reprodutivo",
+        "reprodutiv": "Reprodutivo",
+        "repro": "Reprodutivo",
+        "reprodução": "Reprodutivo",
+        "reproducao": "Reprodutivo",
+        # Colheita
+        "colheita": "Colheita",
+        "colheta": "Colheita",
+        "colheita": "Colheita",
+        "colhendo": "Colheita",
+        "colher": "Colheita",
+        "harvest": "Colheita",
+    }
+
+    if normalized in variations:
+        return variations[normalized]
+
+    # Busca parcial
+    for key, value in VISIT_PURPOSES.items():
+        if key in normalized or normalized in key:
+            return value
+
+    return None
+
+
+def parse_visit_purpose_with_ai(text: str) -> Optional[str]:
+    """Usa IA para interpretar objetivo quando heurística falha."""
+    if not text:
+        return None
+
+    # Tenta heurística primeiro
+    result = parse_visit_purpose(text)
+    if result:
+        return result
+
+    # Se não houver API key, retorna None
+    if not os.getenv("OPENAI_API_KEY"):
+        return None
+
+    try:
+        from openai import OpenAI
+        client = OpenAI()
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Você interpreta o objetivo de uma visita agrícola. "
+                        "Opções válidas: Plantio, Emergência, Vegetativo, Reprodutivo, Colheita. "
+                        "Responda APENAS com uma dessas palavras, sem explicação. "
+                        "Se não conseguir identificar, responda 'null'."
+                    )
+                },
+                {"role": "user", "content": text}
+            ],
+            max_tokens=20,
+        )
+
+        answer = (response.choices[0].message.content or "").strip()
+        normalized_answer = normalize_lookup_text(answer)
+
+        if normalized_answer in VISIT_PURPOSES:
+            return VISIT_PURPOSES[normalized_answer]
+
+        return None
+
+    except Exception as e:
+        print(f"[parse_visit_purpose_with_ai] erro: {e}")
+        return None
+
+
+def parse_fenologia_with_ai(text: str, purpose: str) -> Optional[str]:
+    """Usa IA para interpretar fenologia quando heurística falha."""
+    if not text:
+        return None
+
+    # Tenta validação direta primeiro
+    upper = text.strip().upper()
+    if is_valid_fenologia(upper):
+        return upper
+
+    # Se não houver API key, retorna None
+    if not os.getenv("OPENAI_API_KEY"):
+        return None
+
+    try:
+        from openai import OpenAI
+        client = OpenAI()
+
+        if purpose == "Vegetativo":
+            valid_options = "VE, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, VC, VT"
+        else:
+            valid_options = "R1, R2, R3, R4, R5, R6, R7, R8"
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        f"Você interpreta o estágio fenológico de uma cultura agrícola. "
+                        f"Opções válidas: {valid_options}. "
+                        "Responda APENAS com o código (ex: V4, R2), sem explicação. "
+                        "Se não conseguir identificar, responda 'null'."
+                    )
+                },
+                {"role": "user", "content": text}
+            ],
+            max_tokens=10,
+        )
+
+        answer = (response.choices[0].message.content or "").strip().upper()
+
+        if is_valid_fenologia(answer):
+            return answer
+
+        return None
+
+    except Exception as e:
+        print(f"[parse_fenologia_with_ai] erro: {e}")
+        return None
 
 
 def build_name_confirmation_text(entity_label: str, candidates: list) -> str:
@@ -818,6 +991,8 @@ def build_week_schedule_text(consultant_name: str, visits: list) -> str:
     return "\n".join(lines)
 
 def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pending_visit: dict = None, close_only: bool = False) -> str:
+    culture = final_visit_payload.get("culture") or "—"
+    visit_purpose = final_visit_payload.get("visit_purpose") or "—"
     fenologia = final_visit_payload.get("fenologia_real") or "—"
     date_value = final_visit_payload.get("date") or "—"
     observations = final_visit_payload.get("recommendation") or "—"
@@ -835,18 +1010,20 @@ def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pe
         lines.append(f"🔧 Tipo: {'Concluir visita pendente' if close_only else 'Atualizar visita pendente'}")
         lines.append(f"🆔 ID da visita: {selected_pending_visit.get('id')}")
         lines.append(f"👤 Cliente: {client_name}")
-        lines.append(f"📌 Recomendação pendente: {selected_pending_visit.get('recommendation') or '—'}")
-        lines.append(f"🌿 Fenologia observada: {fenologia}")
-        lines.append(f"📅 Data da visita: {date_value}")
+        lines.append(f"🌱 Cultura: {culture}")
+        lines.append(f"🎯 Objetivo: {visit_purpose}")
+        lines.append(f"🌿 Fenologia: {fenologia}")
+        lines.append(f"📅 Data: {date_value}")
         lines.append(f"💬 Observações: {observations}")
 
     elif action == "create_new_visit":
         lines.append("🆕 Tipo: Nova visita")
-        lines.append("🆔 ID da visita: nova")
         lines.append(f"👤 Cliente: {client_name}")
-        lines.append("📌 Recomendação pendente: —")
-        lines.append(f"🌿 Fenologia observada: {fenologia}")
-        lines.append(f"📅 Data da visita: {date_value}")
+        lines.append(f"🌱 Cultura: {culture}")
+        lines.append(f"🎯 Objetivo: {visit_purpose}")
+        if fenologia != "—":
+            lines.append(f"🌿 Fenologia: {fenologia}")
+        lines.append(f"📅 Data: {date_value}")
         lines.append(f"💬 Observações: {observations}")
 
     products = final_visit_payload.get("products") or []
@@ -3072,6 +3249,7 @@ def create_visit_from_payload(final_visit_payload: dict):
         culture=final_visit_payload.get("culture") or "",
         variety=final_visit_payload.get("variety") or "",
         fenologia_real=final_visit_payload.get("fenologia_real") or None,
+        visit_purpose=final_visit_payload.get("visit_purpose") or None,
         latitude=final_visit_payload.get("latitude"),
         longitude=final_visit_payload.get("longitude"),
         source=final_visit_payload.get("source") or "chatbot",
@@ -10629,7 +10807,7 @@ def mobile_chat():
         resp = _mob_awaiting_confirmation(session_id, state, message_text, resolved_consultant_id)
     elif status == "awaiting_client_confirmation":
         resp = _mob_client_confirmation(session_id, state, message_text, consultant, resolved_consultant_id)
-    elif status in ("awaiting_fenologia", "awaiting_date", "awaiting_observations", "awaiting_culture"):
+    elif status in ("awaiting_fenologia", "awaiting_date", "awaiting_observations", "awaiting_culture", "awaiting_purpose"):
         resp = _mob_guided_field(session_id, state, message_text, status)
     elif status == "awaiting_visit_details":
         resp = _mob_visit_details_with_stored_photos(session_id, state, message_text, photos, consultant, resolved_consultant_id)
@@ -11003,27 +11181,67 @@ def _mob_guided_field(session_id, state, message_text, current_status):
     if current_status == "awaiting_culture":
         culture = normalize_culture_input(message_text.strip())
         if not culture:
-            return "Cultura não reconhecida. Exemplos: Soja, Milho, Algodão."
+            return "🌱 Cultura não reconhecida.\nExemplos: Soja, Milho, Algodão"
         final_visit_payload["culture"] = culture
-        next_status, next_msg = "awaiting_fenologia", "🌿 Informe a fenologia.\nExemplo: V4, R1"
+        next_status = "awaiting_purpose"
+        next_msg = (
+            "🎯 Qual o objetivo da visita?\n\n"
+            "1️⃣ Plantio\n"
+            "2️⃣ Emergência\n"
+            "3️⃣ Vegetativo\n"
+            "4️⃣ Reprodutivo\n"
+            "5️⃣ Colheita\n\n"
+            "Responda com o número ou nome."
+        )
+
+    elif current_status == "awaiting_purpose":
+        # Tenta interpretar com heurística, depois com IA
+        purpose = parse_visit_purpose(message_text.strip())
+        if not purpose:
+            purpose = parse_visit_purpose_with_ai(message_text.strip())
+
+        if not purpose:
+            return (
+                "🎯 Objetivo não reconhecido.\n\n"
+                "Escolha:\n"
+                "1️⃣ Plantio\n"
+                "2️⃣ Emergência\n"
+                "3️⃣ Vegetativo\n"
+                "4️⃣ Reprodutivo\n"
+                "5️⃣ Colheita"
+            )
+
+        final_visit_payload["visit_purpose"] = purpose
+
+        # Se Vegetativo ou Reprodutivo, pede fenologia
+        if purpose in ("Vegetativo", "Reprodutivo"):
+            if purpose == "Vegetativo":
+                next_msg = "🌿 Informe a fenologia vegetativa.\nExemplo: VE, V1, V4, V8, VT"
+            else:
+                next_msg = "🌿 Informe a fenologia reprodutiva.\nExemplo: R1, R3, R5, R7"
+            next_status = "awaiting_fenologia"
+        else:
+            # Plantio, Emergência, Colheita não precisam de fenologia
+            next_status = "awaiting_date"
+            next_msg = "📅 Informe a data da visita.\nExemplo: hoje, ontem, 24/02/2026"
 
     elif current_status == "awaiting_fenologia":
-        if not is_valid_fenologia(message_text.strip()):
-            return "Fenologia inválida. Exemplo: V4, R1, Plantio, Emergência"
-        # Formata fenologias descritivas com inicial maiúscula
-        fenologia_map = {
-            "emergencia": "Emergência",
-            "plantio": "Plantio",
-            "floracao": "Floração",
-            "maturacao": "Maturação",
-            "enchimento": "Enchimento de grãos",
-            "colheita": "Colheita",
-            "dessecacao": "Dessecação",
-        }
-        normalized_fen = normalize_lookup_text(message_text.strip())
-        fenologia = fenologia_map.get(normalized_fen, message_text.strip().upper())
+        purpose = final_visit_payload.get("visit_purpose") or ""
+
+        # Tenta validação direta, depois IA
+        fenologia = message_text.strip().upper()
+        if not is_valid_fenologia(fenologia):
+            fenologia = parse_fenologia_with_ai(message_text.strip(), purpose)
+
+        if not fenologia:
+            if purpose == "Vegetativo":
+                return "🌿 Fenologia inválida.\nExemplo: VE, V1, V4, V8, VT"
+            else:
+                return "🌿 Fenologia inválida.\nExemplo: R1, R3, R5, R7"
+
         final_visit_payload["fenologia_real"] = fenologia
-        next_status, next_msg = "awaiting_date", "📅 Informe a data da visita.\nExemplo: hoje, ontem ou 24/02/2026"
+        next_status = "awaiting_date"
+        next_msg = "📅 Informe a data da visita.\nExemplo: hoje, ontem, 24/02/2026"
 
     elif current_status == "awaiting_date":
         d = parse_human_date(message_text.strip())
@@ -11032,12 +11250,14 @@ def _mob_guided_field(session_id, state, message_text, current_status):
         else:
             iso = parse_date_flexible(message_text.strip())
             if not iso:
-                return "Data não reconhecida. Exemplo: hoje, ontem, 24/02/2026."
+                return "📅 Data não reconhecida.\nExemplo: hoje, ontem, 24/02/2026"
             final_visit_payload["date"] = iso
-        next_status, next_msg = "awaiting_observations", "💬 Informe as observações da visita."
+        next_status = "awaiting_observations"
+        next_msg = "💬 Informe as observações da visita.\nOu digite 'pular' para continuar sem observações."
 
     elif current_status == "awaiting_observations":
-        final_visit_payload["recommendation"] = _format_recommendation(message_text.strip()) or message_text.strip()
+        if normalized not in ("pular", "skip", "-", "nenhuma", "nenhum"):
+            final_visit_payload["recommendation"] = _format_recommendation(message_text.strip()) or message_text.strip()
         summary_text = build_visit_summary_text(action, final_visit_payload, selected_pending_visit or None, close_only)
         state.visit_preview_json = json.dumps(
             build_guided_state_payload(action, final_visit_payload, selected_pending_visit or None, close_only),
