@@ -659,6 +659,7 @@ def is_valid_fenologia(value: str) -> bool:
         return False
 
     value = value.strip().upper()
+    normalized = normalize_lookup_text(value)
 
     valid_patterns = [
         r"^V\d{1,2}$",   # V1, V4, V10
@@ -671,6 +672,14 @@ def is_valid_fenologia(value: str) -> bool:
     for pattern in valid_patterns:
         if re.match(pattern, value):
             return True
+
+    # Fenologias descritivas
+    descriptive = {
+        "plantio", "emergencia", "floracao", "maturacao",
+        "enchimento", "colheita", "dessecacao",
+    }
+    if normalized in descriptive:
+        return True
 
     return False
 
@@ -7147,18 +7156,28 @@ def telegram_webhook():
                 }), 200
 
             if state.status == "awaiting_fenologia":
-                fenologia_input = message_text.strip().upper()
-
-                if not is_valid_fenologia(fenologia_input):
+                if not is_valid_fenologia(message_text.strip()):
                     send_telegram_message(
                         chat_id=chat_message.chat_id,
-                        text="🌿 Fenologia inválida.\nEnvie algo como: V4, V5, VE, VT, R1."
+                        text="🌿 Fenologia inválida.\nEnvie algo como: V4, V5, R1, Plantio, Emergência"
                     )
                     return jsonify({
                         "ok": True,
                         "message": "fenologia inválida"
                     }), 200
 
+                # Formata fenologias descritivas
+                fenologia_map = {
+                    "emergencia": "Emergência",
+                    "plantio": "Plantio",
+                    "floracao": "Floração",
+                    "maturacao": "Maturação",
+                    "enchimento": "Enchimento de grãos",
+                    "colheita": "Colheita",
+                    "dessecacao": "Dessecação",
+                }
+                normalized_fen = normalize_lookup_text(message_text.strip())
+                fenologia_input = fenologia_map.get(normalized_fen, message_text.strip().upper())
                 final_visit_payload["fenologia_real"] = fenologia_input
 
                 has_date = bool(final_visit_payload.get("date"))
@@ -10990,8 +11009,20 @@ def _mob_guided_field(session_id, state, message_text, current_status):
 
     elif current_status == "awaiting_fenologia":
         if not is_valid_fenologia(message_text.strip()):
-            return "Fenologia inválida. Exemplo: V4, V10, VT, R1."
-        final_visit_payload["fenologia_real"] = message_text.strip().upper()
+            return "Fenologia inválida. Exemplo: V4, R1, Plantio, Emergência"
+        # Formata fenologias descritivas com inicial maiúscula
+        fenologia_map = {
+            "emergencia": "Emergência",
+            "plantio": "Plantio",
+            "floracao": "Floração",
+            "maturacao": "Maturação",
+            "enchimento": "Enchimento de grãos",
+            "colheita": "Colheita",
+            "dessecacao": "Dessecação",
+        }
+        normalized_fen = normalize_lookup_text(message_text.strip())
+        fenologia = fenologia_map.get(normalized_fen, message_text.strip().upper())
+        final_visit_payload["fenologia_real"] = fenologia
         next_status, next_msg = "awaiting_date", "📅 Informe a data da visita.\nExemplo: hoje, ontem ou 24/02/2026"
 
     elif current_status == "awaiting_date":
