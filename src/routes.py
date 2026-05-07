@@ -2,6 +2,7 @@
 # Python (stdlib)
 # =========================
 from datetime import datetime, date, timedelta
+from typing import Optional
 import base64
 import calendar
 import gc
