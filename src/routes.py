@@ -2705,16 +2705,22 @@ def extract_field_data_payload_from_text(message_text: str):
 
 
 def _format_recommendation(text: str) -> str:
-    """Remove rótulo 'observações' residual e adiciona quebras de linha entre frases."""
+    """Remove rótulo 'observações' residual e normaliza quebras de linha."""
     if not text:
         return ""
     text = re.sub(
         r"^(?:observacoes|observações|observação|observacao|obs)\s*[:\-,]?\s*",
         "", text, flags=re.IGNORECASE
     ).strip()
-    # Se não há quebras de linha naturais, insere após cada ponto final
+    # Múltiplos espaços (3+) entre frases → quebra de linha
+    text = re.sub(r"[ \t]{3,}", "\n", text)
+    # Ponto + espaços + próxima frase → quebra de linha
+    text = re.sub(r"\.\s{2,}(?=\S)", ".\n", text)
+    # Se ainda não há quebras e tem pontos, adiciona após cada ponto
     if "\n" not in text:
         text = re.sub(r"\.\s+(?=\S)", ".\n", text)
+    # Remove linhas em branco duplicadas
+    text = re.sub(r"\n{2,}", "\n", text)
     return text.strip()
 
 
@@ -11613,7 +11619,7 @@ def _mob_final_confirmation(session_id, state, message_text, resolved_consultant
                         continue
                 else:
                     photo_url = raw
-                p = PhotoModel(visit_id=visit.id, filename=photo_url, source="mobile")
+                p = PhotoModel(visit_id=visit.id, url=photo_url)
                 db.session.add(p)
                 attached_count += 1
             if attached_count:
