@@ -3299,11 +3299,9 @@ def create_visit_from_payload(final_visit_payload: dict):
             visit.culture = visit.culture or planting.culture
             visit.variety = visit.variety or planting.variety
 
-    # 🔒 trava final
-    if should_require_cycle_link(final_visit_payload) and not visit.planting_id:
-        raise ValueError(
-            "Visita de ciclo bloqueada: não foi possível resolver planting_id com segurança."
-        )
+    # ⚠️ aviso se não encontrou planting_id (não bloqueia mais)
+    if not visit.planting_id:
+        print(f"[mob_confirm_visit] Visita criada sem planting_id: visit_id={visit.id if hasattr(visit, 'id') else 'novo'}, client_id={visit.client_id}")
 
     db.session.add(visit)
     db.session.commit()
@@ -3589,8 +3587,17 @@ def build_cycle_disambiguation_text(client_name: str, candidates: list) -> str:
 
 
 def is_explicit_planting_visit_payload(payload: dict) -> bool:
+    """
+    Verifica se a visita é explicitamente de Plantio (início de ciclo).
+    Essas visitas não precisam de planting_id pré-existente.
+    """
     fenologia = (payload.get("fenologia_real") or "").strip().lower()
     recommendation = (payload.get("recommendation") or "").strip().lower()
+    visit_purpose = (payload.get("visit_purpose") or "").strip().lower()
+
+    # visit_purpose == Plantio
+    if visit_purpose == "plantio":
+        return True
 
     if fenologia == "plantio":
         return True
@@ -3608,10 +3615,10 @@ def should_require_cycle_link(payload: dict) -> bool:
     """
     Decide se a visita PRECISA ter planting_id antes de salvar.
 
-    Regra:
-    - visita de Plantio: NÃO exige planting_id
+    Regra atualizada:
+    - visita de Plantio ou Emergência: NÃO exige planting_id (início de ciclo)
     - visita avulsa explícita: NÃO exige planting_id
-    - visita de ciclo (fenologia/cultura/contexto técnico): EXIGE planting_id
+    - demais: tenta resolver, mas não bloqueia
     """
     if not payload:
         return False
@@ -3622,14 +3629,15 @@ def should_require_cycle_link(payload: dict) -> bool:
     if payload.get("visit_kind") == "avulsa":
         return False
 
-    has_cycle_signals = any([
-        bool(payload.get("culture")),
-        bool(payload.get("fenologia_real")),
-        bool(payload.get("plot_id")),
-        bool(payload.get("property_id")),
-    ])
+    # Emergência também não exige planting_id (pode ser primeiro registro)
+    visit_purpose = (payload.get("visit_purpose") or "").strip().lower()
+    if visit_purpose in ("emergencia", "emergência"):
+        return False
 
-    return has_cycle_signals
+    # Desabilitado: não bloquear visitas sem planting_id
+    # O sistema tenta resolver, mas permite visitas sem vínculo
+    # PDFs funcionarão para visitas com vínculo
+    return False
 
 
 def resolve_strict_planting_for_payload(payload: dict):
