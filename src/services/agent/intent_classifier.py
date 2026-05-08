@@ -285,10 +285,40 @@ class IntentClassifier:
             "observacoes",
             "observacao",
             "emergencia",
+            "objetivo",
+            "vegetativo",
+            "reprodutivo",
+            "plantio",
+            "colheita",
         ]
         fenology_match = re.search(r"\b(v\d{1,2}|r\d{1,2}|ve|vc|vt|emergencia)\b", normalized)
 
+        # Detecta variedades (AS 1868, AG 9045, etc)
+        variety_match = re.search(r"\b(as|ag|tmg|ns|dm)\s*\d{3,4}", normalized)
+
+        # Detecta data no início da mensagem
+        date_at_start = re.match(r"^\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?", normalized.strip())
+
         hit_count = sum(1 for signal in visit_signals if signal in normalized)
+
+        # Mensagem com data no início + pelo menos 1 sinal = visita
+        if date_at_start and hit_count >= 1:
+            result.update({
+                "intent": "CREATE_VISIT_LIKE_MESSAGE",
+                "confidence": "high",
+                "matched_by": "heuristic",
+            })
+            return result
+
+        # Mensagem com variedade + pelo menos 1 sinal = visita
+        if variety_match and hit_count >= 1:
+            result.update({
+                "intent": "CREATE_VISIT_LIKE_MESSAGE",
+                "confidence": "high",
+                "matched_by": "heuristic",
+            })
+            return result
+
         if fenology_match or hit_count >= 2:
             result.update({
                 "intent": "CREATE_VISIT_LIKE_MESSAGE",

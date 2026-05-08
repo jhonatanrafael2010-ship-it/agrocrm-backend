@@ -26,6 +26,8 @@ class EntityExtractor:
             "property_name": self.extract_property_name(text),
             "plot_name": self.extract_plot_name(text),
             "culture": self.extract_culture(text),
+            "variety": self.extract_variety(text),
+            "visit_purpose": self.extract_visit_purpose(text),
             "fenologia_real": self.extract_fenology(text),
             "date": self.extract_date_token(text),
             "recommendation": self.extract_recommendation(text),
@@ -42,6 +44,54 @@ class EntityExtractor:
             return "Milho"
         if "algodao" in msg:
             return "Algodão"
+        return None
+
+    def extract_variety(self, message: str) -> Optional[str]:
+        """Extrai variedade/cultivar (ex: AS 1868 PRO4, AG 9045, TMG 2381)."""
+        # Padrões comuns de variedades de soja/milho
+        patterns = [
+            r"\b(AS\s*\d{3,4}(?:\s*PRO\d?)?)\b",  # AS 1868 PRO4
+            r"\b(AG\s*\d{3,4}(?:\s*PRO\d?)?)\b",  # AG 9045
+            r"\b(TMG\s*\d{3,4})\b",               # TMG 2381
+            r"\b(M\s*\d{3,4}(?:\s*IPRO)?)\b",     # M 6410 IPRO
+            r"\b(NS\s*\d{3,4}(?:\s*IPRO)?)\b",    # NS 7667 IPRO
+            r"\b(DM\s*\d{3,4}(?:\s*IPRO)?)\b",    # DM 68i70
+            r"\b(P\s*\d{3,4})\b",                  # P 3456
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, message, flags=re.IGNORECASE)
+            if match:
+                return match.group(1).upper().replace("  ", " ")
+        return None
+
+    def extract_visit_purpose(self, message: str) -> Optional[str]:
+        """Extrai objetivo da visita."""
+        normalized = normalize_text(message)
+
+        # Com prefixo "objetivo"
+        purpose_match = re.search(r"objetivo[:\s]*(plantio|emergencia|vegetativo|reprodutivo|colheita)", normalized)
+        if purpose_match:
+            purpose_map = {
+                "plantio": "Plantio",
+                "emergencia": "Emergência",
+                "vegetativo": "Vegetativo",
+                "reprodutivo": "Reprodutivo",
+                "colheita": "Colheita",
+            }
+            return purpose_map.get(purpose_match.group(1))
+
+        # Sem prefixo, busca isolado
+        if re.search(r"\bplantio\b", normalized):
+            return "Plantio"
+        if re.search(r"\bemergencia\b", normalized):
+            return "Emergência"
+        if re.search(r"\bvegetativo\b", normalized):
+            return "Vegetativo"
+        if re.search(r"\breprodutivo\b", normalized):
+            return "Reprodutivo"
+        if re.search(r"\bcolheita\b", normalized):
+            return "Colheita"
+
         return None
 
     def extract_fenology(self, message: str) -> Optional[str]:
@@ -97,16 +147,42 @@ class EntityExtractor:
         return None
 
     def extract_client_name(self, message: str) -> Optional[str]:
-        patterns = [
-            r"cliente[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|produto|produtos|id|visita|data|fenologia|observacoes|observações|observacao|observação|emergencia|emergência)\b|$)",
-            r"produtor[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|produto|produtos|id|visita|data|fenologia|observacoes|observações|observacao|observação|emergencia|emergência)\b|$)",
+        # Padrões com prefixo explícito
+        explicit_patterns = [
+            r"cliente[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|produto|produtos|id|visita|data|fenologia|observacoes|observações|observacao|observação|emergencia|emergência|objetivo|as\s+\d|ag\s+\d)\b|$)",
+            r"produtor[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(fazenda|propriedade|sitio|sítio|talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|produto|produtos|id|visita|data|fenologia|observacoes|observações|observacao|observação|emergencia|emergência|objetivo|as\s+\d|ag\s+\d)\b|$)",
         ]
-        for pattern in patterns:
+        for pattern in explicit_patterns:
             match = re.search(pattern, message, flags=re.IGNORECASE)
             if match:
                 value = match.group(1).strip(" .,-")
                 if value:
                     return value
+
+        # Fallback: tenta extrair nome após data no início
+        # Formato: "07/05/2026 Nome do Cliente Objetivo..."
+        date_then_name = re.match(
+            r"^\s*\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\s+([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]+?)(?=\s+(objetivo|fenologia|observacoes|observações|soja|milho|algodao|algodão|as\s+\d|ag\s+\d|vegetativo|reprodutivo|plantio|emergencia|colheita)\b)",
+            message,
+            flags=re.IGNORECASE
+        )
+        if date_then_name:
+            value = date_then_name.group(1).strip(" .,-")
+            if value and len(value) >= 3:
+                return value
+
+        # Fallback: nome no início seguido de palavras-chave
+        # Formato: "Nome do Cliente AS 1868 PRO4 objetivo..."
+        name_at_start = re.match(
+            r"^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]+?)(?=\s+(as\s+\d|ag\s+\d|objetivo|fenologia|soja|milho|algodao|algodão|v\d+|r\d+|vegetativo|reprodutivo|plantio|emergencia|colheita|observacoes|observações)\b)",
+            message.strip(),
+            flags=re.IGNORECASE
+        )
+        if name_at_start:
+            value = name_at_start.group(1).strip(" .,-")
+            if value and len(value) >= 3:
+                return value
+
         return None
 
     def extract_property_name(self, message: str) -> Optional[str]:

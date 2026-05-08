@@ -993,11 +993,17 @@ def build_week_schedule_text(consultant_name: str, visits: list) -> str:
 
 def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pending_visit: dict = None, close_only: bool = False) -> str:
     culture = final_visit_payload.get("culture") or "—"
+    variety = final_visit_payload.get("variety") or ""
     visit_purpose = final_visit_payload.get("visit_purpose") or "—"
     fenologia = final_visit_payload.get("fenologia_real") or "—"
     date_value = final_visit_payload.get("date") or "—"
     observations = final_visit_payload.get("recommendation") or "—"
     client_id = final_visit_payload.get("client_id")
+
+    # Combina cultura e variedade se ambos existirem
+    culture_display = culture
+    if variety:
+        culture_display = f"{culture} ({variety})"
 
     client_name = "—"
     if client_id:
@@ -1011,7 +1017,7 @@ def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pe
         lines.append(f"🔧 Tipo: {'Concluir visita pendente' if close_only else 'Atualizar visita pendente'}")
         lines.append(f"🆔 ID da visita: {selected_pending_visit.get('id')}")
         lines.append(f"👤 Cliente: {client_name}")
-        lines.append(f"🌱 Cultura: {culture}")
+        lines.append(f"🌱 Cultura: {culture_display}")
         lines.append(f"🎯 Objetivo: {visit_purpose}")
         lines.append(f"🌿 Fenologia: {fenologia}")
         lines.append(f"📅 Data: {date_value}")
@@ -1020,7 +1026,7 @@ def build_visit_summary_text(action: str, final_visit_payload: dict, selected_pe
     elif action == "create_new_visit":
         lines.append("🆕 Tipo: Nova visita")
         lines.append(f"👤 Cliente: {client_name}")
-        lines.append(f"🌱 Cultura: {culture}")
+        lines.append(f"🌱 Cultura: {culture_display}")
         lines.append(f"🎯 Objetivo: {visit_purpose}")
         if fenologia != "—":
             lines.append(f"🌿 Fenologia: {fenologia}")
@@ -10907,6 +10913,8 @@ def _mob_visit_details_with_stored_photos(session_id, state, message_text, photo
 def _mob_start_visit_flow(session_id, original_message, entities, consultant, resolved_consultant_id, photos):
     client_name = (entities.get("client_name") or "").strip()
     culture = (entities.get("culture") or "").strip()
+    variety = (entities.get("variety") or "").strip()
+    visit_purpose = (entities.get("visit_purpose") or "").strip()
     fenologia_real = (entities.get("fenologia_real") or "").strip()
     recommendation = (entities.get("recommendation") or "").strip()
     date_value = entities.get("date")
@@ -10963,7 +10971,8 @@ def _mob_start_visit_flow(session_id, original_message, entities, consultant, re
         "date": resolved_date,
         "status": "planned",
         "culture": culture,
-        "variety": "",
+        "variety": variety,
+        "visit_purpose": visit_purpose,
         "fenologia_real": fenologia_real or None,
         "recommendation": parsed_recommendation,
         "products": products,
@@ -10974,7 +10983,83 @@ def _mob_start_visit_flow(session_id, original_message, entities, consultant, re
         "photos": photo_urls,
     }
 
-    # Visitas pendentes desativadas (maio/2026) - vai direto para confirmação final
+    # Verifica campos obrigatórios e inicia fluxo guiado se faltarem
+    state = _mob_ensure_state(session_id)
+    state.last_message = original_message
+
+    # Se tem todos os campos essenciais (cultura, objetivo, data), vai direto para confirmação
+    has_culture = bool(culture)
+    has_purpose = bool(visit_purpose)
+    has_date = bool(resolved_date)
+
+    # Se falta cultura, inicia fluxo guiado
+    if not has_culture:
+        guided_payload = build_guided_state_payload(
+            action="create_new_visit",
+            final_visit_payload=visit_preview,
+            selected_pending_visit=None,
+            close_only=False,
+        )
+        state.pending_visit_suggestions_json = json.dumps([], ensure_ascii=False)
+        state.visit_preview_json = json.dumps(guided_payload, ensure_ascii=False)
+        state.status = "awaiting_culture"
+        db.session.commit()
+        return "🌱 Informe a cultura da visita.\nExemplos: Soja, Milho, Algodão"
+
+    # Se falta objetivo, pergunta
+    if not has_purpose:
+        guided_payload = build_guided_state_payload(
+            action="create_new_visit",
+            final_visit_payload=visit_preview,
+            selected_pending_visit=None,
+            close_only=False,
+        )
+        state.pending_visit_suggestions_json = json.dumps([], ensure_ascii=False)
+        state.visit_preview_json = json.dumps(guided_payload, ensure_ascii=False)
+        state.status = "awaiting_purpose"
+        db.session.commit()
+        return (
+            "🎯 Qual o objetivo da visita?\n\n"
+            "1️⃣ Plantio\n"
+            "2️⃣ Emergência\n"
+            "3️⃣ Vegetativo\n"
+            "4️⃣ Reprodutivo\n"
+            "5️⃣ Colheita\n\n"
+            "Responda com o número ou nome."
+        )
+
+    # Se objetivo é Vegetativo/Reprodutivo e falta fenologia, pergunta
+    if visit_purpose in ("Vegetativo", "Reprodutivo") and not fenologia_real:
+        guided_payload = build_guided_state_payload(
+            action="create_new_visit",
+            final_visit_payload=visit_preview,
+            selected_pending_visit=None,
+            close_only=False,
+        )
+        state.pending_visit_suggestions_json = json.dumps([], ensure_ascii=False)
+        state.visit_preview_json = json.dumps(guided_payload, ensure_ascii=False)
+        state.status = "awaiting_fenologia"
+        db.session.commit()
+        if visit_purpose == "Vegetativo":
+            return "🌿 Informe a fenologia vegetativa.\nExemplo: VE, V1, V4, V8, VT"
+        else:
+            return "🌿 Informe a fenologia reprodutiva.\nExemplo: R1, R3, R5, R7"
+
+    # Se falta data, pergunta
+    if not has_date:
+        guided_payload = build_guided_state_payload(
+            action="create_new_visit",
+            final_visit_payload=visit_preview,
+            selected_pending_visit=None,
+            close_only=False,
+        )
+        state.pending_visit_suggestions_json = json.dumps([], ensure_ascii=False)
+        state.visit_preview_json = json.dumps(guided_payload, ensure_ascii=False)
+        state.status = "awaiting_date"
+        db.session.commit()
+        return "📅 Informe a data da visita.\nExemplo: hoje, ontem, 07/05/2026"
+
+    # Tem tudo, vai direto para confirmação final
     guided_payload = build_guided_state_payload(
         action="create_new_visit",
         final_visit_payload=visit_preview,
@@ -10988,8 +11073,6 @@ def _mob_start_visit_flow(session_id, original_message, entities, consultant, re
         close_only=False,
     )
 
-    state = _mob_ensure_state(session_id)
-    state.last_message = original_message
     state.pending_visit_suggestions_json = json.dumps([], ensure_ascii=False)
     state.visit_preview_json = json.dumps(guided_payload, ensure_ascii=False)
     state.confirmation_text = summary_text
@@ -11278,23 +11361,135 @@ def _mob_guided_field(session_id, state, message_text, current_status):
     return next_msg
 
 
+def _mob_handle_alter_command(state, message_text: str) -> Optional[str]:
+    """Trata comandos de alteração no estado awaiting_final_confirmation."""
+    if not message_text:
+        return None
+
+    normalized = normalize_lookup_text(message_text)
+
+    # Padrões de alteração
+    alter_patterns = [
+        (r"^alterar\s+data\s+(.+)$", "date"),
+        (r"^data\s+(.+)$", "date"),
+        (r"^alterar\s+fenologia\s+(.+)$", "fenologia"),
+        (r"^fenologia\s+(.+)$", "fenologia"),
+        (r"^alterar\s+observacao\s+(.+)$", "observation"),
+        (r"^alterar\s+observacoes\s+(.+)$", "observation"),
+        (r"^observacao\s+(.+)$", "observation"),
+        (r"^observacoes\s+(.+)$", "observation"),
+        (r"^alterar\s+objetivo\s+(.+)$", "purpose"),
+        (r"^objetivo\s+(.+)$", "purpose"),
+        (r"^alterar\s+cultura\s+(.+)$", "culture"),
+        (r"^cultura\s+(.+)$", "culture"),
+    ]
+
+    field_to_alter = None
+    new_value = None
+
+    for pattern, field in alter_patterns:
+        match = re.match(pattern, normalized)
+        if match:
+            field_to_alter = field
+            # Pega o valor original (não normalizado) para preservar acentos
+            original_match = re.match(pattern, message_text.strip(), flags=re.IGNORECASE)
+            if original_match:
+                new_value = original_match.group(1).strip()
+            else:
+                new_value = match.group(1).strip()
+            break
+
+    if not field_to_alter or not new_value:
+        return None
+
+    try:
+        preview_data = json.loads(state.visit_preview_json or "{}")
+    except Exception:
+        preview_data = {}
+
+    final_visit_payload = preview_data.get("final_visit_payload") or {}
+    action = preview_data.get("action") or "create_new_visit"
+    selected_pending_visit = preview_data.get("selected_pending_visit")
+    close_only = preview_data.get("close_only", False)
+
+    if field_to_alter == "date":
+        parsed_date = parse_human_date(new_value)
+        if not parsed_date:
+            parsed_date_str = parse_date_flexible(new_value)
+            if parsed_date_str:
+                final_visit_payload["date"] = parsed_date_str
+            else:
+                return "📅 Data não reconhecida. Exemplo: hoje, ontem, 07/05/2026"
+        else:
+            final_visit_payload["date"] = parsed_date.isoformat()
+
+    elif field_to_alter == "fenologia":
+        fenologia = new_value.upper()
+        if not is_valid_fenologia(fenologia):
+            fenologia = parse_fenologia_with_ai(new_value, final_visit_payload.get("visit_purpose") or "")
+        if not fenologia:
+            return "🌿 Fenologia inválida. Exemplo: V4, R2, VT"
+        final_visit_payload["fenologia_real"] = fenologia
+
+    elif field_to_alter == "observation":
+        final_visit_payload["recommendation"] = _format_recommendation(new_value) or new_value
+
+    elif field_to_alter == "purpose":
+        purpose = parse_visit_purpose(new_value)
+        if not purpose:
+            purpose = parse_visit_purpose_with_ai(new_value)
+        if not purpose:
+            return "🎯 Objetivo inválido. Escolha: Plantio, Emergência, Vegetativo, Reprodutivo, Colheita"
+        final_visit_payload["visit_purpose"] = purpose
+
+    elif field_to_alter == "culture":
+        culture = normalize_culture_input(new_value)
+        if not culture:
+            return "🌱 Cultura não reconhecida. Exemplos: Soja, Milho, Algodão"
+        final_visit_payload["culture"] = culture
+
+    # Reconstrói o resumo
+    summary_text = build_visit_summary_text(action, final_visit_payload, selected_pending_visit, close_only)
+
+    state.visit_preview_json = json.dumps(
+        build_guided_state_payload(action, final_visit_payload, selected_pending_visit, close_only),
+        ensure_ascii=False,
+    )
+    state.confirmation_text = summary_text
+    db.session.commit()
+
+    return f"✅ Alterado!\n\n{summary_text}"
+
+
 def _mob_final_confirmation(session_id, state, message_text, resolved_consultant_id, photos):
+    # Verifica comandos de alteração primeiro
+    alter_result = _mob_handle_alter_command(state, message_text)
+    if alter_result:
+        return alter_result
+
     reply = parse_pending_reply(message_text)
 
     if not reply:
         return (
             "Não entendi. Responda com:\n"
             "✅ CONFIRMAR\n"
-            "❌ CANCELAR"
+            "❌ CANCELAR\n"
+            "✏️ ALTERAR DATA ontem\n"
+            "✏️ ALTERAR FENOLOGIA V8"
         )
 
     if reply["mode"] == "cancel_final":
         db.session.delete(state)
         db.session.commit()
-        return "Operação cancelada."
+        return "❌ Operação cancelada."
 
     if reply["mode"] != "confirm_final":
-        return "Para confirmar responda CONFIRMAR. Para cancelar responda CANCELAR."
+        return (
+            "Responda com:\n"
+            "✅ CONFIRMAR\n"
+            "❌ CANCELAR\n"
+            "✏️ ALTERAR DATA/FENOLOGIA/OBSERVACAO"
+        )
 
     try:
         preview_data = json.loads(state.visit_preview_json or "{}")
