@@ -23,7 +23,10 @@
       "Bash(git commit *)",
       "Bash(git rm *)",
       "Bash(Remove-Item -Force \"C:/agrocrm-backend/.git/index.lock\" -ErrorAction SilentlyContinue)",
-      "PowerShell(Get-CimInstance *)"
+      "PowerShell(Get-CimInstance *)",
+      "PowerShell(Get-Content *)",
+      "Bash(git restore *)",
+      "PowerShell(Invoke-RestMethod -Uri \"https://agrocrm-backend.onrender.com/api/fix-orphan-visits\" -Method POST)"
     ]
   }
 }
