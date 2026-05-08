@@ -3214,13 +3214,68 @@ def apply_payload_to_existing_visit(visit, final_visit_payload: dict, close_only
     return visit
 
 
+def auto_create_planting_if_needed(payload: dict, visit_date) -> int | None:
+    """
+    Auto-cria Planting quando necessário para garantir vínculo da visita.
+
+    Regras:
+    - Visita de Plantio/Emergência sempre cria Planting se não existir
+    - Outras visitas tentam encontrar Planting existente, se não encontrar, criam
+    - Retorna planting_id (existente ou novo)
+    """
+    plot_id = payload.get("plot_id")
+    culture = (payload.get("culture") or "").strip()
+    variety = (payload.get("variety") or "").strip()
+    visit_purpose = (payload.get("visit_purpose") or "").strip()
+    fenologia = (payload.get("fenologia_real") or "").strip().lower()
+
+    # Sem plot_id ou cultura, não conseguimos criar Planting
+    if not plot_id or not culture:
+        return None
+
+    # Tenta encontrar Planting existente
+    query = Planting.query.filter_by(plot_id=plot_id, culture=culture)
+    if variety:
+        query = query.filter_by(variety=variety)
+
+    # Para visitas não-Plantio, filtra por data (plantio deve ser antes da visita)
+    is_planting_visit = (visit_purpose.lower() == "plantio" or fenologia == "plantio")
+    if not is_planting_visit and visit_date:
+        query = query.filter(
+            db.or_(
+                Planting.planting_date.is_(None),
+                Planting.planting_date <= visit_date
+            )
+        )
+
+    existing = query.order_by(Planting.planting_date.desc().nullslast()).first()
+
+    if existing:
+        print(f"[auto_create_planting] Planting existente encontrado: id={existing.id}")
+        return existing.id
+
+    # Criar novo Planting
+    planting_date = visit_date if is_planting_visit else None
+    new_planting = Planting(
+        plot_id=plot_id,
+        culture=culture,
+        variety=variety or None,
+        planting_date=planting_date,
+    )
+    db.session.add(new_planting)
+    db.session.flush()  # Para obter o ID
+
+    print(f"[auto_create_planting] Novo Planting criado: id={new_planting.id}, plot_id={plot_id}, culture={culture}, variety={variety}, date={planting_date}")
+    return new_planting.id
+
+
 def create_visit_from_payload(final_visit_payload: dict):
     """
     Cria nova visita a partir do payload final.
 
     Blindagem:
-    - se for visita de ciclo, precisa sair com planting_id
-    - visita de Plantio e visita avulsa continuam permitidas sem planting_id
+    - Toda visita com cultura/talhão sai com planting_id
+    - Auto-cria Planting se necessário
     """
     client_id = final_visit_payload.get("client_id")
     if not client_id:
@@ -3239,10 +3294,14 @@ def create_visit_from_payload(final_visit_payload: dict):
 
     # 🔒 tenta resolver plantio de forma segura antes de criar
     strict_planting = None
-    if not planting_id and should_require_cycle_link(final_visit_payload):
+    if not planting_id:
+        # Primeiro tenta resolver existente
         strict_planting = resolve_strict_planting_for_payload(final_visit_payload)
         if strict_planting:
             planting_id = strict_planting.id
+        else:
+            # Auto-cria se tiver dados suficientes
+            planting_id = auto_create_planting_if_needed(final_visit_payload, parsed_date)
 
     visit = Visit(
         client_id=client_id,
@@ -11675,4 +11734,61 @@ def mobile_transcribe():
         return jsonify({"ok": False, "error": f"Transcrição falhou: {err}"}), 500
 
     return jsonify({"ok": True, "text": text}), 200
+
+
+@bp.route("/fix-orphan-visits", methods=["POST"])
+def fix_orphan_visits():
+    """
+    Corrige visitas sem planting_id.
+
+    - Visitas com culture + plot_id: cria/vincula Planting
+    - Retorna relatório do que foi corrigido
+    """
+    visits_without_planting = Visit.query.filter(
+        Visit.planting_id.is_(None),
+        Visit.culture.isnot(None),
+        Visit.culture != "",
+        Visit.plot_id.isnot(None),
+    ).all()
+
+    fixed = []
+    skipped = []
+
+    for visit in visits_without_planting:
+        payload = {
+            "plot_id": visit.plot_id,
+            "culture": visit.culture,
+            "variety": visit.variety,
+            "visit_purpose": visit.visit_purpose,
+            "fenologia_real": visit.fenologia_real,
+        }
+
+        planting_id = auto_create_planting_if_needed(payload, visit.date)
+
+        if planting_id:
+            visit.planting_id = planting_id
+            db.session.add(visit)
+            fixed.append({
+                "visit_id": visit.id,
+                "client_id": visit.client_id,
+                "planting_id": planting_id,
+                "culture": visit.culture,
+                "date": visit.date.isoformat() if visit.date else None,
+            })
+        else:
+            skipped.append({
+                "visit_id": visit.id,
+                "client_id": visit.client_id,
+                "reason": "Sem plot_id ou culture suficiente",
+            })
+
+    db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "fixed_count": len(fixed),
+        "skipped_count": len(skipped),
+        "fixed": fixed,
+        "skipped": skipped,
+    }), 200
 
