@@ -3228,83 +3228,65 @@ def apply_payload_to_existing_visit(visit, final_visit_payload: dict, close_only
 
 def auto_create_planting_if_needed(payload: dict, visit_date) -> int | None:
     """
-    Auto-cria Planting quando necessário para garantir vínculo da visita.
+    Auto-cria Planting SOMENTE para visitas de PLANTIO explícitas.
 
-    Regras:
-    - Tenta inferir plot_id do property_id se não informado
-    - Cria Planting mesmo sem plot_id se tiver culture (vínculo mais fraco)
-    - Retorna planting_id (existente ou novo)
+    Critérios ULTRA RIGOROSOS:
+    - Só cria planting se for visita de PLANTIO (fenologia ou visit_purpose)
+    - Exige plot_id + culture para criar
+    - Para outras visitas, deixa sem vínculo para vinculação manual
     """
     plot_id = payload.get("plot_id")
-    property_id = payload.get("property_id")
-    client_id = payload.get("client_id")
     culture = (payload.get("culture") or "").strip()
     variety = (payload.get("variety") or "").strip()
     visit_purpose = (payload.get("visit_purpose") or "").strip()
     fenologia = (payload.get("fenologia_real") or "").strip().lower()
 
-    # Se não tem plot_id mas tem property_id, tenta inferir
-    if not plot_id and property_id:
-        plots = Plot.query.filter_by(property_id=property_id).all()
-        if len(plots) == 1:
-            plot_id = plots[0].id
-            print(f"[auto_create_planting] plot_id inferido do property: {plot_id}")
-        elif len(plots) > 1 and culture:
-            # Tenta encontrar plot com planting dessa culture
-            for plot in plots:
-                existing = Planting.query.filter_by(plot_id=plot.id, culture=culture).first()
-                if existing:
-                    print(f"[auto_create_planting] Planting existente encontrado via property: id={existing.id}")
-                    return existing.id
-
-    # Se não tem plot_id mas tem client_id, tenta inferir via property única
-    if not plot_id and not property_id and client_id:
-        properties = Property.query.filter_by(client_id=client_id).all()
-        if len(properties) == 1:
-            property_id = properties[0].id
-            plots = Plot.query.filter_by(property_id=property_id).all()
-            if len(plots) == 1:
-                plot_id = plots[0].id
-                print(f"[auto_create_planting] plot_id inferido do client: {plot_id}")
-
-    # Sem cultura, não conseguimos criar Planting
+    # Sem cultura -> impossível criar planting
     if not culture:
-        print(f"[auto_create_planting] Sem culture, não é possível criar Planting")
+        print(f"[auto_create_planting] Sem culture, não cria Planting")
+        return None
+
+    # Sem plot_id -> não cria planting (muito arriscado)
+    if not plot_id:
+        print(f"[auto_create_planting] Sem plot_id, não cria Planting automaticamente")
         return None
 
     is_planting_visit = (visit_purpose.lower() == "plantio" or fenologia == "plantio")
 
-    # Tenta encontrar Planting existente
-    if plot_id:
-        query = Planting.query.filter_by(plot_id=plot_id, culture=culture)
-        if variety:
-            query = query.filter_by(variety=variety)
+    # Busca planting existente EXATO (plot + culture)
+    query = Planting.query.filter_by(plot_id=plot_id, culture=culture)
+    if variety:
+        query = query.filter_by(variety=variety)
 
-        if not is_planting_visit and visit_date:
-            query = query.filter(
-                db.or_(
-                    Planting.planting_date.is_(None),
-                    Planting.planting_date <= visit_date
-                )
+    if not is_planting_visit and visit_date:
+        query = query.filter(
+            db.or_(
+                Planting.planting_date.is_(None),
+                Planting.planting_date <= visit_date
             )
+        )
 
-        existing = query.order_by(Planting.planting_date.desc().nullslast()).first()
-        if existing:
-            print(f"[auto_create_planting] Planting existente encontrado: id={existing.id}")
-            return existing.id
+    existing = query.order_by(Planting.planting_date.desc().nullslast()).first()
+    if existing:
+        print(f"[auto_create_planting] Planting existente encontrado: id={existing.id}")
+        return existing.id
 
-    # Criar novo Planting (mesmo sem plot_id, se tiver culture)
-    planting_date = visit_date if is_planting_visit else None
+    # Só cria novo planting se for VISITA DE PLANTIO
+    if not is_planting_visit:
+        print(f"[auto_create_planting] Não é visita de plantio, não cria Planting automaticamente")
+        return None
+
+    # É visita de plantio -> pode criar o ciclo
     new_planting = Planting(
-        plot_id=plot_id,  # pode ser None
+        plot_id=plot_id,
         culture=culture,
         variety=variety or None,
-        planting_date=planting_date,
+        planting_date=visit_date,
     )
     db.session.add(new_planting)
     db.session.flush()
 
-    print(f"[auto_create_planting] Novo Planting criado: id={new_planting.id}, plot_id={plot_id}, culture={culture}, variety={variety}, date={planting_date}")
+    print(f"[auto_create_planting] Novo Planting criado (visita de plantio): id={new_planting.id}, plot_id={plot_id}, culture={culture}, variety={variety}, date={visit_date}")
     return new_planting.id
 
 
@@ -3748,13 +3730,14 @@ def should_require_cycle_link(payload: dict) -> bool:
 
 def resolve_strict_planting_for_payload(payload: dict):
     """
-    Resolve o Planting de forma mais segura do que o fallback antigo.
+    Resolve o Planting de forma ULTRA CRITERIOSA.
 
-    Prioridade:
-    1. planting_id já informado
-    2. busca por plot_id + cultura/variedade + data da visita
-    3. fallback por property_id + cultura/variedade + data
-    4. nunca escolhe plantio ambíguo sem critério forte
+    Só vincula quando tem CERTEZA ABSOLUTA:
+    - plot_id + culture + variety EXATOS
+    - OU plot_id + culture E apenas 1 planting existente nesse talhão
+    - NUNCA vincula por client_id ou property_id sozinhos
+
+    Em caso de dúvida, retorna None para vinculação manual posterior.
     """
     if not payload:
         return None
@@ -3765,8 +3748,6 @@ def resolve_strict_planting_for_payload(payload: dict):
         if planting:
             return planting
 
-    client_id = payload.get("client_id")
-    property_id = payload.get("property_id")
     plot_id = payload.get("plot_id")
     culture = (payload.get("culture") or "").strip()
     variety = (payload.get("variety") or "").strip()
@@ -3779,27 +3760,27 @@ def resolve_strict_planting_for_payload(payload: dict):
         except Exception:
             visit_date = parse_human_date(date_value)
 
-    query = Planting.query
+    # SEM plot_id -> não tem como ter certeza
+    if not plot_id:
+        print(f"[resolve_strict_planting] Sem plot_id, não vincula automaticamente")
+        return None
 
-    if plot_id:
-        query = query.filter(Planting.plot_id == plot_id)
+    # SEM culture -> não tem como ter certeza
+    if not culture:
+        print(f"[resolve_strict_planting] Sem culture, não vincula automaticamente")
+        return None
 
-    elif property_id:
-        query = query.join(Plot, Plot.id == Planting.plot_id).filter(Plot.property_id == property_id)
+    # Busca plantings EXATAMENTE no talhão + cultura
+    query = Planting.query.filter(
+        Planting.plot_id == plot_id,
+        Planting.culture == culture
+    )
 
-    elif client_id:
-        query = (
-            query.join(Plot, Plot.id == Planting.plot_id)
-                 .join(Property, Property.id == Plot.property_id)
-                 .filter(Property.client_id == client_id)
-        )
-
-    if culture:
-        query = query.filter(Planting.culture == culture)
-
+    # Se tem variedade, exige match exato
     if variety:
         query = query.filter(Planting.variety == variety)
 
+    # Filtra por data se informada
     if visit_date:
         query = query.filter(
             db.or_(
@@ -3815,16 +3796,23 @@ def resolve_strict_planting_for_payload(payload: dict):
     )
 
     if not candidates:
+        print(f"[resolve_strict_planting] Nenhum planting encontrado para plot_id={plot_id}, culture={culture}")
         return None
 
+    # CERTEZA ABSOLUTA: único candidato
     if len(candidates) == 1:
+        print(f"[resolve_strict_planting] Único planting encontrado: id={candidates[0].id}")
         return candidates[0]
 
-    # se houver plot_id + data + cultura, aceita o mais recente antes da visita
-    if plot_id and visit_date and culture:
-        return candidates[0]
+    # Múltiplos candidatos: só aceita se tiver variety E bater
+    if variety:
+        exact_match = [c for c in candidates if c.variety == variety]
+        if len(exact_match) == 1:
+            print(f"[resolve_strict_planting] Match exato por variety: id={exact_match[0].id}")
+            return exact_match[0]
 
-    # ambíguo -> não arrisca
+    # Ambíguo -> deixa para vinculação manual
+    print(f"[resolve_strict_planting] Múltiplos candidatos ({len(candidates)}), não vincula automaticamente")
     return None
 
 
@@ -11837,5 +11825,209 @@ def fix_orphan_visits():
         "skipped_count": len(skipped),
         "fixed": fixed,
         "skipped": skipped,
+    }), 200
+
+
+@bp.route("/orphan-visits", methods=["GET"])
+def list_orphan_visits():
+    """
+    Lista visitas sem planting_id para vinculação manual.
+
+    Query params:
+    - client_id: filtra por cliente específico
+    - limit: limite de resultados (default 50)
+    - offset: paginação
+    """
+    client_id = request.args.get("client_id", type=int)
+    limit = request.args.get("limit", 50, type=int)
+    offset = request.args.get("offset", 0, type=int)
+
+    query = Visit.query.filter(Visit.planting_id.is_(None))
+
+    if client_id:
+        query = query.filter(Visit.client_id == client_id)
+
+    total = query.count()
+
+    visits = (
+        query.order_by(Visit.date.desc().nullslast(), Visit.id.desc())
+             .offset(offset)
+             .limit(limit)
+             .all()
+    )
+
+    result = []
+    for v in visits:
+        client = Client.query.get(v.client_id) if v.client_id else None
+        property_ = Property.query.get(v.property_id) if v.property_id else None
+        plot = Plot.query.get(v.plot_id) if v.plot_id else None
+
+        result.append({
+            "id": v.id,
+            "date": v.date.isoformat() if v.date else None,
+            "client_id": v.client_id,
+            "client_name": client.name if client else None,
+            "property_id": v.property_id,
+            "property_name": property_.name if property_ else None,
+            "plot_id": v.plot_id,
+            "plot_name": plot.name if plot else None,
+            "culture": v.culture,
+            "variety": v.variety,
+            "fenologia_real": v.fenologia_real,
+            "visit_purpose": v.visit_purpose,
+            "recommendation": v.recommendation,
+            "status": v.status,
+        })
+
+    return jsonify({
+        "ok": True,
+        "total": total,
+        "visits": result,
+    }), 200
+
+
+@bp.route("/clients/search", methods=["GET"])
+def search_clients():
+    """
+    Pesquisa inteligente de clientes (autocomplete).
+
+    Query params:
+    - q: termo de busca (mínimo 2 caracteres)
+    - limit: máximo de resultados (default 10)
+    """
+    q = request.args.get("q", "").strip()
+    limit = request.args.get("limit", 10, type=int)
+
+    if len(q) < 2:
+        return jsonify({"ok": True, "clients": []}), 200
+
+    search_term = f"%{q}%"
+
+    clients = (
+        Client.query
+        .filter(
+            db.or_(
+                Client.name.ilike(search_term),
+                Client.phone.ilike(search_term),
+                Client.region.ilike(search_term),
+            )
+        )
+        .order_by(
+            db.case(
+                (Client.name.ilike(f"{q}%"), 1),
+                else_=2
+            ),
+            Client.name.asc()
+        )
+        .limit(limit)
+        .all()
+    )
+
+    result = []
+    for c in clients:
+        properties_count = Property.query.filter_by(client_id=c.id).count()
+        result.append({
+            "id": c.id,
+            "name": c.name,
+            "phone": c.phone,
+            "region": c.region,
+            "properties_count": properties_count,
+        })
+
+    return jsonify({"ok": True, "clients": result}), 200
+
+
+@bp.route("/visits/<int:visit_id>/link-planting", methods=["PATCH"])
+def link_visit_to_planting(visit_id):
+    """
+    Vincula manualmente uma visita a um planting específico.
+
+    Body:
+    - planting_id: ID do planting para vincular
+    """
+    visit = Visit.query.get(visit_id)
+    if not visit:
+        return jsonify({"ok": False, "error": "Visita não encontrada"}), 404
+
+    data = request.get_json() or {}
+    planting_id = data.get("planting_id")
+
+    if not planting_id:
+        return jsonify({"ok": False, "error": "planting_id é obrigatório"}), 400
+
+    planting = Planting.query.get(planting_id)
+    if not planting:
+        return jsonify({"ok": False, "error": "Planting não encontrado"}), 404
+
+    visit.planting_id = planting_id
+
+    if planting.plot_id and not visit.plot_id:
+        visit.plot_id = planting.plot_id
+
+    if planting.culture and not visit.culture:
+        visit.culture = planting.culture
+
+    if planting.variety and not visit.variety:
+        visit.variety = planting.variety
+
+    if planting.plot_id and not visit.property_id:
+        plot = Plot.query.get(planting.plot_id)
+        if plot:
+            visit.property_id = plot.property_id
+
+    db.session.commit()
+
+    return jsonify({
+        "ok": True,
+        "visit_id": visit.id,
+        "planting_id": planting_id,
+        "message": "Visita vinculada com sucesso",
+    }), 200
+
+
+@bp.route("/clients/<int:client_id>/plantings", methods=["GET"])
+def list_client_plantings(client_id):
+    """
+    Lista plantings de um cliente para seleção na vinculação manual.
+
+    Retorna plantings ordenados por data (mais recentes primeiro).
+    """
+    client = Client.query.get(client_id)
+    if not client:
+        return jsonify({"ok": False, "error": "Cliente não encontrado"}), 404
+
+    plantings = (
+        Planting.query
+        .join(Plot, Plot.id == Planting.plot_id)
+        .join(Property, Property.id == Plot.property_id)
+        .filter(Property.client_id == client_id)
+        .order_by(Planting.planting_date.desc().nullslast(), Planting.id.desc())
+        .all()
+    )
+
+    result = []
+    for p in plantings:
+        plot = Plot.query.get(p.plot_id) if p.plot_id else None
+        property_ = Property.query.get(plot.property_id) if plot else None
+
+        visits_count = Visit.query.filter_by(planting_id=p.id).count()
+
+        result.append({
+            "id": p.id,
+            "culture": p.culture,
+            "variety": p.variety,
+            "planting_date": p.planting_date.isoformat() if p.planting_date else None,
+            "plot_id": p.plot_id,
+            "plot_name": plot.name if plot else None,
+            "property_id": property_.id if property_ else None,
+            "property_name": property_.name if property_ else None,
+            "visits_count": visits_count,
+        })
+
+    return jsonify({
+        "ok": True,
+        "client_id": client_id,
+        "client_name": client.name,
+        "plantings": result,
     }), 200
 

@@ -26,7 +26,8 @@
       "PowerShell(Get-CimInstance *)",
       "PowerShell(Get-Content *)",
       "Bash(git restore *)",
-      "PowerShell(Invoke-RestMethod -Uri \"https://agrocrm-backend.onrender.com/api/fix-orphan-visits\" -Method POST)"
+      "PowerShell(Invoke-RestMethod -Uri \"https://agrocrm-backend.onrender.com/api/fix-orphan-visits\" -Method POST)",
+      "Bash(python -m py_compile routes.py)"
     ]
   }
 }
