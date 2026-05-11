@@ -9370,6 +9370,29 @@ def update_visit(visit_id: int):
                 return jsonify(message='plot not found'), 404
             v.plot_id = plid
 
+    # Só altera planting_id se vier explicitamente
+    if 'planting_id' in data:
+        planting_id = data.get('planting_id')
+        if planting_id in (None, "", 0):
+            v.planting_id = None
+            print(f"🔗 Visita {visit_id}: planting_id removido (desvinculada)")
+        else:
+            planting = Planting.query.get(planting_id)
+            if not planting:
+                return jsonify(message='planting not found'), 404
+            v.planting_id = planting_id
+            if planting.plot_id and not v.plot_id:
+                v.plot_id = planting.plot_id
+            if planting.culture and not v.culture:
+                v.culture = planting.culture
+            if planting.variety and not v.variety:
+                v.variety = planting.variety
+            if planting.plot_id and not v.property_id:
+                plot_obj = Plot.query.get(planting.plot_id)
+                if plot_obj:
+                    v.property_id = plot_obj.property_id
+            print(f"🔗 Visita {visit_id}: vinculada ao planting_id={planting_id}")
+
     # Só altera consultant_id se vier explicitamente
     if 'consultant_id' in data:
         cid = data.get('consultant_id')
