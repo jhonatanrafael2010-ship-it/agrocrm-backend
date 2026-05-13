@@ -9062,7 +9062,7 @@ def get_visits():
 
 
 @bp.route('/visits', methods=['POST', 'OPTIONS'])
-@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com", "https://localhost", "capacitor://localhost", "http://localhost"])
 def create_visit():
     """
     Cria uma nova visita.
@@ -9252,7 +9252,7 @@ def create_visit():
 
 
 @bp.route('/visits/<int:visit_id>/pdf', methods=['GET'])
-@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com", "https://localhost", "capacitor://localhost", "http://localhost"])
 def export_visit_pdf(visit_id):
     buffer, filename = build_visit_pdf_file(visit_id)
     return send_file(
@@ -9321,7 +9321,7 @@ def create_visits_bulk():
 
 
 @bp.route('/visits/<int:visit_id>', methods=['PUT', 'OPTIONS'])
-@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com", "https://localhost", "capacitor://localhost", "http://localhost"])
 def update_visit(visit_id: int):
     v = Visit.query.get(visit_id)
     if not v:
@@ -9638,7 +9638,7 @@ def delete_visit(visit_id):
 # ==============================
 
 @bp.route('/visits/<int:visit_id>/photos', methods=['POST', 'OPTIONS'])
-@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com", "https://localhost", "capacitor://localhost", "http://localhost"])
 def upload_photos(visit_id):
     """Upload de múltiplas fotos com legendas (captions) — agora no Cloudflare R2."""
     visit = Visit.query.get_or_404(visit_id)
@@ -9736,7 +9736,7 @@ def list_photos(visit_id):
 
 
 @bp.route('/photos/<int:photo_id>', methods=['PUT', 'OPTIONS'])
-@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com", "https://localhost", "capacitor://localhost", "http://localhost"])
 def update_photo_caption(photo_id):
     """
     Atualiza a legenda de uma foto específica.
@@ -9764,7 +9764,7 @@ def update_photo_caption(photo_id):
 
 
 @bp.route('/photos/<int:photo_id>', methods=['DELETE', 'OPTIONS'])
-@cross_origin(origins=["https://agrocrm-frontend.onrender.com"])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com", "https://localhost", "capacitor://localhost", "http://localhost"])
 def delete_single_photo(photo_id):
     """Exclui uma foto específica do banco e do disco."""
     photo = Photo.query.get_or_404(photo_id)
