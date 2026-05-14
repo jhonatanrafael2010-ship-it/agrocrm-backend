@@ -4375,10 +4375,11 @@ def handle_add_to_existing_visit_flow(chat_message, consultant, message_text: st
             "message": "observacao vazia",
         }), 200
 
-    # Atualiza a visita com a nova observação
+    # Atualiza a visita com a nova observação formatada
     current_recommendation = (visit.recommendation or "").strip()
     if current_recommendation:
-        visit.recommendation = f"{current_recommendation}\n\n{new_observation}"
+        # Adiciona com marcador visual para ficar claro no PDF
+        visit.recommendation = f"{current_recommendation}\n\n• {new_observation}"
     else:
         visit.recommendation = new_observation
 
