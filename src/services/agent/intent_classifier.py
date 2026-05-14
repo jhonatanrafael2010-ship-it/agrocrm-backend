@@ -327,15 +327,31 @@ class IntentClassifier:
             "acaro", "ácaro", "mosca", "cigarrinha", "bicudo",
             "ferrugem", "antracnose", "oidio", "oídio", "mofo", "mancha",
             "cercospora", "ramularia", "ramulária", "helmintosporiose",
+            "bipolaris", "phaeosphaeria", "diplodia", "fusarium", "pythium",
+            "rhizoctonia", "sclerotinia", "phytophthora", "macrophomina",
             "fungo", "fungos", "virus", "vírus", "nematoide", "nematoides",
+            "enfezamento", "mosaico", "crestamento", "podridao", "podridão",
         ]
+        crop_keywords = ["soja", "milho", "algodao", "algodão"]
         has_pest_trigger = any(t in normalized for t in pest_diagnosis_triggers)
         has_pest_keyword = any(k in normalized for k in pest_keywords)
+        has_crop_keyword = any(c in normalized for c in crop_keywords)
 
+        # Prioridade 1: trigger + keyword = diagnóstico certo
         if has_pest_trigger and has_pest_keyword:
             result.update({"intent": "PEST_DIAGNOSIS", "confidence": "high", "matched_by": "keyword"})
             return result
 
+        # Prioridade 2: keyword de praga/doença + cultura SEM contexto de visita/cliente
+        # Ex: "mancha de bipolaris no milho", "ferrugem na soja"
+        if has_pest_keyword and has_crop_keyword:
+            # Só detecta como diagnóstico se NÃO tiver sinais claros de visita
+            visit_context_signals = ["cliente", "produtor", "fazenda", "visita", "hoje", "ontem", "amanha", "amanhã"]
+            if not any(signal in normalized for signal in visit_context_signals):
+                result.update({"intent": "PEST_DIAGNOSIS", "confidence": "high", "matched_by": "pest_crop_combo"})
+                return result
+
+        # Prioridade 3: só keyword de praga/doença com padrões de pergunta
         if has_pest_keyword and not any(signal in normalized for signal in ["cliente", "produtor", "fazenda", "visita"]):
             pest_question_patterns = [
                 r"^(como|qual|quais|quando|por ?que)",

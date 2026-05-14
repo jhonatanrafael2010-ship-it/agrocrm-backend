@@ -146,6 +146,13 @@ Não ativar para lançamento de visita (deixar CREATE_VISIT_LIKE_MESSAGE cuidar)
 - Produtos: Azoxistrobina, Piraclostrobina + Fluxapiroxade
 - Dose referência: Priori 0.2 L/ha
 
+#### Mancha-de-bipolaris (Bipolaris maydis / Bipolaris zeicola)
+- Sintomas: Lesões pequenas a médias, ovais a alongadas, cor palha com bordos castanhos, podem coalescer
+- Condições: Temperaturas entre 20-32°C, alta umidade, períodos de molhamento foliar prolongado
+- Produtos: Azoxistrobina + Ciproconazol, Piraclostrobina + Epoxiconazol, Trifloxistrobina + Protioconazol
+- Dose referência: Priori Xtra 0.3 L/ha, Opera 0.5-0.75 L/ha
+- Observação: Comum em plantios tardios e áreas com histórico. Híbridos suscetíveis sofrem mais.
+
 #### Enfezamentos (Molicutes)
 - Sintomas: Vermelhão, avermelhamento de folhas, espigas múltiplas pequenas
 - Vetor: Cigarrinha-do-milho
