@@ -29,7 +29,8 @@
       "PowerShell(Invoke-RestMethod -Uri \"https://agrocrm-backend.onrender.com/api/fix-orphan-visits\" -Method POST)",
       "Bash(python -m py_compile routes.py)",
       "Bash(dir \"C:\\\\agrocrm-backend\")",
-      "PowerShell(New-Item *)"
+      "PowerShell(New-Item *)",
+      "PowerShell(Select-String *)"
     ]
   }
 }
