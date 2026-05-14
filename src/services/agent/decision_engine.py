@@ -29,6 +29,15 @@ class DecisionEngine:
             })
             return decision
 
+        if intent == "CONTEXTUAL_ADD_TO_VISIT":
+            decision.update({
+                "action": "ADD_TO_EXISTING_VISIT",
+                "should_fallback": False,
+                "reason": "contextual reference to previous visit",
+                "visit_id": context.get("last_visit_id"),
+            })
+            return decision
+
         if intent == "CREATE_VISIT_LIKE_MESSAGE":
             minimum_data = 0
             for field in ["client_name", "culture", "fenologia_real", "date", "recommendation"]:

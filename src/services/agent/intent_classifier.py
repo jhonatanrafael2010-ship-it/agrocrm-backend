@@ -157,6 +157,31 @@ class IntentClassifier:
             result.update({"intent": "STATEFUL_REPLY", "confidence": "high", "matched_by": "state"})
             return result
 
+        # ============================================================
+        # REFERÊNCIAS CONTEXTUAIS
+        # Detecta mensagens que fazem referência a uma ação anterior
+        # Ex: "adiciona que tinha lagarta", "também observei ferrugem"
+        # ============================================================
+        last_intent = context.get("last_intent")
+        last_visit_id = context.get("last_visit_id")
+
+        contextual_add_triggers = [
+            "adiciona", "adicionar", "acrescenta", "acrescentar",
+            "inclui", "incluir", "tambem", "também", "mais uma coisa",
+            "outra coisa", "esqueci de falar", "faltou", "alem disso",
+            "além disso", "complementando", "complemento",
+        ]
+
+        if last_intent == "CREATE_VISIT_LIKE_MESSAGE" or last_visit_id:
+            if any(trigger in normalized for trigger in contextual_add_triggers):
+                result.update({
+                    "intent": "CONTEXTUAL_ADD_TO_VISIT",
+                    "confidence": "high",
+                    "matched_by": "contextual_reference",
+                    "references_visit_id": last_visit_id,
+                })
+                return result
+
         if normalized in {"cancelar", "cancela", "cancel"}:
             result.update({"intent": "CANCEL", "confidence": "high", "matched_by": "exact"})
             return result

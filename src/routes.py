@@ -4277,6 +4277,15 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
             print("DEBUG attach_pending errors:", attach_errors)
             success_lines.append("⚠️ Algumas fotos não conseguiram ser anexadas.")
 
+        # Salva o visit_id na memória de conversa para referências contextuais
+        from services.agent.conversation_memory import update_last_message_with_result
+        update_last_message_with_result(
+            platform="telegram",
+            chat_id=chat_message.chat_id,
+            intent="CREATE_VISIT_LIKE_MESSAGE",
+            visit_id=visit.id,
+        )
+
         send_telegram_message(
             chat_id=chat_message.chat_id,
             text="\n".join(success_lines)
@@ -4304,6 +4313,116 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
             "message": "erro ao confirmar visita final",
             "error": str(e),
         }), 200
+
+
+def handle_add_to_existing_visit_flow(chat_message, consultant, message_text: str, visit_id: int):
+    """
+    Adiciona uma observação contextual a uma visita existente.
+    Ex: "adiciona que tinha lagarta" → atualiza a última visita com essa info.
+    """
+    from services.agent.conversation_memory import (
+        add_message as add_conv_message,
+        update_last_message_with_result,
+    )
+
+    if not visit_id:
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text="Não encontrei uma visita recente para adicionar essa informação. "
+                 "Por favor, crie uma visita primeiro."
+        )
+        return jsonify({
+            "ok": True,
+            "message": "sem visita contextual para adicionar",
+        }), 200
+
+    visit = Visit.query.get(visit_id)
+    if not visit:
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text="A visita referenciada não foi encontrada. Pode ter sido excluída."
+        )
+        return jsonify({
+            "ok": True,
+            "message": "visita nao encontrada",
+        }), 200
+
+    # Extrai a nova observação da mensagem
+    # Remove triggers de contexto para pegar só o conteúdo novo
+    contextual_triggers = [
+        "adiciona que", "adicionar que", "acrescenta que", "acrescentar que",
+        "inclui que", "incluir que", "tambem", "também", "mais uma coisa",
+        "outra coisa", "esqueci de falar", "faltou", "alem disso", "além disso",
+        "complementando", "complemento", "adiciona", "adicionar", "acrescenta",
+        "acrescentar", "inclui", "incluir",
+    ]
+    new_observation = message_text.strip()
+    normalized_msg = normalize_lookup_text(new_observation)
+    for trigger in contextual_triggers:
+        if normalized_msg.startswith(trigger):
+            new_observation = new_observation[len(trigger):].strip()
+            normalized_msg = normalize_lookup_text(new_observation)
+            break
+
+    if not new_observation:
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text="Não consegui identificar o que você quer adicionar. "
+                 "Pode reformular a mensagem?"
+        )
+        return jsonify({
+            "ok": True,
+            "message": "observacao vazia",
+        }), 200
+
+    # Atualiza a visita com a nova observação
+    current_recommendation = (visit.recommendation or "").strip()
+    if current_recommendation:
+        visit.recommendation = f"{current_recommendation}\n\n{new_observation}"
+    else:
+        visit.recommendation = new_observation
+
+    db.session.commit()
+
+    # Atualiza a memória de conversa com o resultado
+    update_last_message_with_result(
+        platform="telegram",
+        chat_id=chat_message.chat_id,
+        intent="CONTEXTUAL_ADD_TO_VISIT",
+        visit_id=visit_id,
+    )
+
+    # Envia confirmação
+    client_name = ""
+    if visit.client_id:
+        client = Client.query.get(visit.client_id)
+        if client:
+            client_name = f" do {client.name}"
+
+    response_text = (
+        f"Adicionado à visita{client_name}:\n"
+        f"➕ {new_observation}"
+    )
+
+    add_conv_message(
+        platform="telegram",
+        chat_id=chat_message.chat_id,
+        text=response_text,
+        role="assistant",
+        intent="CONTEXTUAL_ADD_TO_VISIT",
+        visit_id=visit_id,
+    )
+
+    send_telegram_message(
+        chat_id=chat_message.chat_id,
+        text=response_text,
+    )
+
+    return jsonify({
+        "ok": True,
+        "message": "observacao adicionada a visita existente",
+        "visit_id": visit_id,
+    }), 200
 
 
 def handle_field_data_save_flow(chat_message, consultant, message_text: str):
@@ -4647,8 +4766,13 @@ def handle_priority_stateful_actions(chat_message, consultant, message_text: str
 
 
 def build_agent_context_for_telegram(chat_message, consultant, message_text: str):
+    from services.agent.conversation_memory import get_conversation_context
+
     current_state_row = get_current_chatbot_state("telegram", chat_message.chat_id)
     current_state = current_state_row.status if current_state_row else ""
+
+    # Busca contexto de conversa (últimas mensagens)
+    conv_context = get_conversation_context("telegram", chat_message.chat_id)
 
     return {
         "platform": "telegram",
@@ -4657,6 +4781,13 @@ def build_agent_context_for_telegram(chat_message, consultant, message_text: str
         "consultant_name": consultant.name if consultant else None,
         "current_state": current_state,
         "message_text": message_text,
+        # Contexto de conversa
+        "recent_messages": conv_context.recent_messages,
+        "last_intent": conv_context.last_intent,
+        "last_entities": conv_context.last_entities,
+        "last_visit_id": conv_context.last_visit_id,
+        "last_client_name": conv_context.last_client_name,
+        "last_culture": conv_context.last_culture,
     }
 
 
@@ -4774,6 +4905,15 @@ def handle_agent_phase2_flow(chat_message, consultant, resolved_consultant_id: i
             message_text=message_text,
         )
 
+    if action == "ADD_TO_EXISTING_VISIT":
+        decision = agent_result.get("decision") or {}
+        visit_id = decision.get("visit_id")
+        return handle_add_to_existing_visit_flow(
+            chat_message=chat_message,
+            consultant=consultant,
+            message_text=message_text,
+            visit_id=visit_id,
+        )
 
     return None
 
@@ -7045,6 +7185,16 @@ def telegram_webhook():
         # ✅ base imutável da mensagem do usuário
         original_message = message_text
         safe_original_message = original_message
+
+        # Salva mensagem na memória de conversa
+        from services.agent.conversation_memory import add_message as add_conv_message
+        if message_text:
+            add_conv_message(
+                platform="telegram",
+                chat_id=chat_message.chat_id,
+                text=message_text,
+                role="user",
+            )
 
         single_reference = resolve_single_active_reference(
             chat_message=chat_message,
