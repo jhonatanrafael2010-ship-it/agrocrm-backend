@@ -82,6 +82,39 @@ _CLIENT_STOPWORDS = {
     "fenologia", "cultura",
 }
 
+# Boost de score para clientes da carteira do consultor
+_PORTFOLIO_BOOST = 0.15
+
+
+def _get_consultant_portfolio_client_ids(consultant_id: int) -> set:
+    """
+    Retorna set de client_ids que o consultor já visitou.
+    Usa cache para evitar queries repetidas.
+    """
+    if not consultant_id:
+        return set()
+
+    cache_key = f"portfolio:{consultant_id}"
+    cached = _get_cached(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        from models import Visit, db
+
+        # Busca client_ids distintos das visitas do consultor
+        result = db.session.query(Visit.client_id).filter(
+            Visit.consultant_id == consultant_id,
+            Visit.client_id.isnot(None)
+        ).distinct().all()
+
+        client_ids = {row[0] for row in result}
+        _set_cached(cache_key, client_ids)
+        return client_ids
+    except Exception as e:
+        print(f"[EntityResolver] warning - portfolio query falhou: {e}")
+        return set()
+
 
 def _normalize(text: str) -> str:
     if not text:
@@ -179,13 +212,14 @@ class EntityResolver:
         """
         context = context or {}
         result = dict(entities) if entities else {}
+        consultant_id = context.get("consultant_id")
 
         result["client"] = _empty_resolved(result.get("client_name"))
         result["property"] = _empty_resolved(result.get("property_name"))
         result["plot"] = _empty_resolved(result.get("plot_name"))
 
         try:
-            client = self._resolve_client(result.get("client_name"))
+            client = self._resolve_client(result.get("client_name"), consultant_id=consultant_id)
             result["client"] = client
 
             client_id = client.get("id")
@@ -205,7 +239,7 @@ class EntityResolver:
     # ================================================================
     # Cliente
     # ================================================================
-    def _resolve_client(self, client_name: Optional[str]) -> Dict[str, Any]:
+    def _resolve_client(self, client_name: Optional[str], consultant_id: Optional[int] = None) -> Dict[str, Any]:
         if not client_name:
             return _empty_resolved(client_name)
 
@@ -224,8 +258,11 @@ class EntityResolver:
         target_tokens = [t for t in target.split() if t not in _CLIENT_STOPWORDS]
         target_clean = " ".join(target_tokens).strip() or target
 
+        # Busca carteira do consultor para dar boost
+        portfolio_client_ids = _get_consultant_portfolio_client_ids(consultant_id) if consultant_id else set()
+
         try:
-            # Cache de clientes (todos, pois Client não tem consultant_id)
+            # Cache de clientes (todos)
             cache_key = "clients:all"
             clients = _get_cached(cache_key)
 
@@ -239,6 +276,11 @@ class EntityResolver:
         scored = []
         for client in clients:
             score = _score_against(target_clean, client.name or "")
+
+            # Boost para clientes da carteira do consultor
+            if client.id in portfolio_client_ids:
+                score = min(1.0, score + _PORTFOLIO_BOOST)
+
             scored.append((client, score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
