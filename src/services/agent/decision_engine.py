@@ -132,4 +132,12 @@ class DecisionEngine:
             })
             return decision
 
+        if intent == "WEEKLY_REPORT":
+            decision.update({
+                "action": "ROUTE_TO_WEEKLY_REPORT",
+                "should_fallback": False,
+                "reason": "weekly report request",
+            })
+            return decision
+
         return decision

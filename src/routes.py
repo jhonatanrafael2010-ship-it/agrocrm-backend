@@ -4528,6 +4528,140 @@ def handle_pest_diagnosis_flow(chat_message, message_text: str):
     }), 200
 
 
+def handle_weekly_report_flow(chat_message, consultant):
+    """Gera relatório semanal das atividades do consultor."""
+    if not consultant:
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text="Você precisa estar vinculado a um consultor para ver o relatório semanal."
+        )
+        return jsonify({"ok": True, "message": "consultor nao vinculado"}), 200
+
+    report_text = build_weekly_report_text(consultant.id, consultant.name)
+
+    send_telegram_message(
+        chat_id=chat_message.chat_id,
+        text=report_text,
+    )
+
+    return jsonify({
+        "ok": True,
+        "message": "weekly report generated",
+    }), 200
+
+
+def build_weekly_report_text(consultant_id: int, consultant_name: str) -> str:
+    """Gera o texto do relatório semanal com estatísticas."""
+    from datetime import date as _date, timedelta
+    from collections import Counter
+
+    today = _date.today()
+    # Segunda-feira da semana atual
+    start_of_week = today - timedelta(days=today.weekday())
+    # Domingo da semana atual
+    end_of_week = start_of_week + timedelta(days=6)
+
+    # Busca todas as visitas da semana
+    visits = Visit.query.filter(
+        Visit.consultant_id == consultant_id,
+        Visit.date >= start_of_week,
+        Visit.date <= end_of_week,
+    ).all()
+
+    # Estatísticas básicas
+    total_visits = len(visits)
+    done_visits = [v for v in visits if v.status == "done"]
+    planned_visits = [v for v in visits if v.status == "planned"]
+
+    # Clientes únicos
+    client_ids = [v.client_id for v in done_visits if v.client_id]
+    unique_clients = len(set(client_ids))
+    client_counter = Counter(client_ids)
+
+    # Culturas
+    cultures = [v.culture for v in done_visits if v.culture]
+    culture_counter = Counter(cultures)
+
+    # Fenologias
+    fenologias = [v.fenologia_real for v in done_visits if v.fenologia_real]
+    fenologia_counter = Counter(fenologias)
+
+    # Clientes sem visita há mais de 15 dias
+    fifteen_days_ago = today - timedelta(days=15)
+    stale_subq = db.session.query(
+        Visit.client_id,
+        db.func.max(Visit.date).label("last_visit")
+    ).filter(
+        Visit.consultant_id == consultant_id,
+        Visit.status == "done"
+    ).group_by(Visit.client_id).subquery()
+
+    stale_clients = db.session.query(Client).join(
+        stale_subq, Client.id == stale_subq.c.client_id
+    ).filter(
+        stale_subq.c.last_visit < fifteen_days_ago
+    ).count()
+
+    # Formatação do período
+    period_start = start_of_week.strftime("%d/%m")
+    period_end = end_of_week.strftime("%d/%m/%Y")
+
+    lines = []
+    lines.append(f"📊 RESUMO DA SEMANA - {consultant_name}")
+    lines.append(f"📅 {period_start} a {period_end}")
+    lines.append("")
+
+    # Visitas
+    lines.append(f"✅ Visitas realizadas: {len(done_visits)}")
+    lines.append(f"👥 Clientes atendidos: {unique_clients}")
+
+    # Culturas
+    if culture_counter:
+        culture_parts = [f"{c} ({n})" for c, n in culture_counter.most_common(3)]
+        lines.append(f"🌱 Culturas: {', '.join(culture_parts)}")
+
+    lines.append("")
+
+    # Destaques
+    if done_visits:
+        lines.append("📈 Destaques:")
+
+        # Cliente mais visitado
+        if client_counter:
+            top_client_id, top_count = client_counter.most_common(1)[0]
+            top_client = Client.query.get(top_client_id)
+            if top_client:
+                lines.append(f"• Cliente mais visitado: {top_client.name} ({top_count}x)")
+
+        # Fenologia mais comum
+        if fenologia_counter:
+            top_fenologia, fen_count = fenologia_counter.most_common(1)[0]
+            lines.append(f"• Fenologia mais comum: {top_fenologia} ({fen_count}x)")
+
+        lines.append("")
+
+    # Pendências
+    has_pending = bool(planned_visits) or stale_clients > 0
+    if has_pending:
+        lines.append("⚠️ Pendências:")
+        if planned_visits:
+            lines.append(f"• {len(planned_visits)} visita(s) planejada(s) para esta semana")
+        if stale_clients > 0:
+            lines.append(f"• {stale_clients} cliente(s) sem visita há +15 dias")
+    else:
+        lines.append("✨ Sem pendências!")
+
+    if not done_visits and not planned_visits:
+        return (
+            f"📊 RESUMO DA SEMANA - {consultant_name}\n"
+            f"📅 {period_start} a {period_end}\n\n"
+            "Nenhuma visita registrada nesta semana.\n\n"
+            "Dica: Lance suas visitas para acompanhar seu progresso!"
+        )
+
+    return "\n".join(lines)
+
+
 def handle_field_data_save_flow(chat_message, consultant, message_text: str):
     # GUARDA: field data e dado sensivel do consultor.
     # Se nao houver vinculo, nao salvamos.
@@ -5022,6 +5156,12 @@ def handle_agent_phase2_flow(chat_message, consultant, resolved_consultant_id: i
         return handle_pest_diagnosis_flow(
             chat_message=chat_message,
             message_text=message_text,
+        )
+
+    if action == "ROUTE_TO_WEEKLY_REPORT":
+        return handle_weekly_report_flow(
+            chat_message=chat_message,
+            consultant=consultant,
         )
 
     return None
@@ -11309,6 +11449,9 @@ def _mob_new_message(session_id, message_text, photos, consultant, resolved_cons
         visit_id = decision.get("visit_id")
         return _mob_add_to_existing_visit(session_id, message_text, visit_id)
 
+    if action == "ROUTE_TO_WEEKLY_REPORT":
+        return _mob_weekly_report_text(consultant)
+
     return "Ação reconhecida mas ainda não suportada no app. Use: 'cliente Nome cultura fenologia data observações'."
 
 
@@ -12067,6 +12210,13 @@ def _mob_month_visits_text(consultant, resolved_consultant_id) -> str:
     ).order_by(Visit.date).all() if resolved_consultant_id else []
     visit_dicts = [v.to_dict() for v in visits]
     return build_month_visits_text(consultant.name, visit_dicts)
+
+
+def _mob_weekly_report_text(consultant) -> str:
+    """Gera relatório semanal para o mobile."""
+    if not consultant:
+        return "Você precisa estar vinculado a um consultor para ver o relatório semanal."
+    return build_weekly_report_text(consultant.id, consultant.name)
 
 
 def _mob_pest_diagnosis(message_text: str) -> str:

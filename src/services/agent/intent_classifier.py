@@ -291,6 +291,28 @@ class IntentClassifier:
             return result
 
         # ============================================================
+        # RELATÓRIO SEMANAL
+        # Resumo das atividades da semana do consultor
+        # ============================================================
+        weekly_report_triggers = [
+            "resumo da semana",
+            "relatorio semanal",
+            "relatório semanal",
+            "como foi minha semana",
+            "balanco da semana",
+            "balanço da semana",
+            "o que fiz essa semana",
+            "o que eu fiz essa semana",
+            "minhas atividades da semana",
+            "atividades da semana",
+            "meu resumo semanal",
+            "resumo semanal",
+        ]
+        if any(t in normalized for t in weekly_report_triggers):
+            result.update({"intent": "WEEKLY_REPORT", "confidence": "high", "matched_by": "keyword"})
+            return result
+
+        # ============================================================
         # DIAGNÓSTICO DE PRAGAS E DOENÇAS
         # Detecta perguntas sobre pragas, doenças, sintomas e tratamentos
         # ============================================================
