@@ -290,6 +290,40 @@ class IntentClassifier:
             result.update({"intent": "LIST_MONTH", "confidence": "high", "matched_by": "keyword"})
             return result
 
+        # ============================================================
+        # DIAGNÓSTICO DE PRAGAS E DOENÇAS
+        # Detecta perguntas sobre pragas, doenças, sintomas e tratamentos
+        # ============================================================
+        pest_diagnosis_triggers = [
+            "o que e", "o que é", "como tratar", "como controlar",
+            "sintomas de", "sintoma de", "diagnostico", "diagnóstico",
+            "identificar", "como identifico",
+        ]
+        pest_keywords = [
+            "praga", "pragas", "doenca", "doença", "doencas", "doenças",
+            "lagarta", "lagartas", "percevejo", "percevejos", "pulgao", "pulgão",
+            "acaro", "ácaro", "mosca", "cigarrinha", "bicudo",
+            "ferrugem", "antracnose", "oidio", "oídio", "mofo", "mancha",
+            "cercospora", "ramularia", "ramulária", "helmintosporiose",
+            "fungo", "fungos", "virus", "vírus", "nematoide", "nematoides",
+        ]
+        has_pest_trigger = any(t in normalized for t in pest_diagnosis_triggers)
+        has_pest_keyword = any(k in normalized for k in pest_keywords)
+
+        if has_pest_trigger and has_pest_keyword:
+            result.update({"intent": "PEST_DIAGNOSIS", "confidence": "high", "matched_by": "keyword"})
+            return result
+
+        if has_pest_keyword and not any(signal in normalized for signal in ["cliente", "produtor", "fazenda", "visita"]):
+            pest_question_patterns = [
+                r"^(como|qual|quais|quando|por ?que)",
+                r"\?$",
+                r"(tratar|controlar|combater|eliminar|matar)",
+            ]
+            if any(re.search(p, normalized) for p in pest_question_patterns):
+                result.update({"intent": "PEST_DIAGNOSIS", "confidence": "medium", "matched_by": "heuristic"})
+                return result
+
         visit_signals = [
             "cliente",
             "produtor",

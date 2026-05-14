@@ -583,7 +583,7 @@ def send_telegram_document(chat_id: str, file_bytes: bytes, filename: str, capti
 
 
 
-def send_telegram_message(chat_id: str, text: str) -> Dict[str, Any]:
+def send_telegram_message(chat_id: str, text: str, parse_mode: str = None) -> Dict[str, Any]:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         return {
@@ -597,6 +597,9 @@ def send_telegram_message(chat_id: str, text: str) -> Dict[str, Any]:
         "chat_id": chat_id,
         "text": text,
     }
+
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
 
     try:
         response = requests.post(url, json=payload, timeout=20)

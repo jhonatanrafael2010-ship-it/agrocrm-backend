@@ -4426,6 +4426,108 @@ def handle_add_to_existing_visit_flow(chat_message, consultant, message_text: st
     }), 200
 
 
+def handle_pest_diagnosis_flow(chat_message, message_text: str):
+    """
+    Processa perguntas sobre pragas e doenças usando o skill diagnostico_praga.
+    Retorna informações sobre sintomas, nível de controle e tratamentos.
+    """
+    from services.agent.skill_loader import interpret_with_skill
+
+    diagnosis_result = interpret_with_skill(
+        message_text=message_text,
+        skill_name="diagnostico_praga",
+    )
+
+    if not diagnosis_result:
+        # Fallback: resposta genérica se a IA não estiver disponível
+        response_text = (
+            "Não consegui processar sua pergunta sobre pragas/doenças.\n\n"
+            "Tente perguntar de forma mais específica, por exemplo:\n"
+            "• \"O que é ferrugem asiática?\"\n"
+            "• \"Como tratar lagarta na soja?\"\n"
+            "• \"Sintomas de percevejo\""
+        )
+        send_telegram_message(chat_id=chat_message.chat_id, text=response_text)
+        return jsonify({"ok": True, "message": "pest diagnosis fallback"}), 200
+
+    diagnosis = diagnosis_result.get("diagnosis") or {}
+    confidence = diagnosis_result.get("confidence", "low")
+
+    if not diagnosis.get("name"):
+        response_text = (
+            "Não consegui identificar a praga ou doença mencionada.\n\n"
+            "Tente descrever os sintomas ou citar o nome específico."
+        )
+        send_telegram_message(chat_id=chat_message.chat_id, text=response_text)
+        return jsonify({"ok": True, "message": "pest not identified"}), 200
+
+    # Monta resposta formatada
+    lines = []
+
+    pest_type = diagnosis.get("type", "")
+    type_emoji = "🐛" if pest_type == "praga" else "🦠" if pest_type == "doenca" else "🔍"
+
+    lines.append(f"{type_emoji} *{diagnosis.get('name')}*")
+
+    crop = diagnosis.get("crop")
+    if crop:
+        lines.append(f"Cultura: {crop.capitalize()}")
+
+    lines.append("")
+
+    symptoms = diagnosis.get("symptoms")
+    if symptoms:
+        lines.append(f"📋 *Sintomas:*\n{symptoms}")
+        lines.append("")
+
+    conditions = diagnosis.get("favorable_conditions")
+    if conditions:
+        lines.append(f"🌡️ *Condições favoráveis:*\n{conditions}")
+        lines.append("")
+
+    threshold = diagnosis.get("control_threshold")
+    if threshold:
+        lines.append(f"⚠️ *Nível de controle:*\n{threshold}")
+        lines.append("")
+
+    products = diagnosis.get("recommended_products") or []
+    if products:
+        lines.append("💊 *Produtos recomendados:*")
+        for prod in products[:5]:
+            name = prod.get("name", "")
+            dose = prod.get("dose", "")
+            if name:
+                if dose:
+                    lines.append(f"• {name} ({dose})")
+                else:
+                    lines.append(f"• {name}")
+        lines.append("")
+
+    tips = diagnosis.get("management_tips")
+    if tips:
+        lines.append(f"💡 *Dica:* {tips}")
+
+    similar = diagnosis_result.get("similar_problems") or []
+    if similar and confidence == "low":
+        lines.append("")
+        lines.append(f"🔎 *Outros possíveis:* {', '.join(similar[:3])}")
+
+    response_text = "\n".join(lines)
+
+    send_telegram_message(
+        chat_id=chat_message.chat_id,
+        text=response_text,
+        parse_mode="Markdown",
+    )
+
+    return jsonify({
+        "ok": True,
+        "message": "pest diagnosis completed",
+        "diagnosis": diagnosis.get("name"),
+        "confidence": confidence,
+    }), 200
+
+
 def handle_field_data_save_flow(chat_message, consultant, message_text: str):
     # GUARDA: field data e dado sensivel do consultor.
     # Se nao houver vinculo, nao salvamos.
@@ -4914,6 +5016,12 @@ def handle_agent_phase2_flow(chat_message, consultant, resolved_consultant_id: i
             consultant=consultant,
             message_text=message_text,
             visit_id=visit_id,
+        )
+
+    if action == "ROUTE_TO_PEST_DIAGNOSIS":
+        return handle_pest_diagnosis_flow(
+            chat_message=chat_message,
+            message_text=message_text,
         )
 
     return None
@@ -11125,6 +11233,24 @@ def _mob_new_message(session_id, message_text, photos, consultant, resolved_cons
             "Exemplo: cliente João Silva soja R5 ontem"
         )
 
+    # Integração com memória de conversa
+    from services.agent.conversation_memory import (
+        add_message as add_conv_message,
+        get_conversation_context,
+    )
+
+    # Salva mensagem do usuário na memória
+    if message_text:
+        add_conv_message(
+            platform="mobile",
+            chat_id=session_id,
+            text=message_text,
+            role="user",
+        )
+
+    # Busca contexto de conversa
+    conv_context = get_conversation_context("mobile", session_id)
+
     context = {
         "platform": "mobile",
         "chat_id": session_id,
@@ -11132,6 +11258,13 @@ def _mob_new_message(session_id, message_text, photos, consultant, resolved_cons
         "consultant_name": consultant.name if consultant else None,
         "current_state": "",
         "message_text": message_text,
+        # Contexto de conversa para referências
+        "recent_messages": conv_context.recent_messages,
+        "last_intent": conv_context.last_intent,
+        "last_entities": conv_context.last_entities,
+        "last_visit_id": conv_context.last_visit_id,
+        "last_client_name": conv_context.last_client_name,
+        "last_culture": conv_context.last_culture,
     }
 
     agent_result = AGENT_SERVICE.process(message_text=message_text, context=context)
@@ -11167,6 +11300,14 @@ def _mob_new_message(session_id, message_text, photos, consultant, resolved_cons
 
     if action == "ROUTE_TO_MONTH_VISITS":
         return _mob_month_visits_text(consultant, resolved_consultant_id)
+
+    if action == "ROUTE_TO_PEST_DIAGNOSIS":
+        return _mob_pest_diagnosis(message_text)
+
+    if action == "ADD_TO_EXISTING_VISIT":
+        decision = agent_result.get("decision") or {}
+        visit_id = decision.get("visit_id")
+        return _mob_add_to_existing_visit(session_id, message_text, visit_id)
 
     return "Ação reconhecida mas ainda não suportada no app. Use: 'cliente Nome cultura fenologia data observações'."
 
@@ -11831,6 +11972,15 @@ def _mob_final_confirmation(session_id, state, message_text, resolved_consultant
         db.session.delete(state)
         db.session.commit()
 
+        # Salva visit_id na memória para referências contextuais futuras
+        from services.agent.conversation_memory import update_last_message_with_result
+        update_last_message_with_result(
+            platform="mobile",
+            chat_id=session_id,
+            intent="CREATE_VISIT_LIKE_MESSAGE",
+            visit_id=visit.id,
+        )
+
         lines = []
         if action == "use_existing_pending_visit":
             lines.append(f"✅ Visita {visit.id} atualizada e concluída com sucesso.")
@@ -11917,6 +12067,121 @@ def _mob_month_visits_text(consultant, resolved_consultant_id) -> str:
     ).order_by(Visit.date).all() if resolved_consultant_id else []
     visit_dicts = [v.to_dict() for v in visits]
     return build_month_visits_text(consultant.name, visit_dicts)
+
+
+def _mob_pest_diagnosis(message_text: str) -> str:
+    """Processa diagnóstico de pragas/doenças no mobile."""
+    from services.agent.skill_loader import interpret_with_skill
+
+    diagnosis_result = interpret_with_skill(
+        message_text=message_text,
+        skill_name="diagnostico_praga",
+    )
+
+    if not diagnosis_result:
+        return (
+            "Não consegui processar sua pergunta sobre pragas/doenças.\n\n"
+            "Tente perguntar de forma mais específica:\n"
+            "• O que é ferrugem asiática?\n"
+            "• Como tratar lagarta na soja?\n"
+            "• Sintomas de percevejo"
+        )
+
+    diagnosis = diagnosis_result.get("diagnosis") or {}
+    confidence = diagnosis_result.get("confidence", "low")
+
+    if not diagnosis.get("name"):
+        return "Não consegui identificar a praga ou doença. Tente descrever os sintomas ou citar o nome específico."
+
+    lines = []
+    pest_type = diagnosis.get("type", "")
+    type_label = "🐛 PRAGA" if pest_type == "praga" else "🦠 DOENÇA" if pest_type == "doenca" else "🔍"
+
+    lines.append(f"{type_label}: {diagnosis.get('name')}")
+
+    crop = diagnosis.get("crop")
+    if crop:
+        lines.append(f"Cultura: {crop.capitalize()}")
+    lines.append("")
+
+    symptoms = diagnosis.get("symptoms")
+    if symptoms:
+        lines.append(f"📋 Sintomas:\n{symptoms}")
+        lines.append("")
+
+    conditions = diagnosis.get("favorable_conditions")
+    if conditions:
+        lines.append(f"🌡️ Condições favoráveis:\n{conditions}")
+        lines.append("")
+
+    threshold = diagnosis.get("control_threshold")
+    if threshold:
+        lines.append(f"⚠️ Nível de controle:\n{threshold}")
+        lines.append("")
+
+    products = diagnosis.get("recommended_products") or []
+    if products:
+        lines.append("💊 Produtos recomendados:")
+        for prod in products[:5]:
+            name = prod.get("name", "")
+            dose = prod.get("dose", "")
+            if name:
+                lines.append(f"• {name}" + (f" ({dose})" if dose else ""))
+        lines.append("")
+
+    tips = diagnosis.get("management_tips")
+    if tips:
+        lines.append(f"💡 Dica: {tips}")
+
+    return "\n".join(lines)
+
+
+def _mob_add_to_existing_visit(session_id: str, message_text: str, visit_id: int) -> str:
+    """Adiciona observação a uma visita existente no mobile."""
+    if not visit_id:
+        return (
+            "Não encontrei uma visita recente para adicionar essa informação.\n"
+            "Por favor, crie uma visita primeiro."
+        )
+
+    visit = Visit.query.get(visit_id)
+    if not visit:
+        return "A visita referenciada não foi encontrada. Pode ter sido excluída."
+
+    # Extrai a nova observação
+    contextual_triggers = [
+        "adiciona que", "adicionar que", "acrescenta que", "acrescentar que",
+        "inclui que", "incluir que", "tambem", "também", "mais uma coisa",
+        "outra coisa", "esqueci de falar", "faltou", "alem disso", "além disso",
+        "complementando", "complemento", "adiciona", "adicionar", "acrescenta",
+        "acrescentar", "inclui", "incluir",
+    ]
+    new_observation = message_text.strip()
+    normalized_msg = normalize_lookup_text(new_observation)
+    for trigger in contextual_triggers:
+        if normalized_msg.startswith(trigger):
+            new_observation = new_observation[len(trigger):].strip()
+            break
+
+    if not new_observation:
+        return "Não consegui identificar o que você quer adicionar. Pode reformular?"
+
+    # Atualiza a visita
+    current_recommendation = (visit.recommendation or "").strip()
+    if current_recommendation:
+        visit.recommendation = f"{current_recommendation}\n\n• {new_observation}"
+    else:
+        visit.recommendation = new_observation
+
+    db.session.commit()
+
+    client_name = ""
+    if visit.client_id:
+        client = Client.query.get(visit.client_id)
+        if client:
+            client_name = f" do {client.name}"
+
+    return f"✅ Adicionado à visita{client_name}:\n➕ {new_observation}"
 
 
 @bp.route("/mobile/transcribe", methods=["POST"])

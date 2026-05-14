@@ -124,4 +124,12 @@ class DecisionEngine:
             })
             return decision
 
+        if intent == "PEST_DIAGNOSIS":
+            decision.update({
+                "action": "ROUTE_TO_PEST_DIAGNOSIS",
+                "should_fallback": False,
+                "reason": "pest or disease diagnosis request",
+            })
+            return decision
+
         return decision
