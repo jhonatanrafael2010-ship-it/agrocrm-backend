@@ -12620,3 +12620,130 @@ def list_client_plantings(client_id):
         "plantings": result,
     }), 200
 
+
+# ================================================================
+# PROACTIVE INSIGHTS - Lembretes e alertas proativos
+# ================================================================
+
+@bp.route("/insights/<int:consultant_id>", methods=["GET"])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com", "https://localhost", "capacitor://localhost", "http://localhost"])
+def get_consultant_insights_endpoint(consultant_id: int):
+    """
+    Retorna insights proativos para um consultor.
+    Usado pelo app/site para exibir alertas e lembretes.
+    """
+    from services.proactive_insights import get_consultant_insights
+
+    consultant = Consultant.query.get(consultant_id)
+    if not consultant:
+        return jsonify({"ok": False, "error": "Consultor não encontrado"}), 404
+
+    insights = get_consultant_insights(consultant_id)
+
+    return jsonify({
+        "ok": True,
+        "insights": insights,
+    }), 200
+
+
+@bp.route("/cron/daily-reminders", methods=["POST"])
+def cron_daily_reminders():
+    """
+    Endpoint para envio de lembretes diários via Telegram.
+    Deve ser chamado por um cron externo (ex: cron-job.org) às 7h.
+
+    Segurança: aceita apenas requests com header X-Cron-Secret válido.
+    """
+    import os
+    from services.proactive_insights import (
+        get_all_consultants_for_daily_reminder,
+        build_daily_reminder_text,
+    )
+
+    # Validação de segurança (opcional mas recomendado)
+    cron_secret = os.getenv("CRON_SECRET")
+    request_secret = request.headers.get("X-Cron-Secret")
+
+    if cron_secret and request_secret != cron_secret:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    consultants = get_all_consultants_for_daily_reminder()
+    sent_count = 0
+    errors = []
+
+    for c in consultants:
+        try:
+            text = build_daily_reminder_text(c["consultant_id"], c["consultant_name"])
+
+            if text:
+                result = send_telegram_message(
+                    chat_id=c["telegram_chat_id"],
+                    text=text,
+                )
+                if result.get("ok"):
+                    sent_count += 1
+                else:
+                    errors.append({
+                        "consultant_id": c["consultant_id"],
+                        "error": result.get("error", "unknown"),
+                    })
+        except Exception as e:
+            errors.append({
+                "consultant_id": c["consultant_id"],
+                "error": str(e),
+            })
+
+    return jsonify({
+        "ok": True,
+        "sent": sent_count,
+        "total_consultants": len(consultants),
+        "errors": errors if errors else None,
+    }), 200
+
+
+@bp.route("/cron/test-reminder/<int:consultant_id>", methods=["POST"])
+def cron_test_reminder(consultant_id: int):
+    """
+    Testa o envio de lembrete para um consultor específico.
+    Útil para debug e demonstração.
+    """
+    from services.proactive_insights import build_daily_reminder_text
+
+    consultant = Consultant.query.get(consultant_id)
+    if not consultant:
+        return jsonify({"ok": False, "error": "Consultor não encontrado"}), 404
+
+    binding = TelegramContactBinding.query.filter_by(
+        consultant_id=consultant_id,
+        is_active=True,
+    ).first()
+
+    text = build_daily_reminder_text(consultant_id, consultant.name)
+
+    if not text:
+        return jsonify({
+            "ok": True,
+            "message": "Nenhum lembrete relevante para enviar",
+            "would_send": False,
+        }), 200
+
+    if not binding:
+        return jsonify({
+            "ok": True,
+            "message": "Consultor sem Telegram vinculado",
+            "would_send": True,
+            "preview": text,
+        }), 200
+
+    result = send_telegram_message(
+        chat_id=binding.telegram_chat_id,
+        text=text,
+    )
+
+    return jsonify({
+        "ok": result.get("ok", False),
+        "message": "Lembrete enviado" if result.get("ok") else "Erro ao enviar",
+        "preview": text,
+        "telegram_result": result,
+    }), 200
+
