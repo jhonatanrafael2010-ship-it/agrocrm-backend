@@ -13014,8 +13014,11 @@ def admin_upload_disease_image(slug: str):
 
         # Obtém os bytes da imagem
         if image_url:
-            headers = {"User-Agent": "AgroCRM/1.0"}
-            resp = req.get(image_url, headers=headers, timeout=30)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "image/*,*/*;q=0.8",
+            }
+            resp = req.get(image_url, headers=headers, timeout=30, allow_redirects=True)
             resp.raise_for_status()
             image_bytes = resp.content
             content_type = resp.headers.get("Content-Type", "image/jpeg")
@@ -13092,9 +13095,12 @@ def admin_upload_disease_images_batch():
             continue
 
         try:
-            # Download
-            headers = {"User-Agent": "AgroCRM/1.0"}
-            resp = req.get(url, headers=headers, timeout=30)
+            # Download com User-Agent de navegador real
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+            }
+            resp = req.get(url, headers=headers, timeout=30, allow_redirects=True)
             resp.raise_for_status()
 
             # Upload
