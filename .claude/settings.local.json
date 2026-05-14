@@ -34,7 +34,12 @@
       "Read(//mnt/c/agrocrm-backend/**)",
       "Bash(python -c \"from services.agent.entity_resolver import EntityResolver; print\\('OK'\\)\")",
       "Bash(git status *)",
-      "WebSearch"
+      "WebSearch",
+      "PowerShell(Invoke-RestMethod -Uri \"https://agrocrm-backend.onrender.com/admin/diseases\" -Method GET)",
+      "PowerShell(Invoke-RestMethod -Uri \"https://agrocrm-backend.onrender.com/api/admin/diseases\" -Method GET)",
+      "PowerShell($response = Invoke-WebRequest -Uri \"https://agrocrm-backend.onrender.com/api/admin/diseases\" -Method GET; $response.Content)",
+      "Bash(curl -s \"https://agrocrm-backend.onrender.com/api/admin/diseases\")",
+      "Bash(curl *)"
     ]
   }
 }
