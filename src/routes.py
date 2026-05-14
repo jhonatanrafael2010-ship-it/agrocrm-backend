@@ -12946,3 +12946,182 @@ def cron_test_reminder(consultant_id: int):
         "telegram_result": result,
     }), 200
 
+
+# ================================================================
+# ADMIN - Gerenciamento de imagens de doenças
+# ================================================================
+
+@bp.route("/admin/diseases", methods=["GET"])
+def admin_list_diseases():
+    """Lista todas as doenças cadastradas e status das imagens."""
+    from services.diseases_database import DISEASES_DATABASE, get_r2_base_url
+
+    base_url = get_r2_base_url()
+    diseases = []
+
+    for d in DISEASES_DATABASE:
+        slug = d.get("slug", "")
+        image_url = f"{base_url}/diseases/{slug}.jpg" if base_url else None
+        diseases.append({
+            "slug": slug,
+            "name": d.get("name"),
+            "crop": d.get("crop"),
+            "type": d.get("type"),
+            "image_url": image_url,
+            "has_image_url": bool(image_url),
+        })
+
+    return jsonify({
+        "ok": True,
+        "count": len(diseases),
+        "r2_base_url": base_url,
+        "diseases": diseases,
+    }), 200
+
+
+@bp.route("/admin/diseases/<slug>/image", methods=["POST"])
+def admin_upload_disease_image(slug: str):
+    """
+    Faz upload de imagem para uma doença específica.
+
+    Body (JSON):
+        - image_url: URL pública para baixar a imagem
+        - image_base64: Imagem em base64 (alternativa)
+    """
+    from services.diseases_database import DISEASES_DATABASE
+
+    # Verifica se o slug existe
+    disease = next((d for d in DISEASES_DATABASE if d.get("slug") == slug), None)
+    if not disease:
+        return jsonify({"ok": False, "error": f"Doença '{slug}' não encontrada"}), 404
+
+    data = request.get_json(force=True) or {}
+    image_url = data.get("image_url", "").strip()
+    image_base64 = data.get("image_base64", "").strip()
+
+    if not image_url and not image_base64:
+        return jsonify({"ok": False, "error": "Forneça image_url ou image_base64"}), 400
+
+    bucket = os.environ.get("R2_BUCKET")
+    public_base = (os.environ.get("R2_PUBLIC_BASE_URL") or "").rstrip("/")
+
+    if not bucket or not public_base:
+        return jsonify({"ok": False, "error": "R2 não configurado"}), 500
+
+    try:
+        from utils.r2_client import get_r2_client
+        import requests as req
+
+        # Obtém os bytes da imagem
+        if image_url:
+            headers = {"User-Agent": "AgroCRM/1.0"}
+            resp = req.get(image_url, headers=headers, timeout=30)
+            resp.raise_for_status()
+            image_bytes = resp.content
+            content_type = resp.headers.get("Content-Type", "image/jpeg")
+        else:
+            # Base64
+            if "," in image_base64:
+                image_base64 = image_base64.split(",", 1)[1]
+            image_bytes = base64.b64decode(image_base64)
+            content_type = "image/jpeg"
+
+        # Upload para R2
+        client = get_r2_client()
+        key = f"diseases/{slug}.jpg"
+
+        client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=image_bytes,
+            ContentType=content_type,
+        )
+
+        final_url = f"{public_base}/{key}"
+
+        return jsonify({
+            "ok": True,
+            "message": f"Imagem enviada para {disease.get('name')}",
+            "slug": slug,
+            "image_url": final_url,
+        }), 200
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@bp.route("/admin/diseases/upload-batch", methods=["POST"])
+def admin_upload_disease_images_batch():
+    """
+    Upload em lote de imagens de doenças.
+
+    Body (JSON):
+        - images: [{"slug": "ferrugem-asiatica", "url": "https://..."}]
+    """
+    data = request.get_json(force=True) or {}
+    images = data.get("images", [])
+
+    if not images:
+        return jsonify({"ok": False, "error": "Forneça lista de images"}), 400
+
+    bucket = os.environ.get("R2_BUCKET")
+    public_base = (os.environ.get("R2_PUBLIC_BASE_URL") or "").rstrip("/")
+
+    if not bucket or not public_base:
+        return jsonify({"ok": False, "error": "R2 não configurado"}), 500
+
+    from services.diseases_database import DISEASES_DATABASE
+    from utils.r2_client import get_r2_client
+    import requests as req
+
+    client = get_r2_client()
+    results = []
+
+    for item in images:
+        slug = item.get("slug", "").strip()
+        url = item.get("url", "").strip()
+
+        if not slug or not url:
+            results.append({"slug": slug, "ok": False, "error": "slug ou url faltando"})
+            continue
+
+        # Verifica se existe
+        disease = next((d for d in DISEASES_DATABASE if d.get("slug") == slug), None)
+        if not disease:
+            results.append({"slug": slug, "ok": False, "error": "slug não encontrado"})
+            continue
+
+        try:
+            # Download
+            headers = {"User-Agent": "AgroCRM/1.0"}
+            resp = req.get(url, headers=headers, timeout=30)
+            resp.raise_for_status()
+
+            # Upload
+            key = f"diseases/{slug}.jpg"
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=resp.content,
+                ContentType=resp.headers.get("Content-Type", "image/jpeg"),
+            )
+
+            results.append({
+                "slug": slug,
+                "ok": True,
+                "image_url": f"{public_base}/{key}",
+            })
+
+        except Exception as e:
+            results.append({"slug": slug, "ok": False, "error": str(e)})
+
+    success_count = sum(1 for r in results if r.get("ok"))
+
+    return jsonify({
+        "ok": True,
+        "total": len(images),
+        "success": success_count,
+        "failed": len(images) - success_count,
+        "results": results,
+    }), 200
+
