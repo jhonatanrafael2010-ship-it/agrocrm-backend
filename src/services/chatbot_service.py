@@ -613,3 +613,36 @@ def send_telegram_message(chat_id: str, text: str, parse_mode: str = None) -> Di
             "ok": False,
             "error": str(e)
         }
+
+
+def send_telegram_photo(chat_id: str, photo_url: str, caption: str = None) -> Dict[str, Any]:
+    """Envia uma foto via Telegram."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        return {
+            "ok": False,
+            "error": "TELEGRAM_BOT_TOKEN not configured"
+        }
+
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+
+    payload = {
+        "chat_id": chat_id,
+        "photo": photo_url,
+    }
+
+    if caption:
+        payload["caption"] = caption
+
+    try:
+        response = requests.post(url, json=payload, timeout=30)
+        return {
+            "ok": response.ok,
+            "status_code": response.status_code,
+            "response": response.json() if response.content else {}
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e)
+        }

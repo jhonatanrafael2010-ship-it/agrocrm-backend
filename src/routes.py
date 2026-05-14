@@ -116,6 +116,7 @@ from services.chatbot_service import (
     parse_chatbot_message,
     send_telegram_message,
     send_telegram_document,
+    send_telegram_photo,
 )
 from services.field_data_service import (
     infer_field_data_category,
@@ -4428,91 +4429,91 @@ def handle_add_to_existing_visit_flow(chat_message, consultant, message_text: st
 
 def handle_pest_diagnosis_flow(chat_message, message_text: str):
     """
-    Processa perguntas sobre pragas e doenças usando o skill diagnostico_praga.
-    Retorna informações sobre sintomas, nível de controle e tratamentos.
+    Processa perguntas sobre pragas e doenças.
+    1. Primeiro tenta a base de dados local (respostas precisas + fotos)
+    2. Se não encontrar, usa IA como fallback
     """
+    from services.diseases_database import search_disease
+
+    # Detecta cultura na mensagem
+    crop = None
+    msg_lower = message_text.lower()
+    if "soja" in msg_lower:
+        crop = "soja"
+    elif "milho" in msg_lower:
+        crop = "milho"
+    elif "algodao" in msg_lower or "algodão" in msg_lower:
+        crop = "algodao"
+
+    # Tenta base de dados local primeiro
+    local_result = search_disease(message_text, crop)
+
+    if local_result.get("found"):
+        disease = local_result.get("disease", {})
+        response_text = _format_disease_response_telegram(disease)
+        image_url = disease.get("image_url")
+
+        # Envia imagem primeiro se disponível
+        if image_url:
+            send_telegram_photo(
+                chat_id=chat_message.chat_id,
+                photo_url=image_url,
+                caption=f"📸 {disease.get('name')} - Sintomas típicos",
+            )
+
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text=response_text,
+            parse_mode="Markdown",
+        )
+
+        return jsonify({
+            "ok": True,
+            "message": "pest diagnosis from local db",
+            "diagnosis": disease.get("name"),
+            "source": "local_database",
+        }), 200
+
+    # Fallback: tenta IA
     from services.agent.skill_loader import interpret_with_skill
 
-    diagnosis_result = interpret_with_skill(
+    ai_result = interpret_with_skill(
         message_text=message_text,
         skill_name="diagnostico_praga",
     )
 
-    if not diagnosis_result:
-        # Fallback: resposta genérica se a IA não estiver disponível
-        response_text = (
-            "Não consegui processar sua pergunta sobre pragas/doenças.\n\n"
-            "Tente perguntar de forma mais específica, por exemplo:\n"
-            "• \"O que é ferrugem asiática?\"\n"
-            "• \"Como tratar lagarta na soja?\"\n"
-            "• \"Sintomas de percevejo\""
+    if ai_result and ai_result.get("diagnosis", {}).get("name"):
+        diagnosis = ai_result.get("diagnosis", {})
+        response_text = _format_ai_diagnosis_telegram(diagnosis, ai_result.get("confidence", "low"))
+
+        send_telegram_message(
+            chat_id=chat_message.chat_id,
+            text=response_text,
+            parse_mode="Markdown",
         )
-        send_telegram_message(chat_id=chat_message.chat_id, text=response_text)
-        return jsonify({"ok": True, "message": "pest diagnosis fallback"}), 200
 
-    diagnosis = diagnosis_result.get("diagnosis") or {}
-    confidence = diagnosis_result.get("confidence", "low")
+        return jsonify({
+            "ok": True,
+            "message": "pest diagnosis from AI",
+            "diagnosis": diagnosis.get("name"),
+            "source": "ai_fallback",
+        }), 200
 
-    if not diagnosis.get("name"):
+    # Nada encontrado
+    suggestions = local_result.get("suggestions", [])
+    if suggestions:
         response_text = (
-            "Não consegui identificar a praga ou doença mencionada.\n\n"
-            "Tente descrever os sintomas ou citar o nome específico."
+            "Não encontrei essa praga/doença específica.\n\n"
+            f"🔎 *Você quis dizer:*\n• " + "\n• ".join(suggestions)
         )
-        send_telegram_message(chat_id=chat_message.chat_id, text=response_text)
-        return jsonify({"ok": True, "message": "pest not identified"}), 200
-
-    # Monta resposta formatada
-    lines = []
-
-    pest_type = diagnosis.get("type", "")
-    type_emoji = "🐛" if pest_type == "praga" else "🦠" if pest_type == "doenca" else "🔍"
-
-    lines.append(f"{type_emoji} *{diagnosis.get('name')}*")
-
-    crop = diagnosis.get("crop")
-    if crop:
-        lines.append(f"Cultura: {crop.capitalize()}")
-
-    lines.append("")
-
-    symptoms = diagnosis.get("symptoms")
-    if symptoms:
-        lines.append(f"📋 *Sintomas:*\n{symptoms}")
-        lines.append("")
-
-    conditions = diagnosis.get("favorable_conditions")
-    if conditions:
-        lines.append(f"🌡️ *Condições favoráveis:*\n{conditions}")
-        lines.append("")
-
-    threshold = diagnosis.get("control_threshold")
-    if threshold:
-        lines.append(f"⚠️ *Nível de controle:*\n{threshold}")
-        lines.append("")
-
-    products = diagnosis.get("recommended_products") or []
-    if products:
-        lines.append("💊 *Produtos recomendados:*")
-        for prod in products[:5]:
-            name = prod.get("name", "")
-            dose = prod.get("dose", "")
-            if name:
-                if dose:
-                    lines.append(f"• {name} ({dose})")
-                else:
-                    lines.append(f"• {name}")
-        lines.append("")
-
-    tips = diagnosis.get("management_tips")
-    if tips:
-        lines.append(f"💡 *Dica:* {tips}")
-
-    similar = diagnosis_result.get("similar_problems") or []
-    if similar and confidence == "low":
-        lines.append("")
-        lines.append(f"🔎 *Outros possíveis:* {', '.join(similar[:3])}")
-
-    response_text = "\n".join(lines)
+    else:
+        response_text = (
+            "Não consegui identificar a praga ou doença.\n\n"
+            "Tente especificar melhor, por exemplo:\n"
+            "• ferrugem asiática\n"
+            "• mancha de bipolaris no milho\n"
+            "• lagarta do cartucho"
+        )
 
     send_telegram_message(
         chat_id=chat_message.chat_id,
@@ -4520,12 +4521,103 @@ def handle_pest_diagnosis_flow(chat_message, message_text: str):
         parse_mode="Markdown",
     )
 
-    return jsonify({
-        "ok": True,
-        "message": "pest diagnosis completed",
-        "diagnosis": diagnosis.get("name"),
-        "confidence": confidence,
-    }), 200
+    return jsonify({"ok": True, "message": "pest not found"}), 200
+
+
+def _format_disease_response_telegram(disease: dict) -> str:
+    """Formata resposta da doença para Telegram."""
+    lines = []
+
+    pest_type = disease.get("type", "")
+    type_emoji = "🐛" if pest_type == "praga" else "🦠" if pest_type == "doenca" else "🔍"
+
+    lines.append(f"{type_emoji} *{disease.get('name')}*")
+    if disease.get("scientific_name"):
+        lines.append(f"_{disease.get('scientific_name')}_")
+
+    crop = disease.get("crop")
+    if crop:
+        lines.append(f"Cultura: {crop.capitalize()}")
+    lines.append("")
+
+    symptoms = disease.get("symptoms")
+    if symptoms:
+        lines.append(f"📋 *Sintomas:*\n{symptoms}")
+        lines.append("")
+
+    conditions = disease.get("favorable_conditions")
+    if conditions:
+        lines.append(f"🌡️ *Condições favoráveis:*\n{conditions}")
+        lines.append("")
+
+    threshold = disease.get("control_threshold")
+    if threshold:
+        lines.append(f"⚠️ *Nível de controle:*\n{threshold}")
+        lines.append("")
+
+    products = disease.get("products") or []
+    if products:
+        lines.append("💊 *Produtos recomendados:*")
+        for prod in products[:5]:
+            name = prod.get("name", "")
+            dose = prod.get("dose", "")
+            group = prod.get("group", "")
+            if name:
+                line = f"• {name}"
+                if dose:
+                    line += f" — {dose}"
+                if group:
+                    line += f" [{group}]"
+                lines.append(line)
+        lines.append("")
+
+    tips = disease.get("management_tips")
+    if tips:
+        lines.append(f"💡 *Manejo:*\n{tips}")
+
+    return "\n".join(lines)
+
+
+def _format_ai_diagnosis_telegram(diagnosis: dict, confidence: str) -> str:
+    """Formata resposta da IA para Telegram."""
+    lines = []
+
+    pest_type = diagnosis.get("type", "")
+    type_emoji = "🐛" if pest_type == "praga" else "🦠" if pest_type == "doenca" else "🔍"
+
+    lines.append(f"{type_emoji} *{diagnosis.get('name')}*")
+    lines.append("_(resposta via IA)_")
+
+    crop = diagnosis.get("crop")
+    if crop:
+        lines.append(f"Cultura: {crop.capitalize()}")
+    lines.append("")
+
+    for field, emoji, label in [
+        ("symptoms", "📋", "Sintomas"),
+        ("favorable_conditions", "🌡️", "Condições favoráveis"),
+        ("control_threshold", "⚠️", "Nível de controle"),
+    ]:
+        value = diagnosis.get(field)
+        if value:
+            lines.append(f"{emoji} *{label}:*\n{value}")
+            lines.append("")
+
+    products = diagnosis.get("recommended_products") or []
+    if products:
+        lines.append("💊 *Produtos:*")
+        for prod in products[:4]:
+            name = prod.get("name", "")
+            dose = prod.get("dose", "")
+            if name:
+                lines.append(f"• {name}" + (f" ({dose})" if dose else ""))
+        lines.append("")
+
+    tips = diagnosis.get("management_tips")
+    if tips:
+        lines.append(f"💡 *Dica:* {tips}")
+
+    return "\n".join(lines)
 
 
 def handle_weekly_report_flow(chat_message, consultant):
@@ -11348,7 +11440,14 @@ def mobile_chat():
         resp = _mob_new_message(session_id, message_text, photos, consultant, resolved_consultant_id)
 
     if isinstance(resp, dict):
-        return jsonify({"ok": True, "response": resp.get("text", ""), "pdf_items": resp.get("pdf_items")}), 200
+        result = {"ok": True, "response": resp.get("text", "")}
+        if resp.get("pdf_items"):
+            result["pdf_items"] = resp["pdf_items"]
+        if resp.get("image_url"):
+            result["image_url"] = resp["image_url"]
+        if resp.get("source"):
+            result["source"] = resp["source"]
+        return jsonify(result), 200
     return jsonify({"ok": True, "response": resp}), 200
 
 
@@ -12219,39 +12318,139 @@ def _mob_weekly_report_text(consultant) -> str:
     return build_weekly_report_text(consultant.id, consultant.name)
 
 
-def _mob_pest_diagnosis(message_text: str) -> str:
-    """Processa diagnóstico de pragas/doenças no mobile."""
+def _mob_pest_diagnosis(message_text: str) -> dict:
+    """
+    Processa diagnóstico de pragas/doenças no mobile.
+    1. Primeiro tenta a base de dados local (respostas precisas + fotos)
+    2. Se não encontrar, usa IA como fallback
+
+    Retorna dict com 'text' e opcionalmente 'image_url'.
+    """
+    from services.diseases_database import search_disease
+
+    # Detecta cultura na mensagem
+    crop = None
+    msg_lower = message_text.lower()
+    if "soja" in msg_lower:
+        crop = "soja"
+    elif "milho" in msg_lower:
+        crop = "milho"
+    elif "algodao" in msg_lower or "algodão" in msg_lower:
+        crop = "algodao"
+
+    # Tenta base de dados local primeiro
+    local_result = search_disease(message_text, crop)
+
+    if local_result.get("found"):
+        disease = local_result.get("disease", {})
+        response_text = _format_disease_response_mobile(disease)
+        return {
+            "text": response_text,
+            "image_url": disease.get("image_url"),
+            "source": "local_database",
+            "disease_name": disease.get("name"),
+        }
+
+    # Fallback: tenta IA
     from services.agent.skill_loader import interpret_with_skill
 
-    diagnosis_result = interpret_with_skill(
+    ai_result = interpret_with_skill(
         message_text=message_text,
         skill_name="diagnostico_praga",
     )
 
-    if not diagnosis_result:
-        return (
-            "Não consegui processar sua pergunta sobre pragas/doenças.\n\n"
-            "Tente perguntar de forma mais específica:\n"
-            "• O que é ferrugem asiática?\n"
-            "• Como tratar lagarta na soja?\n"
-            "• Sintomas de percevejo"
+    if ai_result and ai_result.get("diagnosis", {}).get("name"):
+        diagnosis = ai_result.get("diagnosis", {})
+        response_text = _format_ai_diagnosis_mobile(diagnosis, ai_result.get("confidence", "low"))
+        return {
+            "text": response_text,
+            "image_url": None,
+            "source": "ai_fallback",
+            "disease_name": diagnosis.get("name"),
+        }
+
+    # Nada encontrado
+    suggestions = local_result.get("suggestions", [])
+    if suggestions:
+        response_text = (
+            "Não encontrei essa praga/doença específica.\n\n"
+            f"🔎 Você quis dizer:\n• " + "\n• ".join(suggestions)
+        )
+    else:
+        response_text = (
+            "Não consegui identificar a praga ou doença.\n\n"
+            "Tente especificar melhor, por exemplo:\n"
+            "• ferrugem asiática\n"
+            "• mancha de bipolaris no milho\n"
+            "• lagarta do cartucho"
         )
 
-    diagnosis = diagnosis_result.get("diagnosis") or {}
-    confidence = diagnosis_result.get("confidence", "low")
+    return {"text": response_text, "image_url": None, "source": "not_found"}
 
-    if not diagnosis.get("name"):
-        return "Não consegui identificar a praga ou doença. Tente descrever os sintomas ou citar o nome específico."
 
+def _format_disease_response_mobile(disease: dict) -> str:
+    """Formata resposta da doença para mobile (texto simples)."""
     lines = []
-    pest_type = diagnosis.get("type", "")
-    type_label = "🐛 PRAGA" if pest_type == "praga" else "🦠 DOENÇA" if pest_type == "doenca" else "🔍"
 
-    lines.append(f"{type_label}: {diagnosis.get('name')}")
+    pest_type = disease.get("type", "")
+    type_emoji = "🐛" if pest_type == "praga" else "🦠" if pest_type == "doenca" else "🔍"
+
+    lines.append(f"{type_emoji} {disease.get('name')}")
+    if disease.get("scientific_name"):
+        lines.append(f"({disease.get('scientific_name')})")
+
+    crop = disease.get("crop")
+    if crop:
+        lines.append(f"Cultura: {crop.capitalize()}")
+    lines.append("")
+
+    symptoms = disease.get("symptoms")
+    if symptoms:
+        lines.append(f"📋 Sintomas:\n{symptoms}")
+        lines.append("")
+
+    conditions = disease.get("favorable_conditions")
+    if conditions:
+        lines.append(f"🌡️ Condições favoráveis:\n{conditions}")
+        lines.append("")
+
+    threshold = disease.get("control_threshold")
+    if threshold:
+        lines.append(f"⚠️ Nível de controle:\n{threshold}")
+        lines.append("")
+
+    products = disease.get("products") or []
+    if products:
+        lines.append("💊 Produtos recomendados:")
+        for prod in products[:5]:
+            name = prod.get("name", "")
+            dose = prod.get("dose", "")
+            if name:
+                lines.append(f"• {name}" + (f" ({dose})" if dose else ""))
+        lines.append("")
+
+    tips = disease.get("management_tips")
+    if tips:
+        lines.append(f"💡 Dica: {tips}")
+
+    return "\n".join(lines).strip()
+
+
+def _format_ai_diagnosis_mobile(diagnosis: dict, confidence: str) -> str:
+    """Formata resposta de diagnóstico da IA para mobile."""
+    lines = []
+
+    pest_type = diagnosis.get("type", "")
+    type_emoji = "🐛" if pest_type == "praga" else "🦠" if pest_type == "doenca" else "🔍"
+
+    lines.append(f"{type_emoji} {diagnosis.get('name')}")
 
     crop = diagnosis.get("crop")
     if crop:
         lines.append(f"Cultura: {crop.capitalize()}")
+
+    if confidence == "low":
+        lines.append("⚠️ (Confiança baixa - verifique os sintomas)")
     lines.append("")
 
     symptoms = diagnosis.get("symptoms")
@@ -12283,7 +12482,7 @@ def _mob_pest_diagnosis(message_text: str) -> str:
     if tips:
         lines.append(f"💡 Dica: {tips}")
 
-    return "\n".join(lines)
+    return "\n".join(lines).strip()
 
 
 def _mob_add_to_existing_visit(session_id: str, message_text: str, visit_id: int) -> str:
