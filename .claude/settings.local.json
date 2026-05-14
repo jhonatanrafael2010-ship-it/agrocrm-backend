@@ -32,7 +32,9 @@
       "PowerShell(New-Item *)",
       "PowerShell(Select-String *)",
       "Read(//mnt/c/agrocrm-backend/**)",
-      "Bash(python -c \"from services.agent.entity_resolver import EntityResolver; print\\('OK'\\)\")"
+      "Bash(python -c \"from services.agent.entity_resolver import EntityResolver; print\\('OK'\\)\")",
+      "Bash(git status *)",
+      "WebSearch"
     ]
   }
 }
