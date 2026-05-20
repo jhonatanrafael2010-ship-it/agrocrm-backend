@@ -3420,7 +3420,7 @@ def create_visit_from_payload(final_visit_payload: dict):
     return visit
 
 
-def build_same_cycle_visit_query(base_visit):
+def build_same_cycle_visit_query(base_visit, consultant_id: int = None):
     """
     Define quais visitas anteriores pertencem ao mesmo ciclo.
 
@@ -3435,11 +3435,16 @@ def build_same_cycle_visit_query(base_visit):
     3) NÃO usa recommendation para amarrar ciclo,
        porque a recommendation da visita concluída vira observação real
        e deixa de bater com a pendência original
+    4) se consultant_id for passado, filtra apenas visitas desse consultor
     """
     if not base_visit:
         return None
 
     q = Visit.query.filter(Visit.id != base_visit.id)
+
+    # SEGURANÇA: filtra por consultor se especificado
+    if consultant_id:
+        q = q.filter(Visit.consultant_id == consultant_id)
 
     # 1) critério mais forte: mesmo planting_id
     if getattr(base_visit, "planting_id", None):
@@ -3839,7 +3844,7 @@ def resolve_strict_planting_for_payload(payload: dict):
 
 
 
-def auto_close_previous_cycle_visits(current_visit):
+def auto_close_previous_cycle_visits(current_visit, consultant_id: int = None):
     """
     Fecha automaticamente visitas anteriores do mesmo ciclo.
 
@@ -3849,6 +3854,7 @@ def auto_close_previous_cycle_visits(current_visit):
     - usa planting_id quando existir
     - sem planting_id, usa client/property/plot/culture/variety
     - nunca usa recommendation para definir ciclo
+    - se consultant_id for passado, só fecha visitas desse consultor (SEGURANÇA)
     """
     if not current_visit:
         print("DEBUG auto_close_previous_cycle_visits: current_visit ausente")
@@ -3858,7 +3864,9 @@ def auto_close_previous_cycle_visits(current_visit):
         print("DEBUG auto_close_previous_cycle_visits: current_visit sem data")
         return []
 
-    q = build_same_cycle_visit_query(current_visit)
+    # Usa o consultant_id da visita atual se não for passado explicitamente
+    effective_consultant_id = consultant_id or getattr(current_visit, "consultant_id", None)
+    q = build_same_cycle_visit_query(current_visit, consultant_id=effective_consultant_id)
     if q is None:
         print("DEBUG auto_close_previous_cycle_visits: query do mesmo ciclo retornou None")
         return []
