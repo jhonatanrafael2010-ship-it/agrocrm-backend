@@ -221,3 +221,96 @@ def metrics_ai_usage():
 
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ================================================================
+# EMBEDDING CLASSIFIER ENDPOINTS
+# ================================================================
+
+@agent_metrics_bp.route("/embeddings/stats", methods=["GET"])
+def embeddings_stats():
+    """
+    Retorna estatísticas do cache de embeddings e classificador semântico.
+    """
+    try:
+        from services.agent.embedding_classifier import get_cache_stats
+        stats = get_cache_stats()
+        return jsonify({"ok": True, **stats}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@agent_metrics_bp.route("/embeddings/initialize", methods=["POST"])
+def embeddings_initialize():
+    """
+    Inicializa ou reinicializa os embeddings de referência.
+    Útil após adicionar novos exemplos em INTENT_EXAMPLES.
+
+    Query params:
+      - force=true: recalcula mesmo se já existirem
+    """
+    try:
+        from services.agent.embedding_classifier import initialize_reference_embeddings
+        force = request.args.get("force", "false").lower() == "true"
+        success = initialize_reference_embeddings(force=force)
+
+        if success:
+            return jsonify({
+                "ok": True,
+                "message": "Embeddings de referência inicializados com sucesso",
+            }), 200
+        else:
+            return jsonify({
+                "ok": True,
+                "message": "Embeddings já existiam (use ?force=true para recalcular)",
+            }), 200
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@agent_metrics_bp.route("/embeddings/clear-cache", methods=["POST"])
+def embeddings_clear_cache():
+    """
+    Limpa o cache de classificações de embeddings.
+    Os embeddings de referência NÃO são afetados.
+    """
+    try:
+        from services.agent.embedding_classifier import invalidate_cache
+        invalidate_cache()
+        return jsonify({
+            "ok": True,
+            "message": "Cache de embeddings limpo",
+        }), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@agent_metrics_bp.route("/embeddings/test", methods=["POST"])
+def embeddings_test():
+    """
+    Testa a classificação por embeddings para uma mensagem.
+    Útil para debug e ajuste de threshold.
+
+    Body JSON:
+      { "message": "texto para classificar" }
+    """
+    try:
+        from services.agent.embedding_classifier import classify_with_embeddings
+
+        data = request.get_json() or {}
+        message = data.get("message", "")
+
+        if not message:
+            return jsonify({"ok": False, "error": "Campo 'message' obrigatório"}), 400
+
+        result = classify_with_embeddings(message)
+
+        return jsonify({
+            "ok": True,
+            "message": message,
+            "classification": result,
+        }), 200
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500

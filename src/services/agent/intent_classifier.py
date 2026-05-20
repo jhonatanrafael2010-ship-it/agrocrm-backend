@@ -5,6 +5,11 @@ import time
 import unicodedata
 from typing import Any, Dict
 
+from services.agent.embedding_classifier import (
+    classify_with_embeddings,
+    get_cache_stats as get_embedding_cache_stats,
+)
+
 
 def normalize_text(text: str) -> str:
     if not text:
@@ -425,8 +430,20 @@ class IntentClassifier:
             return result
 
         # ============================================================
+        # CLASSIFICAÇÃO POR EMBEDDINGS
+        # Usa similaridade semântica para classificar. Inclui cache
+        # para evitar recalcular embeddings de mensagens similares.
+        # ============================================================
+        embedding_result = classify_with_embeddings(
+            message_text=text,
+            context=context,
+        )
+        if embedding_result and embedding_result.get("confidence") in ("high", "medium"):
+            return embedding_result
+
+        # ============================================================
         # FALLBACK COM IA
-        # So chega aqui se a heuristica nao reconheceu nada.
+        # So chega aqui se a heuristica e embeddings nao reconheceram.
         # Se a IA tambem nao souber, retorna UNKNOWN normalmente.
         # ============================================================
         ai_result = classify_with_ai_fallback(
@@ -435,5 +452,9 @@ class IntentClassifier:
         )
         if ai_result:
             return ai_result
+
+        # Se embedding teve match baixo, ainda é melhor que UNKNOWN
+        if embedding_result:
+            return embedding_result
 
         return result
