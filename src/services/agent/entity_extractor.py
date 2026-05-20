@@ -317,7 +317,8 @@ class EntityExtractor:
                 obs_lines.append(line_clean)
 
         if obs_lines:
-            return ' | '.join(obs_lines)
+            # Preserva quebras de linha para o PDF
+            return '\n'.join(obs_lines)
 
         return ""
 
