@@ -128,11 +128,12 @@ class EntityExtractor:
             return "semana passada"
 
         # "X dias atrás" / "há X dias"
+        spelled_numbers = "um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez"
         days_ago_patterns = [
             r"(\d+)\s*dias?\s*atras",
-            r"(dois|tres|três|quatro|cinco|seis|sete)\s*dias?\s*atras",
+            rf"({spelled_numbers})\s*dias?\s*atras",
             r"ha\s*(\d+)\s*dias?",
-            r"há\s*(\d+)\s*dias?",
+            rf"ha\s*({spelled_numbers})\s*dias?",
         ]
         for pattern in days_ago_patterns:
             match = re.search(pattern, msg)

@@ -264,7 +264,26 @@ def parse_human_date(text: str, base_date: date | None = None) -> date | None:
         return today + timedelta(days=simple_map[normalized])
 
     # -----------------------------
-    # X dias atrás / ha X dias
+    # X dias atrás / ha X dias (números por extenso)
+    # -----------------------------
+    spelled_numbers = {
+        "um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3,
+        "quatro": 4, "cinco": 5, "seis": 6, "sete": 7,
+        "oito": 8, "nove": 9, "dez": 10,
+    }
+    spelled_pattern = "|".join(spelled_numbers.keys())
+    match = re.fullmatch(rf"({spelled_pattern})\s+dia[s]?\s+atras", normalized)
+    if match:
+        days = spelled_numbers[match.group(1)]
+        return today - timedelta(days=days)
+
+    match = re.fullmatch(rf"ha\s+({spelled_pattern})\s+dia[s]?", normalized)
+    if match:
+        days = spelled_numbers[match.group(1)]
+        return today - timedelta(days=days)
+
+    # -----------------------------
+    # X dias atrás / ha X dias (números)
     # -----------------------------
     match = re.fullmatch(r"(\d+)\s+dia[s]?\s+atras", normalized)
     if match:
@@ -11601,6 +11620,16 @@ def _mob_start_visit_flow(session_id, original_message, entities, consultant, re
     date_value = entities.get("date")
     products = normalize_products_from_parsed(entities.get("products") or [])
     property_name = (entities.get("property_name") or "").strip()
+
+    # Infere visit_purpose a partir da fenologia se não foi explicitamente informado
+    if not visit_purpose and fenologia_real:
+        fen_upper = fenologia_real.upper()
+        if re.match(r"R\d+$", fen_upper):
+            visit_purpose = "Reprodutivo"
+        elif re.match(r"V\d+$", fen_upper) or fen_upper in ("VE", "VC", "VT"):
+            visit_purpose = "Vegetativo"
+        elif "emergencia" in fenologia_real.lower() or "emergência" in fenologia_real.lower():
+            visit_purpose = "Emergência"
 
     if not client_name:
         return "Informe o nome do cliente. Exemplo: 'cliente João Silva soja R5 hoje'"

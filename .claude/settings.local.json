@@ -40,7 +40,10 @@
       "PowerShell($response = Invoke-WebRequest -Uri \"https://agrocrm-backend.onrender.com/api/admin/diseases\" -Method GET; $response.Content)",
       "Bash(curl -s \"https://agrocrm-backend.onrender.com/api/admin/diseases\")",
       "Bash(curl *)",
-      "Bash(python -c \"from services.agent.embedding_classifier import classify_with_embeddings, get_cache_stats; print\\('embedding_classifier OK'\\); from services.agent.intent_classifier import IntentClassifier; print\\('intent_classifier OK'\\)\")"
+      "Bash(python -c \"from services.agent.embedding_classifier import classify_with_embeddings, get_cache_stats; print\\('embedding_classifier OK'\\); from services.agent.intent_classifier import IntentClassifier; print\\('intent_classifier OK'\\)\")",
+      "Bash(cd /d C:\\\\agrocrm-backend\\\\src)",
+      "Bash(python -c \"import routes; print\\('routes.py OK'\\)\")",
+      "PowerShell(python C:\\\\agrocrm-backend\\\\test_date_parse.py)"
     ]
   }
 }
