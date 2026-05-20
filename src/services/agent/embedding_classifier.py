@@ -129,9 +129,9 @@ INTENT_EXAMPLES = {
 # Threshold de similaridade para considerar um match
 SIMILARITY_THRESHOLD = 0.82
 
-# Cache settings
-CACHE_MAX_SIZE = 1000
-CACHE_TTL_SECONDS = 3600 * 24  # 24 horas
+# Cache settings - reduzido para economizar memória no Render (512MB limit)
+CACHE_MAX_SIZE = 100  # Apenas 100 classificações em memória
+CACHE_TTL_SECONDS = 3600 * 6  # 6 horas (não 24)
 
 # Path para persistir cache e embeddings de referência
 CACHE_DIR = Path(__file__).parent / ".embedding_cache"
@@ -151,44 +151,29 @@ class EmbeddingCache:
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._lock = Lock()
         self._reference_embeddings: Dict[str, List[List[float]]] = {}
-        self._cache_file = CACHE_DIR / "classification_cache.json"
         self._ref_file = CACHE_DIR / "reference_embeddings.json"
-        self._load_from_disk()
+        self._refs_loaded = False
+        # NÃO carrega do disco na inicialização (lazy loading)
 
     def _hash_message(self, text: str) -> str:
         """Hash normalizado da mensagem."""
         normalized = text.strip().lower()
         return hashlib.md5(normalized.encode()).hexdigest()
 
-    def _load_from_disk(self):
-        """Carrega cache e embeddings de referência do disco."""
+    def _ensure_refs_loaded(self):
+        """Carrega embeddings de referência do disco (lazy loading)."""
+        if self._refs_loaded:
+            return
         try:
-            if self._cache_file.exists():
-                data = json.loads(self._cache_file.read_text(encoding="utf-8"))
-                # Filtra entradas expiradas
-                now = time.time()
-                self._cache = {
-                    k: v for k, v in data.items()
-                    if now - v.get("timestamp", 0) < CACHE_TTL_SECONDS
-                }
-
             if self._ref_file.exists():
                 self._reference_embeddings = json.loads(
                     self._ref_file.read_text(encoding="utf-8")
                 )
+                print(f"[EmbeddingCache] referências carregadas: {len(self._reference_embeddings)} intents")
+            self._refs_loaded = True
         except Exception as e:
-            print(f"[EmbeddingCache] erro ao carregar do disco: {e}")
-
-    def _save_to_disk(self):
-        """Persiste cache no disco."""
-        try:
-            CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            self._cache_file.write_text(
-                json.dumps(self._cache, ensure_ascii=False),
-                encoding="utf-8"
-            )
-        except Exception as e:
-            print(f"[EmbeddingCache] erro ao salvar: {e}")
+            print(f"[EmbeddingCache] erro ao carregar referências: {e}")
+            self._refs_loaded = True
 
     def save_reference_embeddings(self):
         """Salva embeddings de referência no disco."""
@@ -211,12 +196,7 @@ class EmbeddingCache:
         return None
 
     def get_cached_embedding(self, text: str) -> Optional[List[float]]:
-        """Retorna embedding cacheado se existir."""
-        msg_hash = self._hash_message(text)
-        with self._lock:
-            entry = self._cache.get(msg_hash)
-            if entry and time.time() - entry.get("timestamp", 0) < CACHE_TTL_SECONDS:
-                return entry.get("embedding")
+        """Embeddings não são mais cacheados para economizar memória."""
         return None
 
     def cache_result(
@@ -225,7 +205,7 @@ class EmbeddingCache:
         embedding: List[float],
         classification: Dict[str, Any]
     ):
-        """Armazena resultado no cache."""
+        """Armazena resultado no cache (apenas classificação, não embedding para economizar memória)."""
         msg_hash = self._hash_message(text)
         with self._lock:
             # Limpa cache se muito grande
@@ -238,19 +218,17 @@ class EmbeddingCache:
                 for key, _ in sorted_entries[:CACHE_MAX_SIZE // 5]:
                     del self._cache[key]
 
+            # NÃO armazena embedding para economizar memória (~37KB cada)
             self._cache[msg_hash] = {
-                "embedding": embedding,
                 "classification": classification,
                 "timestamp": time.time(),
-                "text": text[:100],  # Para debug
             }
 
-            # Salva periodicamente (a cada 10 novas entradas)
-            if len(self._cache) % 10 == 0:
-                self._save_to_disk()
+            # Cache em memória apenas, não persiste (economiza I/O e memória)
 
     def get_reference_embeddings(self) -> Dict[str, List[List[float]]]:
-        """Retorna embeddings de referência."""
+        """Retorna embeddings de referência (lazy loading)."""
+        self._ensure_refs_loaded()
         return self._reference_embeddings
 
     def set_reference_embeddings(self, embeddings: Dict[str, List[List[float]]]):
@@ -278,6 +256,23 @@ class EmbeddingCache:
                     if sim >= threshold:
                         return entry.get("classification")
         return None
+
+    def clear(self):
+        """Limpa todo o cache em memória."""
+        with self._lock:
+            self._cache.clear()
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Retorna estatísticas do cache."""
+        with self._lock:
+            ref_count = sum(len(v) for v in self._reference_embeddings.values())
+            return {
+                "cache_entries": len(self._cache),
+                "cache_max_size": CACHE_MAX_SIZE,
+                "reference_intents": len(self._reference_embeddings),
+                "reference_embeddings": ref_count,
+                "refs_loaded": self._refs_loaded,
+            }
 
 
 # Instância global do cache
