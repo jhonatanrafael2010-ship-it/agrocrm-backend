@@ -158,6 +158,17 @@ class IntentClassifier:
         if not normalized:
             return result
 
+        # ============================================================
+        # CANCELAR - funciona a qualquer momento, mesmo em fluxos ativos
+        # Deve vir ANTES da verificação de current_state
+        # ============================================================
+        if normalized in {"cancelar", "cancela", "cancel"}:
+            result.update({"intent": "CANCEL", "confidence": "high", "matched_by": "exact"})
+            return result
+
+        # ============================================================
+        # FLUXO STATEFUL - usuário está no meio de um fluxo guiado
+        # ============================================================
         if current_state:
             result.update({"intent": "STATEFUL_REPLY", "confidence": "high", "matched_by": "state"})
             return result
@@ -187,12 +198,47 @@ class IntentClassifier:
                 })
                 return result
 
-        if normalized in {"cancelar", "cancela", "cancel"}:
-            result.update({"intent": "CANCEL", "confidence": "high", "matched_by": "exact"})
-            return result
-
         if normalized in {"confirmar", "confirma", "confirmo", "ok", "certo", "isso", "fechou"}:
             result.update({"intent": "CONFIRM", "confidence": "medium", "matched_by": "exact"})
+            return result
+
+        # ============================================================
+        # DETECÇÃO ANTECIPADA DE VISITA
+        # Verifica ANTES de keywords isoladas que podem aparecer
+        # dentro de uma descrição de visita (ex: "dias de plantado")
+        # ============================================================
+        visit_signals_early = ["cliente", "produtor", "fazenda", "propriedade", "milho", "soja", "algodao", "algodão"]
+        fenology_early = re.search(r"\b(v\d{1,2}|r\d{1,2}|ve|vc|vt)\b", normalized)
+        variety_early = re.search(r"\b(as|ag|tmg|ns|dm)\s*\d{3,4}", normalized)
+        culture_match = any(c in normalized for c in ["milho", "soja", "algodao", "algodão"])
+        client_signal = any(s in normalized for s in ["cliente", "produtor", "fazenda", "propriedade"])
+
+        # Combinação forte: variedade + fenologia = definitivamente visita
+        if variety_early and fenology_early:
+            result.update({
+                "intent": "CREATE_VISIT_LIKE_MESSAGE",
+                "confidence": "high",
+                "matched_by": "early_visit_detection",
+            })
+            return result
+
+        # Combinação forte: (cliente ou fazenda) + cultura + fenologia = visita
+        if client_signal and culture_match and fenology_early:
+            result.update({
+                "intent": "CREATE_VISIT_LIKE_MESSAGE",
+                "confidence": "high",
+                "matched_by": "early_visit_detection",
+            })
+            return result
+
+        # Mensagem longa com múltiplos sinais de visita = provavelmente visita
+        early_hit_count = sum(1 for s in visit_signals_early if s in normalized)
+        if early_hit_count >= 2 and (fenology_early or variety_early) and len(normalized) > 50:
+            result.update({
+                "intent": "CREATE_VISIT_LIKE_MESSAGE",
+                "confidence": "high",
+                "matched_by": "early_visit_detection",
+            })
             return result
 
         explicit_field_data_save_patterns = [

@@ -140,4 +140,20 @@ class DecisionEngine:
             })
             return decision
 
+        if intent == "CANCEL":
+            decision.update({
+                "action": "ROUTE_TO_CANCEL",
+                "should_fallback": False,
+                "reason": "user requested cancellation",
+            })
+            return decision
+
+        if intent == "CONFIRM":
+            decision.update({
+                "action": "ROUTE_TO_CONFIRM",
+                "should_fallback": False,
+                "reason": "user confirmation",
+            })
+            return decision
+
         return decision

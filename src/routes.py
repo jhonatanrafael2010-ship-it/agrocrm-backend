@@ -11235,6 +11235,21 @@ def _mob_ensure_state(session_id: str):
     return st
 
 
+def _mob_cancel_current_flow(session_id: str) -> str:
+    """
+    Cancela qualquer fluxo ativo e limpa o estado da conversa.
+    Funciona a qualquer momento, independente do estado atual.
+    """
+    state = _mob_get_state(session_id)
+    if state:
+        old_status = state.status
+        db.session.delete(state)
+        db.session.commit()
+        if old_status and old_status not in ("idle", "none", ""):
+            return "✅ Operação cancelada. Pode começar um novo comando."
+    return "✅ Pronto. Pode enviar um novo comando."
+
+
 def _visit_pdf_label(visit) -> str:
     parts = []
     if visit.client:
@@ -11550,6 +11565,13 @@ def _mob_new_message(session_id, message_text, photos, consultant, resolved_cons
 
     if action == "ROUTE_TO_WEEKLY_REPORT":
         return _mob_weekly_report_text(consultant)
+
+    if action == "ROUTE_TO_CANCEL":
+        return _mob_cancel_current_flow(session_id)
+
+    if action == "ROUTE_TO_CONFIRM":
+        # CONFIRM sem estado ativo não faz sentido - avisa o usuário
+        return "Não há nada pendente para confirmar. Envie uma visita ou comando."
 
     return "Ação reconhecida mas ainda não suportada no app. Use: 'cliente Nome cultura fenologia data observações'."
 

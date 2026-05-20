@@ -115,6 +115,7 @@ class EntityExtractor:
     def extract_date_token(self, message: str) -> Optional[str]:
         msg = normalize_text(message)
 
+        # Palavras-chave exatas
         if "hoje" in msg:
             return "hoje"
         if "ontem" in msg:
@@ -126,23 +127,37 @@ class EntityExtractor:
         if "semana passada" in msg:
             return "semana passada"
 
+        # "X dias atrás" / "há X dias"
+        days_ago_patterns = [
+            r"(\d+)\s*dias?\s*atras",
+            r"(dois|tres|três|quatro|cinco|seis|sete)\s*dias?\s*atras",
+            r"ha\s*(\d+)\s*dias?",
+            r"há\s*(\d+)\s*dias?",
+        ]
+        for pattern in days_ago_patterns:
+            match = re.search(pattern, msg)
+            if match:
+                return match.group(0)  # Retorna o match completo "dois dias atras"
+
+        # Formato ISO: 2026-05-20
         match_iso = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", message)
         if match_iso:
             return match_iso.group(1)
 
+        # Formato BR completo: DD/MM/YYYY
         match_br = re.search(r"\b(\d{1,2}/\d{1,2}/\d{4})\b", message)
         if match_br:
             return match_br.group(1)
 
+        # Formato BR curto: DD/MM
         match_br_short = re.search(r"\b(\d{1,2}/\d{1,2})\b", message)
         if match_br_short:
             return match_br_short.group(1)
 
-        match_day = re.search(r"\b(dia\s+\d{1,2}|\d{1,2})\b", msg)
+        # "dia X" explícito (mas não números soltos como "60.000")
+        match_day = re.search(r"\bdia\s+(\d{1,2})\b", msg)
         if match_day:
-            token = match_day.group(1)
-            if token.isdigit() or token.startswith("dia "):
-                return token
+            return f"dia {match_day.group(1)}"
 
         return None
 
@@ -174,7 +189,7 @@ class EntityExtractor:
         # Fallback: nome no início seguido de palavras-chave
         # Formato: "Nome do Cliente AS 1868 PRO4 objetivo..."
         name_at_start = re.match(
-            r"^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]+?)(?=\s+(as\s+\d|ag\s+\d|objetivo|fenologia|soja|milho|algodao|algodão|v\d+|r\d+|vegetativo|reprodutivo|plantio|emergencia|colheita|observacoes|observações)\b)",
+            r"^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]+?)(?=\s+(as\s+\d|ag\s+\d|objetivo|fenologia|soja|milho|algodao|algodão|v\d+|r\d+|vegetativo|reprodutivo|plantio|emergencia|colheita|observacoes|observações|propriedade|fazenda|faz\.)\b)",
             message.strip(),
             flags=re.IGNORECASE
         )
@@ -183,12 +198,27 @@ class EntityExtractor:
             if value and len(value) >= 3:
                 return value
 
+        # Fallback: nome no início de mensagem multilinha (antes de quebra de linha)
+        # Formato: "Marcos Puziski propriedade faz. X\nAS 1868..."
+        first_line = message.strip().split('\n')[0].strip()
+        name_before_prop = re.match(
+            r"^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]+?)(?=\s+(propriedade|fazenda|faz\.)\b)",
+            first_line,
+            flags=re.IGNORECASE
+        )
+        if name_before_prop:
+            value = name_before_prop.group(1).strip(" .,-")
+            if value and len(value) >= 3:
+                return value
+
         return None
 
     def extract_property_name(self, message: str) -> Optional[str]:
         patterns = [
-            r"fazenda[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar)\b|$)",
-            r"propriedade[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar)\b|$)",
+            r"fazenda[:\s]+([A-Za-zÀ-ÿ0-9\s\-\.]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|as\s+\d|ag\s+\d)\b|\n|$)",
+            r"propriedade[:\s]+([A-Za-zÀ-ÿ0-9\s\-\.]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|as\s+\d|ag\s+\d)\b|\n|$)",
+            # "propriedade faz. Nome" ou "propriedade faz Nome"
+            r"propriedade\s+faz\.?\s*([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+(talhao|talhão|soja|milho|algodao|algodão|v\d+|r\d+|hoje|ontem|amanha|amanhã|aplicar|as\s+\d|ag\s+\d)\b|\n|$)",
         ]
         for pattern in patterns:
             match = re.search(pattern, message, flags=re.IGNORECASE)
@@ -213,6 +243,8 @@ class EntityExtractor:
 
     def extract_recommendation(self, message: str) -> str:
         msg = message.strip()
+
+        # Padrões com prefixo explícito (prioridade)
         recommendation_patterns = [
             r"aplicar[:\s]+(.+)",
             r"recomendacao[:\s]+(.+)",
@@ -222,14 +254,50 @@ class EntityExtractor:
             r"observação[:\s]+(.+)",
             r"observacao[:\s]+(.+)",
             r"obs[:\s]+(.+)",
-            r"produto[:\s]+(.+)",
         ]
         for pattern in recommendation_patterns:
-            match = re.search(pattern, msg, flags=re.IGNORECASE)
+            match = re.search(pattern, msg, flags=re.IGNORECASE | re.DOTALL)
             if match:
                 value = match.group(1).strip()
                 if value:
                     return value
+
+        # Fallback: captura texto livre APÓS data relativa e fenologia
+        # Formato: "... R6 dois dias atrás [OBSERVAÇÕES AQUI]"
+        lines = msg.split('\n')
+        obs_lines = []
+        found_fenology_or_date = False
+
+        for line in lines:
+            line_clean = line.strip()
+            line_lower = normalize_text(line_clean)
+
+            # Detecta linha com fenologia ou data
+            has_fenology = bool(re.search(r'\b(v\d+|r\d+|vt|ve|vc)\b', line_lower))
+            has_date = any(d in line_lower for d in ['hoje', 'ontem', 'amanha', 'dias atras', 'dia atras', 'semana passada'])
+            has_date = has_date or bool(re.search(r'\d{1,2}[/-]\d{1,2}', line_clean))
+
+            if has_fenology or has_date:
+                found_fenology_or_date = True
+                continue
+
+            # Após encontrar fenologia/data, próximas linhas são observações
+            # Ignora linhas que são só variedade, cultura ou dados já extraídos
+            if found_fenology_or_date and line_clean:
+                # Ignora linhas que são só variedade (AS 1868, AG 9045, etc)
+                if re.match(r'^(as|ag|tmg|ns|dm)\s*\d{3,4}', line_lower):
+                    continue
+                # Ignora linhas que são só cultura
+                if line_lower in ['soja', 'milho', 'algodao', 'algodão']:
+                    continue
+                # Ignora linhas que são só cliente/propriedade (já extraídos)
+                if any(kw in line_lower for kw in ['cliente', 'produtor', 'fazenda', 'propriedade', 'talhao', 'talhão']):
+                    continue
+                obs_lines.append(line_clean)
+
+        if obs_lines:
+            return ' | '.join(obs_lines)
+
         return ""
 
     def normalize_decimal_str(self, value: str) -> str:
