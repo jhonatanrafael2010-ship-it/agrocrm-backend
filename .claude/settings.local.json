@@ -43,7 +43,8 @@
       "Bash(python -c \"from services.agent.embedding_classifier import classify_with_embeddings, get_cache_stats; print\\('embedding_classifier OK'\\); from services.agent.intent_classifier import IntentClassifier; print\\('intent_classifier OK'\\)\")",
       "Bash(cd /d C:\\\\agrocrm-backend\\\\src)",
       "Bash(python -c \"import routes; print\\('routes.py OK'\\)\")",
-      "PowerShell(python C:\\\\agrocrm-backend\\\\test_date_parse.py)"
+      "PowerShell(python C:\\\\agrocrm-backend\\\\test_date_parse.py)",
+      "PowerShell(python C:\\\\agrocrm-backend\\\\test_dates.py)"
     ]
   }
 }

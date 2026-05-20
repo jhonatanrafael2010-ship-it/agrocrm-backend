@@ -249,59 +249,90 @@ def parse_human_date(text: str, base_date: date | None = None) -> date | None:
     normalized = normalized.strip(" .,!?:;")
 
     # -----------------------------
+    # Mapa de números por extenso (expandido)
+    # -----------------------------
+    spelled_numbers = {
+        "um": 1, "uma": 1, "1": 1,
+        "dois": 2, "duas": 2, "2": 2,
+        "tres": 3, "3": 3,
+        "quatro": 4, "4": 4,
+        "cinco": 5, "5": 5,
+        "seis": 6, "6": 6,
+        "sete": 7, "7": 7,
+        "oito": 8, "8": 8,
+        "nove": 9, "9": 9,
+        "dez": 10, "10": 10,
+        "onze": 11, "11": 11,
+        "doze": 12, "12": 12,
+        "treze": 13, "13": 13,
+        "quatorze": 14, "catorze": 14, "14": 14,
+        "quinze": 15, "15": 15,
+    }
+
+    def parse_number(s: str) -> int | None:
+        s = s.strip()
+        if s in spelled_numbers:
+            return spelled_numbers[s]
+        if s.isdigit():
+            return int(s)
+        return None
+
+    # -----------------------------
     # Casos exatos simples
     # -----------------------------
     simple_map = {
         "hoje": 0,
+        "agora": 0,
         "amanha": 1,
         "ontem": -1,
         "anteontem": -2,
+        "antes de ontem": -2,
         "semana passada": -7,
         "semana retrasada": -14,
+        "mes passado": -30,
     }
 
     if normalized in simple_map:
         return today + timedelta(days=simple_map[normalized])
 
     # -----------------------------
-    # X dias atrás / ha X dias (números por extenso)
+    # Padrões flexíveis para "X dias atrás"
+    # Aceita: "dois dias atras", "2 dias atrás", "ha 3 dias", "faz 2 dias", etc.
     # -----------------------------
-    spelled_numbers = {
-        "um": 1, "uma": 1, "dois": 2, "duas": 2, "tres": 3,
-        "quatro": 4, "cinco": 5, "seis": 6, "sete": 7,
-        "oito": 8, "nove": 9, "dez": 10,
-    }
-    spelled_pattern = "|".join(spelled_numbers.keys())
-    match = re.fullmatch(rf"({spelled_pattern})\s+dia[s]?\s+atras", normalized)
-    if match:
-        days = spelled_numbers[match.group(1)]
-        return today - timedelta(days=days)
+    days_ago_patterns = [
+        # "X dias atrás" / "X dias atras"
+        r"^(\w+)\s+dias?\s+atras$",
+        # "há X dias" / "ha X dias" / "a X dias"
+        r"^h?a\s+(\w+)\s+dias?$",
+        # "faz X dias"
+        r"^faz\s+(\w+)\s+dias?$",
+        # "X dias" (sozinho, assume atrás)
+        r"^(\w+)\s+dias?$",
+    ]
 
-    match = re.fullmatch(rf"ha\s+({spelled_pattern})\s+dia[s]?", normalized)
-    if match:
-        days = spelled_numbers[match.group(1)]
-        return today - timedelta(days=days)
-
-    # -----------------------------
-    # X dias atrás / ha X dias (números)
-    # -----------------------------
-    match = re.fullmatch(r"(\d+)\s+dia[s]?\s+atras", normalized)
-    if match:
-        days = int(match.group(1))
-        return today - timedelta(days=days)
-
-    match = re.fullmatch(r"ha\s+(\d+)\s+dia[s]?", normalized)
-    if match:
-        days = int(match.group(1))
-        return today - timedelta(days=days)
+    for pattern in days_ago_patterns:
+        match = re.match(pattern, normalized)
+        if match:
+            num = parse_number(match.group(1))
+            if num and 1 <= num <= 60:
+                return today - timedelta(days=num)
 
     # -----------------------------
-    # X semanas atrás
+    # Padrões para semanas
+    # "X semanas atrás", "ha X semanas", "semana passada"
     # -----------------------------
-    match = re.fullmatch(r"(\d+)\s+semana[s]?\s+atras", normalized)
-    if match:
-        weeks = int(match.group(1))
-        return today - timedelta(days=weeks * 7)
+    weeks_patterns = [
+        r"^(\w+)\s+semanas?\s+atras$",
+        r"^h?a\s+(\w+)\s+semanas?$",
+        r"^faz\s+(\w+)\s+semanas?$",
+    ]
+
+    for pattern in weeks_patterns:
+        match = re.match(pattern, normalized)
+        if match:
+            num = parse_number(match.group(1))
+            if num and 1 <= num <= 12:
+                return today - timedelta(days=num * 7)
 
     # -----------------------------
     # "dia 15" ou apenas "15"

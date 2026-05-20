@@ -115,30 +115,50 @@ class EntityExtractor:
     def extract_date_token(self, message: str) -> Optional[str]:
         msg = normalize_text(message)
 
-        # Palavras-chave exatas
-        if "hoje" in msg:
-            return "hoje"
-        if "ontem" in msg:
-            return "ontem"
-        if "amanha" in msg:
-            return "amanha"
-        if "anteontem" in msg:
-            return "anteontem"
-        if "semana passada" in msg:
-            return "semana passada"
+        # Palavras-chave exatas (ordem importa - mais específico primeiro)
+        simple_keywords = [
+            ("semana passada", "semana passada"),
+            ("semana retrasada", "semana retrasada"),
+            ("mes passado", "mes passado"),
+            ("antes de ontem", "anteontem"),
+            ("anteontem", "anteontem"),
+            ("ontem", "ontem"),
+            ("hoje", "hoje"),
+            ("agora", "hoje"),
+            ("amanha", "amanha"),
+        ]
+        for keyword, result in simple_keywords:
+            if keyword in msg:
+                return result
 
-        # "X dias atrás" / "há X dias"
-        spelled_numbers = "um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez"
+        # Números por extenso expandido
+        spelled_numbers = (
+            "um|uma|dois|duas|tres|quatro|cinco|seis|sete|"
+            "oito|nove|dez|onze|doze|treze|quatorze|catorze|quinze"
+        )
+
+        # Padrões flexíveis para "X dias atrás"
+        # Aceita: "dois dias atras", "2 dias atrás", "ha 3 dias", "faz 2 dias", "a 3 dias", etc.
         days_ago_patterns = [
-            r"(\d+)\s*dias?\s*atras",
-            rf"({spelled_numbers})\s*dias?\s*atras",
-            r"ha\s*(\d+)\s*dias?",
-            rf"ha\s*({spelled_numbers})\s*dias?",
+            rf"({spelled_numbers}|\d+)\s*dias?\s*atras",      # "dois dias atras", "2 dias atras"
+            rf"h?a\s*({spelled_numbers}|\d+)\s*dias?",        # "ha 2 dias", "há dois dias", "a 3 dias"
+            rf"faz\s*({spelled_numbers}|\d+)\s*dias?",        # "faz 2 dias", "faz dois dias"
         ]
         for pattern in days_ago_patterns:
             match = re.search(pattern, msg)
             if match:
-                return match.group(0)  # Retorna o match completo "dois dias atras"
+                return match.group(0)
+
+        # Padrões para semanas
+        weeks_patterns = [
+            rf"({spelled_numbers}|\d+)\s*semanas?\s*atras",
+            rf"h?a\s*({spelled_numbers}|\d+)\s*semanas?",
+            rf"faz\s*({spelled_numbers}|\d+)\s*semanas?",
+        ]
+        for pattern in weeks_patterns:
+            match = re.search(pattern, msg)
+            if match:
+                return match.group(0)
 
         # Formato ISO: 2026-05-20
         match_iso = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", message)
