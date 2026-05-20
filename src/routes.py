@@ -13153,3 +13153,97 @@ def admin_upload_disease_images_batch():
         "results": results,
     }), 200
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ADMIN - SEED DATA GENERATOR
+# Gera JSON com dados para embutir no APK (funcionar offline sem sync)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@bp.route("/admin/generate-seed", methods=["GET"])
+def admin_generate_seed():
+    """
+    Gera seed.json com dados atuais do banco para embutir no APK.
+    O arquivo gerado deve ser copiado para frontend/public/seed/data.json
+
+    Retorna JSON pronto para salvar como arquivo.
+    """
+    from datetime import datetime
+
+    try:
+        # Consultores
+        consultants = [
+            {"id": c.id, "name": c.name}
+            for c in Consultant.query.order_by(Consultant.id).all()
+        ]
+
+        # Clientes
+        clients = [
+            {"id": c.id, "name": c.name}
+            for c in Client.query.order_by(Client.name).all()
+        ]
+
+        # Propriedades
+        properties = [
+            {"id": p.id, "name": p.name, "client_id": p.client_id}
+            for p in Property.query.order_by(Property.name).all()
+        ]
+
+        # Talhões
+        plots = [
+            {"id": p.id, "name": p.name, "property_id": p.property_id}
+            for p in Plot.query.order_by(Plot.name).all()
+        ]
+
+        # Culturas
+        cultures = [
+            {"id": c.id, "name": c.name}
+            for c in Culture.query.order_by(Culture.name).all()
+        ]
+
+        # Variedades
+        varieties = [
+            {"id": v.id, "name": v.name, "culture": v.culture}
+            for v in Variety.query.order_by(Variety.name).all()
+        ]
+
+        seed_data = {
+            "version": datetime.now().strftime("%Y%m%d_%H%M"),
+            "generated_at": datetime.now().isoformat(),
+            "consultants": consultants,
+            "clients": clients,
+            "properties": properties,
+            "plots": plots,
+            "cultures": cultures,
+            "varieties": varieties,
+            "_stats": {
+                "consultants": len(consultants),
+                "clients": len(clients),
+                "properties": len(properties),
+                "plots": len(plots),
+                "cultures": len(cultures),
+                "varieties": len(varieties),
+            }
+        }
+
+        return jsonify(seed_data), 200
+
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@bp.route("/admin/seed-stats", methods=["GET"])
+def admin_seed_stats():
+    """Retorna estatísticas do que seria incluído no seed."""
+    try:
+        return jsonify({
+            "ok": True,
+            "consultants": Consultant.query.count(),
+            "clients": Client.query.count(),
+            "properties": Property.query.count(),
+            "plots": Plot.query.count(),
+            "cultures": Culture.query.count(),
+            "varieties": Variety.query.count(),
+        }), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
