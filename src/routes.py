@@ -13202,7 +13202,7 @@ def admin_generate_seed():
 
         # Variedades
         varieties = [
-            {"id": v.id, "name": v.name, "culture": v.culture}
+            {"id": v.id, "name": v.name, "culture_id": v.culture_id, "culture_name": v.culture.name if v.culture else None}
             for v in Variety.query.order_by(Variety.name).all()
         ]
 
