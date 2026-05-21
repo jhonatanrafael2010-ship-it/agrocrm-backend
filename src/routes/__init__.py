@@ -3,7 +3,7 @@
 Sub-módulos de rotas da API.
 
 Este diretório contém módulos separados por domínio.
-O arquivo principal routes.py (em src/) importa estes módulos
+O arquivo principal api_routes.py (em src/) importa estes módulos
 e registra os blueprints no blueprint principal 'bp'.
 
 ESTRUTURA:
@@ -13,6 +13,8 @@ ESTRUTURA:
 - clients.py      → /clients CRUD
 - entities.py     → /properties, /plots, /plantings
 - opportunities.py → /opportunities CRUD
+- admin.py        → /admin/*, /cron/*, /reports/*, /insights/*
+- chatbot.py      → /chatbot/* (preview, suggest, resolve, commit)
 """
 
 # Re-exporta os blueprints para facilitar importação
@@ -22,6 +24,8 @@ from .auth import auth_bp
 from .clients import clients_bp
 from .entities import entities_bp
 from .opportunities import opportunities_bp
+from .admin import admin_bp
+from .chatbot import chatbot_bp
 
 __all__ = [
     'health_bp',
@@ -30,4 +34,6 @@ __all__ = [
     'clients_bp',
     'entities_bp',
     'opportunities_bp',
+    'admin_bp',
+    'chatbot_bp',
 ]
