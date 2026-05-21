@@ -44,7 +44,9 @@
       "Bash(cd /d C:\\\\agrocrm-backend\\\\src)",
       "Bash(python -c \"import routes; print\\('routes.py OK'\\)\")",
       "PowerShell(python C:\\\\agrocrm-backend\\\\test_date_parse.py)",
-      "PowerShell(python C:\\\\agrocrm-backend\\\\test_dates.py)"
+      "PowerShell(python C:\\\\agrocrm-backend\\\\test_dates.py)",
+      "PowerShell(pip install *)",
+      "PowerShell(py *)"
     ]
   }
 }

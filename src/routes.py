@@ -9491,29 +9491,41 @@ def chatbot_commit_visit():
 @bp.route('/visits', methods=['GET'])
 def get_visits():
     """
-    Rota unificada:
+    Rota unificada com suporte a paginação:
     - ?month=current → modo iOS (visitas só do mês)
     - ?scope=all → retorna todas as visitas (usado no Acompanhamentos/Calendar)
+    - ?page=N&limit=M → paginação (default: page=1, limit=50)
     - sem params → retorna visitas com filtros normais
+
+    Quando page/limit são passados, retorna:
+    { items: [...], total: N, page: N, pages: N, has_next: bool, has_prev: bool }
+
+    Sem paginação, mantém compatibilidade retornando array direto.
     """
     from datetime import date
 
     try:
         month = request.args.get("month")
         scope = request.args.get("scope")
+        page = request.args.get("page", type=int)
+        limit = request.args.get("limit", default=50, type=int)
         today = date.today()
+
+        use_pagination = page is not None
+        if use_pagination:
+            page = max(1, page)
+            limit = min(max(1, limit), 200)
 
         # ============================================
         # 🍏 iOS → apenas visitas do mês atual
         # ============================================
         if month == "current":
-            visits = (
+            q = (
                 Visit.query
                 .options(joinedload(Visit.photos), joinedload(Visit.products))
                 .filter(db.extract('month', Visit.date) == today.month)
                 .filter(db.extract('year', Visit.date) == today.year)
                 .order_by(Visit.date.asc())
-                .all()
             )
 
         # ============================================
@@ -9521,14 +9533,13 @@ def get_visits():
         # ============================================
         elif scope == "all":
             _window_start = today - timedelta(days=365)
-            visits = (
+            q = (
                 Visit.query
                 .options(joinedload(Visit.photos), joinedload(Visit.products))
                 .filter(
                     db.or_(Visit.date.is_(None), Visit.date >= _window_start)
                 )
-                .order_by(Visit.date.asc().nullslast())
-                .all()
+                .order_by(Visit.date.desc().nullslast())
             )
 
         # ============================================
@@ -9551,7 +9562,18 @@ def get_visits():
             if consultant_id:
                 q = q.filter_by(consultant_id=consultant_id)
 
-            visits = q.order_by(Visit.date.asc().nullslast()).all()
+            q = q.order_by(Visit.date.desc().nullslast())
+
+        # ============================================
+        # 📄 Aplicar paginação ou retornar tudo
+        # ============================================
+        if use_pagination:
+            total = q.count()
+            pages = (total + limit - 1) // limit
+            offset = (page - 1) * limit
+            visits = q.offset(offset).limit(limit).all()
+        else:
+            visits = q.all()
 
         # ============================================
         # 📸 Montagem final da resposta (unificada)
@@ -9599,8 +9621,21 @@ def get_visits():
 
             result.append(d)
 
-
-        return jsonify(result), 200
+        # ============================================
+        # 📦 Retorno com ou sem paginação
+        # ============================================
+        if use_pagination:
+            return jsonify({
+                "items": result,
+                "total": total,
+                "page": page,
+                "pages": pages,
+                "limit": limit,
+                "has_next": page < pages,
+                "has_prev": page > 1
+            }), 200
+        else:
+            return jsonify(result), 200
 
     except Exception as e:
         print(f"⚠️ Erro ao listar visitas: {e}")
