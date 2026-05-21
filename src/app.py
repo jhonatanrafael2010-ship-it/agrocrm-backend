@@ -4,7 +4,7 @@ from flask_cors import CORS
 from flask_migrate import Migrate
 from sqlalchemy import text, create_engine
 from models import db, Client, Consultant
-from routes import bp as api_bp
+from api_routes import bp as api_bp
 from services.agent.metrics_routes import agent_metrics_bp
 
 

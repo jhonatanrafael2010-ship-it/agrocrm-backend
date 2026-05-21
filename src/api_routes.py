@@ -157,8 +157,26 @@ MAX_PHOTOS_V = 6       # máximo de fotos por visita
 
 bp = Blueprint('api', __name__, url_prefix='/api')
 
+# ============================================================
+# 🔧 MIGRAÇÃO: Importa módulos já migrados para routes/
+# ============================================================
+from routes.health import health_bp
+from routes.lookups import lookups_bp
+from routes.auth import auth_bp
+from routes.clients import clients_bp
+from routes.entities import entities_bp
+from routes.opportunities import opportunities_bp
+
+# Registra os blueprints migrados no blueprint principal
+bp.register_blueprint(health_bp)
+bp.register_blueprint(lookups_bp)
+bp.register_blueprint(auth_bp)
+bp.register_blueprint(clients_bp)
+bp.register_blueprint(entities_bp)
+bp.register_blueprint(opportunities_bp)
+
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/opt/render/project/src/uploads")
-BUILD_STAMP = "routes_2026_04_08_visits_fix_01"
+BUILD_STAMP = "routes_2026_05_21_refactor_01"
 
 AGENT_SERVICE = AgentService()
 
@@ -5578,18 +5596,9 @@ def start_guided_visit_flow_from_agent(
 
 
 # ============================================================
-# 🌾 CULTURAS, VARIEDADES, CONSULTOR
+# 🌾 CULTURAS → MIGRADO para routes/lookups.py
 # ============================================================
-
-@bp.route('/cultures', methods=['GET'])
-def list_cultures():
-    CULTURES = [
-        {"id": 1, "name": "Milho"},
-        {"id": 2, "name": "Soja"},
-        {"id": 3, "name": "Algodão"},
-    ]
-    return jsonify(CULTURES), 200
-
+# /cultures
 
 @bp.route('/whatsapp/bindings', methods=['GET'])
 def list_whatsapp_bindings():
@@ -5763,31 +5772,7 @@ def report_monthly_xlsx():
 
 
 
-@bp.route('/varieties', methods=['GET'])
-def list_varieties():
-    # opcional: filtrar por culture_id (mais seguro e rápido)
-    culture_id = request.args.get("culture_id", type=int)
-
-    q = Variety.query
-    if culture_id:
-        q = q.filter(Variety.culture_id == culture_id)
-
-    rows = q.order_by(Variety.id.asc()).all()
-
-    # devolve também o nome da cultura (útil no front)
-    culture_map = {c.id: c.name for c in Culture.query.all()}
-
-    return jsonify([
-        {
-            "id": v.id,
-            "culture_id": v.culture_id,
-            "culture": culture_map.get(v.culture_id, ""),
-            "name": v.name,
-        }
-        for v in rows
-    ]), 200
-
-
+# /varieties → MIGRADO para routes/lookups.py
 
 @bp.route('/telegram/setup-link-codes', methods=['POST'])
 def setup_telegram_link_codes():
@@ -5832,79 +5817,13 @@ def setup_telegram_link_codes():
 
 
 
-@bp.route('/consultants', methods=['GET'])
-def list_consultants():
-    rows = Consultant.query.order_by(Consultant.id.asc()).all()
-
-    # fonte principal: tabela real do banco
-    if rows:
-        return jsonify([
-            {
-                "id": c.id,
-                "name": c.name,
-            }
-            for c in rows
-        ]), 200
-
-    # fallback: banco vazio retorna lista vazia
-    # (CONSULTANTS hardcoded foi descontinuado por desencontro de IDs)
-    return jsonify([]), 200
-
+# /consultants, /regions, /seasons → MIGRADO para routes/lookups.py
 
 # ============================================================
-# 🌍 Regiões e 🌾 Safras (para dropdowns no frontend)
 # ============================================================
-@bp.route('/regions', methods=['GET'])
-def list_regions():
-    """Retorna lista de regiões disponíveis para classificar clientes."""
-    from models import AVAILABLE_REGIONS
-    return jsonify(AVAILABLE_REGIONS), 200
-
-
-@bp.route('/seasons', methods=['GET'])
-def list_seasons():
-    """
-    Retorna lista de safras disponíveis para filtrar relatórios.
-    Cada safra define cultura + janela de datas.
-    """
-    from models import AVAILABLE_SEASONS
-    return jsonify(AVAILABLE_SEASONS), 200
-
-
+# 🔵 MIGRADO para routes/health.py
 # ============================================================
-# 🔵 Endpoint de teste usado pelo APK (detectar conexão real)
-# ============================================================
-@bp.route("/ping", methods=["GET"])
-def ping():
-    return "pong", 200
-
-@bp.route("/debug/build-stamp", methods=["GET"])
-def debug_build_stamp():
-    return jsonify({
-        "ok": True,
-        "build_stamp": BUILD_STAMP
-    }), 200
-
-@bp.route("/debug/routes-visits", methods=["GET"])
-def debug_routes_visits():
-    routes = []
-
-    for rule in current_app.url_map.iter_rules():
-        rule_str = str(rule)
-        if "/api/visits" in rule_str:
-            methods = sorted([m for m in rule.methods if m not in {"HEAD", "OPTIONS"}])
-            routes.append({
-                "rule": rule_str,
-                "methods": methods,
-                "endpoint": rule.endpoint,
-            })
-
-    routes.sort(key=lambda x: x["rule"])
-    return jsonify({
-        "ok": True,
-        "build_stamp": BUILD_STAMP,
-        "routes": routes,
-    }), 200
+# /ping, /debug/build-stamp, /debug/routes-visits
 
 def is_confirmation_reply(text: str) -> bool:
     if not text:
