@@ -48,7 +48,17 @@
       "PowerShell(pip install *)",
       "PowerShell(py *)",
       "Bash(python -m pytest tests/ -q --tb=short)",
-      "Bash(py -3.12 -m pytest tests/ -q --tb=short)"
+      "Bash(py -3.12 -m pytest tests/ -q --tb=short)",
+      "Bash(py -3.12 -m pytest tests/test_routes_visits.py -v --tb=short)",
+      "Bash(py -3.12 -c \"from api_routes import bp; print\\('api_routes OK'\\); from routes import visits_bp; print\\('visits_bp OK'\\); print\\('All imports successful!'\\)\")",
+      "Bash(py -3.12 -m py_compile \"C:\\\\agrocrm-backend\\\\src\\\\routes\\\\visits.py\")",
+      "Bash(py -3.12 -m py_compile \"C:\\\\agrocrm-backend\\\\src\\\\api_routes.py\")",
+      "Bash(py -3.12 -c \"from app import app; print\\('App created successfully'\\); print\\(f'Routes registered: {len\\(app.url_map._rules\\)} rules'\\)\")",
+      "Bash(py -3.12 -c ' *)",
+      "Bash(py -3.12 -c \"from api_routes import bp; print\\('api_routes OK'\\); from routes import mobile_bp; print\\('mobile_bp OK'\\); print\\('All imports successful!'\\)\")",
+      "Bash(py -3.12 -m py_compile \"C:\\\\agrocrm-backend\\\\src\\\\routes\\\\mobile.py\")",
+      "Bash(python *)",
+      "Bash(Select-Object -First 30)"
     ]
   }
 }

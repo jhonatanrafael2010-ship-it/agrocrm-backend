@@ -15,6 +15,9 @@ ESTRUTURA:
 - opportunities.py → /opportunities CRUD
 - admin.py        → /admin/*, /cron/*, /reports/*, /insights/*
 - chatbot.py      → /chatbot/* (preview, suggest, resolve, commit)
+- messaging.py    → /whatsapp/*, /telegram/* (webhooks, bindings)
+- visits.py       → /visits/*, /photos/*, /products/*, /phenology/*, /orphan-visits/*
+- mobile.py       → /mobile/chat, /mobile/pdf-proxy, /mobile/transcribe
 """
 
 # Re-exporta os blueprints para facilitar importação
@@ -26,6 +29,9 @@ from .entities import entities_bp
 from .opportunities import opportunities_bp
 from .admin import admin_bp
 from .chatbot import chatbot_bp
+from .messaging import messaging_bp
+from .visits import visits_bp
+from .mobile import mobile_bp
 
 __all__ = [
     'health_bp',
@@ -36,4 +42,7 @@ __all__ = [
     'opportunities_bp',
     'admin_bp',
     'chatbot_bp',
+    'messaging_bp',
+    'visits_bp',
+    'mobile_bp',
 ]
