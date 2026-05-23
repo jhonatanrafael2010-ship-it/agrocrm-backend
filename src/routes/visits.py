@@ -80,26 +80,60 @@ UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(os.path.dirname(__file__)
 # VISITS CRUD
 # ============================================================
 
+def _get_group_key(v):
+    """Gera chave de agrupamento para uma visita."""
+    if v.planting_id:
+        return f"plant-{v.planting_id}"
+    return f"{v.client_id}-{v.property_id}-{v.plot_id}-{v.variety or ''}"
+
+
+def _build_visit_dict(v, clients_map, consultants_map):
+    """Constroi dict de uma visita com dados relacionados."""
+    client = clients_map.get(v.client_id)
+    consultant = consultants_map.get(v.consultant_id) if v.consultant_id else None
+
+    photos = []
+    for p in v.photos:
+        photos.append({
+            "id": p.id,
+            "url": resolve_photo_url(p.url),
+            "caption": p.caption or ""
+        })
+
+    culture = v.culture or (v.planting.culture if v.planting else "—")
+    variety = v.variety or (v.planting.variety if v.planting else "—")
+
+    d = v.to_dict()
+    d["fenologia_real"] = v.fenologia_real or ""
+    d["products"] = [p.to_dict() for p in v.products]
+    d["client_name"] = client.name if client else f"Cliente {v.client_id}"
+    d["consultant_name"] = consultant.name if consultant else "—"
+    d["culture"] = culture
+    d["variety"] = variety
+    d["photos"] = photos
+    return d
+
+
 @visits_bp.route('/visits', methods=['GET'])
 def get_visits():
     """
-    Rota unificada com suporte a paginacao:
+    Rota unificada com suporte a paginacao por GRUPOS:
     - ?month=current -> modo iOS (visitas so do mes)
-    - ?scope=all -> retorna todas as visitas
-    - ?page=N&limit=M -> paginacao
+    - ?scope=all -> retorna todas as visitas, paginadas por grupo
+    - ?page=N&limit=M -> pagina N grupos de tamanho M (default 20 grupos)
     - sem params -> filtros normais
     """
     try:
         month = request.args.get("month")
         scope = request.args.get("scope")
         page = request.args.get("page", type=int)
-        limit = request.args.get("limit", default=50, type=int)
+        limit = request.args.get("limit", default=20, type=int)
         today = _date.today()
 
         use_pagination = page is not None
         if use_pagination:
             page = max(1, page)
-            limit = min(max(1, limit), 200)
+            limit = min(max(1, limit), 50)
 
         if month == "current":
             q = (
@@ -109,6 +143,16 @@ def get_visits():
                 .filter(db.extract('year', Visit.date) == today.year)
                 .order_by(Visit.date.asc())
             )
+            visits = q.all()
+
+            client_ids = {v.client_id for v in visits if v.client_id}
+            consultant_ids = {v.consultant_id for v in visits if v.consultant_id}
+            clients_map = {c.id: c for c in Client.query.filter(Client.id.in_(client_ids)).all()} if client_ids else {}
+            consultants_map = {c.id: c for c in Consultant.query.filter(Consultant.id.in_(consultant_ids)).all()} if consultant_ids else {}
+
+            result = [_build_visit_dict(v, clients_map, consultants_map) for v in visits]
+            return jsonify(result), 200
+
         elif scope == "all":
             _window_start = today - timedelta(days=365)
             q = (
@@ -116,7 +160,8 @@ def get_visits():
                 .options(joinedload(Visit.photos), joinedload(Visit.products))
                 .filter(db.or_(Visit.date.is_(None), Visit.date >= _window_start))
             )
-            client_id = request.args.get('client_id', type=int)
+
+            client_id_filter = request.args.get('client_id', type=int)
             property_id = request.args.get('property_id', type=int)
             plot_id = request.args.get('plot_id', type=int)
             consultant_id = request.args.get('consultant_id', type=int)
@@ -124,8 +169,9 @@ def get_visits():
             variety = request.args.get('variety')
             date_start = request.args.get('date_start')
             date_end = request.args.get('date_end')
-            if client_id:
-                q = q.filter(Visit.client_id == client_id)
+
+            if client_id_filter:
+                q = q.filter(Visit.client_id == client_id_filter)
             if property_id:
                 q = q.filter(Visit.property_id == property_id)
             if plot_id:
@@ -140,16 +186,74 @@ def get_visits():
                 q = q.filter(Visit.date >= date_start)
             if date_end:
                 q = q.filter(Visit.date <= date_end)
-            q = q.order_by(Visit.date.desc().nullslast())
+
+            all_visits = q.all()
+
+            groups = {}
+            for v in all_visits:
+                key = _get_group_key(v)
+                if key not in groups:
+                    groups[key] = []
+                groups[key].append(v)
+
+            for key in groups:
+                groups[key].sort(key=lambda x: x.date or _date.min)
+
+            def group_latest_date(key):
+                visits_in_group = groups[key]
+                dates = [v.date for v in visits_in_group if v.date]
+                return max(dates) if dates else _date.min
+
+            sorted_group_keys = sorted(groups.keys(), key=group_latest_date, reverse=True)
+
+            total_groups = len(sorted_group_keys)
+
+            if use_pagination:
+                pages = (total_groups + limit - 1) // limit if total_groups > 0 else 1
+                offset = (page - 1) * limit
+                selected_keys = sorted_group_keys[offset:offset + limit]
+            else:
+                pages = 1
+                selected_keys = sorted_group_keys
+
+            selected_visits = []
+            for key in selected_keys:
+                selected_visits.extend(groups[key])
+
+            client_ids = {v.client_id for v in selected_visits if v.client_id}
+            consultant_ids = {v.consultant_id for v in selected_visits if v.consultant_id}
+            clients_map = {c.id: c for c in Client.query.filter(Client.id.in_(client_ids)).all()} if client_ids else {}
+            consultants_map = {c.id: c for c in Consultant.query.filter(Consultant.id.in_(consultant_ids)).all()} if consultant_ids else {}
+
+            result = [_build_visit_dict(v, clients_map, consultants_map) for v in selected_visits]
+
+            total_visits = sum(len(groups[k]) for k in selected_keys)
+
+            if use_pagination:
+                return jsonify({
+                    "items": result,
+                    "total": len(all_visits),
+                    "total_groups": total_groups,
+                    "page": page,
+                    "pages": pages,
+                    "limit": limit,
+                    "has_next": page < pages,
+                    "has_prev": page > 1,
+                    "groups_in_page": len(selected_keys),
+                    "visits_in_page": total_visits
+                }), 200
+            else:
+                return jsonify(result), 200
+
         else:
-            client_id = request.args.get('client_id', type=int)
+            client_id_filter = request.args.get('client_id', type=int)
             property_id = request.args.get('property_id', type=int)
             plot_id = request.args.get('plot_id', type=int)
             consultant_id = request.args.get('consultant_id', type=int)
 
             q = Visit.query.options(joinedload(Visit.photos), joinedload(Visit.products))
-            if client_id:
-                q = q.filter_by(client_id=client_id)
+            if client_id_filter:
+                q = q.filter_by(client_id=client_id_filter)
             if property_id:
                 q = q.filter_by(property_id=property_id)
             if plot_id:
@@ -158,63 +262,20 @@ def get_visits():
                 q = q.filter_by(consultant_id=consultant_id)
             q = q.order_by(Visit.date.desc().nullslast())
 
-        if use_pagination:
-            total = q.count()
-            pages = (total + limit - 1) // limit
-            offset = (page - 1) * limit
-            visits = q.offset(offset).limit(limit).all()
-        else:
             visits = q.all()
 
-        result = []
+            client_ids = {v.client_id for v in visits if v.client_id}
+            consultant_ids = {v.consultant_id for v in visits if v.consultant_id}
+            clients_map = {c.id: c for c in Client.query.filter(Client.id.in_(client_ids)).all()} if client_ids else {}
+            consultants_map = {c.id: c for c in Consultant.query.filter(Consultant.id.in_(consultant_ids)).all()} if consultant_ids else {}
 
-        client_ids = {v.client_id for v in visits if v.client_id}
-        consultant_ids = {v.consultant_id for v in visits if v.consultant_id}
-        clients_map = {c.id: c for c in Client.query.filter(Client.id.in_(client_ids)).all()} if client_ids else {}
-        consultants_map = {c.id: c for c in Consultant.query.filter(Consultant.id.in_(consultant_ids)).all()} if consultant_ids else {}
-
-        for v in visits:
-            client = clients_map.get(v.client_id)
-            consultant = consultants_map.get(v.consultant_id) if v.consultant_id else None
-            consultant_name = consultant.name if consultant else None
-
-            photos = []
-            for p in v.photos:
-                photos.append({
-                    "id": p.id,
-                    "url": resolve_photo_url(p.url),
-                    "caption": p.caption or ""
-                })
-
-            culture = v.culture or (v.planting.culture if v.planting else "—")
-            variety = v.variety or (v.planting.variety if v.planting else "—")
-
-            d = v.to_dict()
-            d["fenologia_real"] = v.fenologia_real or ""
-            d["products"] = [p.to_dict() for p in v.products]
-            d["client_name"] = client.name if client else f"Cliente {v.client_id}"
-            d["consultant_name"] = consultant_name or "—"
-            d["culture"] = culture
-            d["variety"] = variety
-            d["photos"] = photos
-
-            result.append(d)
-
-        if use_pagination:
-            return jsonify({
-                "items": result,
-                "total": total,
-                "page": page,
-                "pages": pages,
-                "limit": limit,
-                "has_next": page < pages,
-                "has_prev": page > 1
-            }), 200
-        else:
+            result = [_build_visit_dict(v, clients_map, consultants_map) for v in visits]
             return jsonify(result), 200
 
     except Exception as e:
         print(f"Erro ao listar visitas: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify(error=str(e)), 500
 
 
