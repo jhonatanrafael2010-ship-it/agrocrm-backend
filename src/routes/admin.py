@@ -96,25 +96,90 @@ def get_dashboard_insights():
             "days_since": days,
         })
 
-    # 2) Próximas visitas da semana
-    end_of_week = today + timedelta(days=7)
-    upcoming_visits = Visit.query.filter(
-        Visit.date >= today,
-        Visit.date <= end_of_week,
-        Visit.status == "planned",
-    ).order_by(Visit.date.asc()).limit(10).all()
+    # 2) Sugestões de visitas baseadas em fenologia e tempo
+    # Dias estimados entre estágios fenológicos (soja/milho)
+    STAGE_INTERVALS = {
+        "VE": 7, "V1": 7, "V2": 7, "V3": 7, "V4": 7, "V5": 7, "V6": 7,
+        "V7": 7, "V8": 7, "V9": 7, "V10": 7, "V11": 7, "V12": 7,
+        "R1": 10, "R2": 10, "R3": 12, "R4": 12, "R5": 14,
+        "R5.1": 7, "R5.2": 7, "R5.3": 7, "R5.4": 7, "R5.5": 7,
+        "R6": 14, "R7": 14, "R8": 21,
+    }
+    STAGE_NEXT = {
+        "VE": "V1", "V1": "V2", "V2": "V3", "V3": "V4", "V4": "V5", "V5": "V6",
+        "V6": "V7", "V7": "V8", "V8": "V9", "V9": "V10", "V10": "V11", "V11": "V12",
+        "V12": "R1", "R1": "R2", "R2": "R3", "R3": "R4", "R4": "R5",
+        "R5": "R5.1", "R5.1": "R5.2", "R5.2": "R5.3", "R5.3": "R5.4", "R5.4": "R5.5",
+        "R5.5": "R6", "R6": "R7", "R7": "R8",
+    }
 
-    upcoming = []
-    for v in upcoming_visits:
-        client = Client.query.get(v.client_id) if v.client_id else None
-        upcoming.append({
-            "id": v.id,
-            "date": v.date.isoformat() if v.date else None,
-            "client_id": v.client_id,
-            "client_name": client.name if client else "—",
-            "culture": v.culture or "",
-            "consultant_id": v.consultant_id,
-        })
+    # Busca última visita por cliente com fenologia registrada (últimos 60 dias)
+    sixty_days_ago = today - timedelta(days=60)
+    subq_latest = db.session.query(
+        Visit.client_id,
+        func.max(Visit.date).label("last_date")
+    ).filter(
+        Visit.date >= sixty_days_ago,
+        Visit.fenologia_real.isnot(None),
+        Visit.fenologia_real != "",
+        Visit.client_id.isnot(None),
+    ).group_by(Visit.client_id).subquery()
+
+    latest_visits = db.session.query(Visit).join(
+        subq_latest,
+        db.and_(
+            Visit.client_id == subq_latest.c.client_id,
+            Visit.date == subq_latest.c.last_date
+        )
+    ).all()
+
+    suggestions = []
+    for v in latest_visits:
+        stage = (v.fenologia_real or "").strip().upper()
+        if not stage or stage not in STAGE_INTERVALS:
+            continue
+
+        days_since = (today - v.date).days if v.date else 0
+        interval = STAGE_INTERVALS.get(stage, 14)
+        next_stage = STAGE_NEXT.get(stage, "—")
+
+        # Se já passou do intervalo esperado, sugerir visita
+        days_until = interval - days_since
+        if days_until <= 7:  # Sugerir se falta 7 dias ou menos (ou já passou)
+            client = Client.query.get(v.client_id) if v.client_id else None
+            priority = "high" if days_until <= 0 else "medium"
+            suggestions.append({
+                "client_id": v.client_id,
+                "client_name": client.name if client else "—",
+                "culture": v.culture or "",
+                "current_stage": stage,
+                "next_stage": next_stage,
+                "days_since_visit": days_since,
+                "days_until_next": max(0, days_until),
+                "priority": priority,
+                "reason": "phenology",
+            })
+
+    # Ordenar por prioridade (dias_until_next ascending)
+    suggestions.sort(key=lambda x: x["days_until_next"])
+
+    # Adicionar clientes sem visita há muito tempo que não estão nas sugestões de fenologia
+    suggested_client_ids = {s["client_id"] for s in suggestions}
+    for sc in stale_clients[:5]:
+        if sc["id"] not in suggested_client_ids and len(suggestions) < 10:
+            suggestions.append({
+                "client_id": sc["id"],
+                "client_name": sc["name"],
+                "culture": "",
+                "current_stage": "",
+                "next_stage": "",
+                "days_since_visit": sc["days_since"],
+                "days_until_next": 0,
+                "priority": "high" if sc["days_since"] > 30 else "medium",
+                "reason": "stale",
+            })
+
+    suggestions = suggestions[:10]
 
     # 3) Visitas por mês (últimos 6 meses)
     six_months_ago = today - timedelta(days=180)
@@ -176,8 +241,8 @@ def get_dashboard_insights():
         "date": today.isoformat(),
         "stale_clients": stale_clients,
         "stale_clients_count": len(stale_clients),
-        "upcoming_visits": upcoming,
-        "upcoming_visits_count": len(upcoming),
+        "visit_suggestions": suggestions,
+        "visit_suggestions_count": len(suggestions),
         "visits_by_month": visits_by_month,
         "phenology_stages": phenology_stages,
     }), 200
