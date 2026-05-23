@@ -45,6 +45,145 @@ def report_monthly_xlsx():
 
 
 # ================================================================
+# DASHBOARD INSIGHTS - Dados agregados para o dashboard
+# ================================================================
+
+@admin_bp.route("/dashboard/insights", methods=["GET"])
+@cross_origin(origins=["https://agrocrm-frontend.onrender.com", "https://localhost", "capacitor://localhost", "http://localhost"])
+def get_dashboard_insights():
+    """
+    Retorna insights agregados para o dashboard principal.
+    - Clientes sem visita há 30+ dias
+    - Próximas visitas da semana
+    - Visitas por mês (últimos 6 meses)
+    - Plantios por estágio fenológico
+    """
+    from datetime import date, timedelta
+    from sqlalchemy import func, extract
+    from models import Visit, Planting
+
+    today = date.today()
+
+    # 1) Clientes sem visita há 30+ dias
+    threshold_30 = today - timedelta(days=30)
+    subq_last_visit = db.session.query(
+        Visit.client_id,
+        func.max(Visit.date).label("last_visit")
+    ).filter(
+        Visit.status == "done",
+        Visit.client_id.isnot(None),
+    ).group_by(Visit.client_id).subquery()
+
+    stale_clients_30 = db.session.query(
+        Client.id,
+        Client.name,
+        subq_last_visit.c.last_visit
+    ).join(
+        subq_last_visit, Client.id == subq_last_visit.c.client_id
+    ).filter(
+        subq_last_visit.c.last_visit < threshold_30
+    ).order_by(
+        subq_last_visit.c.last_visit.asc()
+    ).limit(10).all()
+
+    stale_clients = []
+    for cid, cname, last_visit in stale_clients_30:
+        days = (today - last_visit).days if last_visit else 999
+        stale_clients.append({
+            "id": cid,
+            "name": cname,
+            "last_visit": last_visit.isoformat() if last_visit else None,
+            "days_since": days,
+        })
+
+    # 2) Próximas visitas da semana
+    end_of_week = today + timedelta(days=7)
+    upcoming_visits = Visit.query.filter(
+        Visit.date >= today,
+        Visit.date <= end_of_week,
+        Visit.status == "planned",
+    ).order_by(Visit.date.asc()).limit(10).all()
+
+    upcoming = []
+    for v in upcoming_visits:
+        client = Client.query.get(v.client_id) if v.client_id else None
+        upcoming.append({
+            "id": v.id,
+            "date": v.date.isoformat() if v.date else None,
+            "client_id": v.client_id,
+            "client_name": client.name if client else "—",
+            "culture": v.culture or "",
+            "consultant_id": v.consultant_id,
+        })
+
+    # 3) Visitas por mês (últimos 6 meses)
+    six_months_ago = today - timedelta(days=180)
+    visits_by_month_raw = db.session.query(
+        extract('year', Visit.date).label('year'),
+        extract('month', Visit.date).label('month'),
+        func.count(Visit.id).label('count')
+    ).filter(
+        Visit.date >= six_months_ago,
+        Visit.status == "done",
+    ).group_by(
+        extract('year', Visit.date),
+        extract('month', Visit.date)
+    ).order_by(
+        extract('year', Visit.date),
+        extract('month', Visit.date)
+    ).all()
+
+    visits_by_month = []
+    for year, month, count in visits_by_month_raw:
+        visits_by_month.append({
+            "year": int(year),
+            "month": int(month),
+            "label": f"{int(month):02d}/{int(year)}",
+            "count": count,
+        })
+
+    # 4) Visitas recentes por estágio fenológico (últimos 30 dias)
+    thirty_days_ago = today - timedelta(days=30)
+    visits_by_stage_raw = db.session.query(
+        Visit.fenologia_real,
+        func.count(Visit.id).label('count')
+    ).filter(
+        Visit.date >= thirty_days_ago,
+        Visit.fenologia_real.isnot(None),
+        Visit.fenologia_real != "",
+    ).group_by(
+        Visit.fenologia_real
+    ).all()
+
+    phenology_stages = []
+    for stage, count in visits_by_stage_raw:
+        phenology_stages.append({
+            "stage": stage,
+            "count": count,
+        })
+
+    # Ordenar por estágios fenológicos comuns (V1-Vn, R1-R8)
+    stage_order = {
+        "VE": 0, "V1": 1, "V2": 2, "V3": 3, "V4": 4, "V5": 5, "V6": 6,
+        "V7": 7, "V8": 8, "V9": 9, "V10": 10, "V11": 11, "V12": 12,
+        "R1": 20, "R2": 21, "R3": 22, "R4": 23, "R5": 24, "R5.1": 25,
+        "R5.2": 26, "R5.3": 27, "R5.4": 28, "R5.5": 29, "R6": 30, "R7": 31, "R8": 32,
+    }
+    phenology_stages.sort(key=lambda x: stage_order.get(x["stage"], 99))
+
+    return jsonify({
+        "ok": True,
+        "date": today.isoformat(),
+        "stale_clients": stale_clients,
+        "stale_clients_count": len(stale_clients),
+        "upcoming_visits": upcoming,
+        "upcoming_visits_count": len(upcoming),
+        "visits_by_month": visits_by_month,
+        "phenology_stages": phenology_stages,
+    }), 200
+
+
+# ================================================================
 # PROACTIVE INSIGHTS - Lembretes e alertas proativos
 # ================================================================
 
