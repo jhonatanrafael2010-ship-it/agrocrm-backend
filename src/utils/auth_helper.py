@@ -45,15 +45,21 @@ def get_consultant_id_filter() -> int | None:
     """
     user = get_current_user_from_token()
     if not user:
+        print("[AUTH] Sem token válido - sem filtro aplicado")
         return None  # Sem auth, sem filtro (comportamento legado)
 
+    print(f"[AUTH] Usuário: {user.username}, is_admin: {user.is_admin}, consultant_id: {user.consultant_id}")
+
     if user.is_admin:
+        print("[AUTH] Admin - sem filtro")
         return None  # Admin vê tudo
 
     if user.consultant_id:
+        print(f"[AUTH] Filtrando por consultant_id: {user.consultant_id}")
         return user.consultant_id
 
     # Usuário não-admin sem consultant_id não deve ver nada
+    print("[AUTH] Usuário sem consultant_id - bloqueando acesso")
     return -1
 
 

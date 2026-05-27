@@ -22,7 +22,19 @@ db_status = {"engine": "desconhecido"}
 # =====================================================
 def create_app(test_config=None):
     app = Flask(__name__, static_folder="static")
-    CORS(app, supports_credentials=True)
+    CORS(
+        app,
+        supports_credentials=True,
+        origins=[
+            "https://agrocrm-frontend.onrender.com",
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "capacitor://localhost",
+            "https://localhost",
+        ],
+        allow_headers=["Content-Type", "Authorization"],
+        expose_headers=["Content-Type", "Authorization"],
+    )
 
     pg_url = os.environ.get("DATABASE_URL")
     sqlite_path = os.path.join(UPLOAD_DIR, "fallback_local.db")
