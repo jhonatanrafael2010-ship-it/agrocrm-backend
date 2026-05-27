@@ -328,17 +328,40 @@ def list_consultants_for_admin():
 
 
 # ============================================================
-# POST /api/auth/setup (criar primeiro admin)
+# GET /api/auth/setup (verifica se precisa setup)
+# ============================================================
+@auth_bp.route('/auth/setup', methods=['GET'])
+def check_setup_needed():
+    """Verifica se o sistema precisa de setup inicial."""
+    # Verifica se existe algum admin com a nova estrutura (username)
+    has_admin = User.query.filter(
+        User.is_admin == True,
+        User.username.isnot(None)
+    ).count() > 0
+
+    return jsonify({
+        'ok': True,
+        'needs_setup': not has_admin,
+    })
+
+
+# ============================================================
+# POST /api/auth/setup (criar primeiro admin) - ATUALIZADO
 # ============================================================
 @auth_bp.route('/auth/setup', methods=['POST'])
 def setup_first_admin():
     """
     Cria o primeiro usuário admin.
-    SÓ FUNCIONA se não houver nenhum usuário no sistema.
+    SÓ FUNCIONA se não houver nenhum admin com username configurado.
     Body: { username, password }
     """
-    # Verifica se já existem usuários
-    if User.query.count() > 0:
+    # Verifica se já existe admin com nova estrutura
+    has_admin = User.query.filter(
+        User.is_admin == True,
+        User.username.isnot(None)
+    ).count() > 0
+
+    if has_admin:
         return jsonify({'error': 'Sistema já configurado'}), 403
 
     data = request.get_json() or {}
@@ -349,6 +372,11 @@ def setup_first_admin():
         return jsonify({'error': 'Username deve ter pelo menos 3 caracteres'}), 400
     if not password or len(password) < 4:
         return jsonify({'error': 'Senha deve ter pelo menos 4 caracteres'}), 400
+
+    # Verifica se username já existe
+    existing = User.query.filter(db.func.lower(User.username) == username).first()
+    if existing:
+        return jsonify({'error': 'Username já existe'}), 409
 
     user = User(
         username=username,
@@ -368,16 +396,3 @@ def setup_first_admin():
         'token': token,
         'user': user.to_dict(),
     }), 201
-
-
-# ============================================================
-# GET /api/auth/setup (verifica se precisa setup)
-# ============================================================
-@auth_bp.route('/auth/setup', methods=['GET'])
-def check_setup_needed():
-    """Verifica se o sistema precisa de setup inicial."""
-    needs_setup = User.query.count() == 0
-    return jsonify({
-        'ok': True,
-        'needs_setup': needs_setup,
-    })
