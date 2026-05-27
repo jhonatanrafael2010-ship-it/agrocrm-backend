@@ -118,12 +118,13 @@ def resolve_consultant_name(consultant_id):
 class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(50), unique=True, nullable=False, index=True)
-    password_hash = db.Column(db.String(255), nullable=False)
+    username = db.Column(db.String(50), unique=True, nullable=True, index=True)
+    email = db.Column(db.String(120), unique=True, nullable=True)  # Legacy, mantido para compatibilidade
+    password_hash = db.Column(db.String(255), nullable=True)
     consultant_id = db.Column(db.Integer, db.ForeignKey('consultants.id'), nullable=True)
-    is_admin = db.Column(db.Boolean, default=False, nullable=False)
-    active = db.Column(db.Boolean, default=True, nullable=False)
-    created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+    is_admin = db.Column(db.Boolean, default=False, server_default='0')
+    active = db.Column(db.Boolean, default=True, server_default='1')
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
 
     # Relacionamento com Consultant
     consultant = db.relationship('Consultant', backref='user', uselist=False)

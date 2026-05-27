@@ -51,10 +51,9 @@ def upgrade():
         if 'created_at' not in columns:
             op.add_column('users', sa.Column('created_at', sa.DateTime, server_default=sa.func.now(), nullable=True))
 
-        # Se email existe mas username não, migra email -> username
-        if 'email' in columns and 'username' not in columns:
-            # Já foi adicionado acima
-            pass
+        # Torna email nullable (para permitir novos usuários sem email)
+        if 'email' in columns:
+            op.alter_column('users', 'email', nullable=True)
 
         # Tenta criar índice em username se não existir
         try:
