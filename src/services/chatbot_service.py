@@ -113,6 +113,171 @@ def extract_date_iso(message: str) -> Optional[str]:
     return None
 
 
+def extract_estagio(message: str) -> Optional[str]:
+    """Extrai estágio macro: Plantio, Emergência, Vegetativo, Reprodutivo, Colheita."""
+    msg = normalize_text(message)
+
+    if "plantio" in msg:
+        return "Plantio"
+    if "emergencia" in msg:
+        return "Emergência"
+    if "vegetativo" in msg:
+        return "Vegetativo"
+    if "reprodutivo" in msg:
+        return "Reprodutivo"
+    if "colheita" in msg:
+        return "Colheita"
+
+    return None
+
+
+def extract_cv_percent(message: str) -> Optional[str]:
+    """Extrai CV% (Coeficiente de Variação) - usado em plantio."""
+    patterns = [
+        r"cv[%]?\s*(?:de\s+)?(\d+[.,]\d+)\s*%?",
+        r"coeficiente\s*(?:de\s+)?(?:varia[çc][aã]o)\s*(?:de\s+)?(\d+[.,]\d+)\s*%?",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            return match.group(1).replace(",", ".") + "%"
+
+    return None
+
+
+def extract_variety_from_text(message: str) -> Optional[str]:
+    """Extrai variedade do texto (ex: AS 1868 PRO4, AS 1868 PRO 4)."""
+    patterns = [
+        r"\b(AS\s*\d{4}\s*(?:PRO\s*\d+)?)\b",
+        r"\b(M\s*\d{4}\s*(?:PRO\s*\d+)?)\b",
+        r"\b(DM\s*\d{4})\b",
+        r"\b(BRS\s*\d{4})\b",
+        r"\b(TMG\s*\d{4})\b",
+        r"\b(NS\s*\d{4})\b",
+        r"\b(NEO\s*\d{3,4})\b",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            return match.group(1).strip().upper()
+
+    return None
+
+
+def is_structured_format(message: str) -> bool:
+    """Detecta se a mensagem está no formato estruturado (linha 1=data, linha 2=cliente, etc)."""
+    lines = [l.strip() for l in message.strip().split("\n") if l.strip()]
+    if len(lines) < 3:
+        return False
+
+    # Linha 1 deve ser apenas uma data
+    date_pattern = re.compile(r"^\d{2}[/\-]\d{2}[/\-]?\d{0,4}$")
+    if not date_pattern.match(lines[0]):
+        return False
+
+    # Linha 3 deve conter estágio
+    line3_lower = normalize_text(lines[2])
+    return any(s in line3_lower for s in ["plantio", "emergencia", "vegetativo", "reprodutivo", "colheita"])
+
+
+def parse_structured_message(message: str) -> Dict[str, Any]:
+    """
+    Parse formato estruturado:
+    Linha 1: Data
+    Linha 2: Cliente
+    Linha 3: Estágio + Variedade
+    Linhas 4+: Observações
+    """
+    lines = [l.strip() for l in message.strip().split("\n") if l.strip()]
+
+    # Linha 1: Data
+    date_str = lines[0] if len(lines) > 0 else ""
+    match_br = re.search(r"(\d{2})/(\d{2})/(\d{4})", date_str)
+    if match_br:
+        dd, mm, yyyy = match_br.groups()
+        date_iso = f"{yyyy}-{mm}-{dd}"
+    else:
+        date_iso = None
+
+    # Linha 2: Cliente
+    client_name = lines[1] if len(lines) > 1 else ""
+
+    # Linha 3: Estágio + Variedade
+    estagio_line = lines[2] if len(lines) > 2 else ""
+    estagio = extract_estagio(estagio_line)
+    variety = extract_variety_from_text(estagio_line)
+
+    # Se não encontrou variedade na linha 3, procura nas próximas
+    if not variety:
+        for i in range(3, min(len(lines), 6)):
+            variety = extract_variety_from_text(lines[i])
+            if variety:
+                break
+
+    # Extrai fenologia específica (V1-V14, R1-R8)
+    fenologia = extract_fenology(message)
+
+    # Se não tem fenologia mas tem estágio, mapeia
+    if not fenologia and estagio:
+        fenologia_map = {
+            "Plantio": None,
+            "Emergência": "VE",
+            "Vegetativo": "V6",
+            "Reprodutivo": "R1",
+            "Colheita": None,
+        }
+        fenologia = fenologia_map.get(estagio)
+
+    # CV% (só para plantio)
+    cv_percent = None
+    if estagio == "Plantio":
+        cv_percent = extract_cv_percent(message)
+
+    # Observações: linhas 4+ (exceto CV)
+    obs_lines = []
+    for i in range(3, len(lines)):
+        line = lines[i]
+        # Não inclui linha de CV nas observações
+        if not re.search(r"cv[%]?\s*(?:de\s+)?[\d]", line, re.IGNORECASE):
+            obs_lines.append(line)
+
+    recommendation = "\n".join(obs_lines).strip()
+
+    # Adiciona CV e estágio como metadados na recomendação
+    if cv_percent:
+        recommendation = f"[CV%: {cv_percent}]\n{recommendation}".strip()
+    if estagio:
+        recommendation = f"[Estágio: {estagio}]\n{recommendation}".strip()
+
+    # Infere cultura da variedade (AS = Soja normalmente)
+    culture = None
+    if variety:
+        if variety.startswith("AS") or variety.startswith("M") or variety.startswith("TMG"):
+            culture = "Soja"
+
+    return {
+        "intent": "create_visit",
+        "raw_message": message,
+        "client_name": client_name,
+        "property_name": None,
+        "plot_name": None,
+        "culture": culture,
+        "variety": variety,
+        "fenologia_real": fenologia,
+        "estagio": estagio,
+        "date": date_iso,
+        "recommendation": recommendation,
+        "cv_percent": cv_percent,
+        "status": "done",
+        "source": "chatbot",
+        "confidence": "high" if client_name and variety else "medium",
+        "products": [],
+        "visit_id": None,
+    }
+
+
 def extract_client_name(message: str) -> Optional[str]:
     # Aceita: "cliente Marcos Puziski\n", "Cliente: João Silva fazenda X",
     # "produtor Pedro da Silva v4". Para linha multi, pega até \n ou delimitador.
@@ -370,6 +535,11 @@ def extract_visit_id(message: str) -> Optional[int]:
 
 
 def parse_chatbot_message(message: str) -> Dict[str, Any]:
+    # Verifica se é formato estruturado (linha 1=data, linha 2=cliente, etc)
+    if is_structured_format(message):
+        return parse_structured_message(message)
+
+    # Formato livre (comportamento original)
     intent = detect_intent(message)
 
     parsed: Dict[str, Any] = {
@@ -379,9 +549,12 @@ def parse_chatbot_message(message: str) -> Dict[str, Any]:
         "property_name": extract_property_name(message),
         "plot_name": extract_plot_name(message),
         "culture": extract_culture(message),
+        "variety": extract_variety_from_text(message),
         "fenologia_real": extract_fenology(message),
+        "estagio": extract_estagio(message),
         "date": extract_date_iso(message),
         "recommendation": extract_recommendation(message),
+        "cv_percent": extract_cv_percent(message),
         "status": "planned",
         "source": "chatbot",
         "confidence": "low",

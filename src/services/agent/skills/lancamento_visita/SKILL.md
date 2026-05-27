@@ -29,9 +29,11 @@ Não ativar se mensagem for comando direto (pdf, agenda, cancelar, confirmar).
 
 - `property_name`: fazenda
 - `plot_name`: talhão
-- `variety`: variedade
+- `variety`: variedade (ex: AS 1868 PRO4, TMG 2381, M 6410 IPRO)
 - `recommendation`: texto livre pós "aplicar" ou "obs"
 - `products`: lista com product_name, dose, unit
+- `estagio`: estágio macro da cultura (Plantio | Emergência | Vegetativo | Reprodutivo | Colheita)
+- `cv_percent`: coeficiente de variação % - usado apenas em Plantio (ex: "12.5%")
 
 ## Regras de fenologia por cultura
 
@@ -65,9 +67,12 @@ Retornar JSON:
     "client_name": "...",
     "property_name": "...",
     "culture": "...",
+    "variety": "...",
     "fenologia_real": "...",
+    "estagio": "...",
     "date": "...",
     "recommendation": "...",
+    "cv_percent": "...",
     "products": []
   }
 }
@@ -76,6 +81,30 @@ Retornar JSON:
 ## Fotos
 
 Se mensagem vier com foto anexa, marcar `has_photo: true` no payload. Foto já vem tratada pelo `resolve_pending_photo_for_message`. Skill não processa imagem, apenas sinaliza presença.
+
+## Formato estruturado
+
+Mensagem pode vir em formato estruturado por linhas:
+- Linha 1: Data (DD/MM/YYYY ou DD/MM)
+- Linha 2: Nome do cliente
+- Linha 3: Estágio + Variedade (ex: "Plantio AS 1868 PRO4", "Vegetativo TMG 2381")
+- Linhas 4+: Observações
+
+Exemplo formato estruturado:
+```
+27/05/2026
+João Silva
+Plantio AS 1868 PRO4
+CV 12.5%
+Plantio normal, sem problemas
+```
+
+Se detectar este formato (linha 1 é apenas data, linha 3 contém estágio), extrair:
+- `date` da linha 1
+- `client_name` da linha 2
+- `estagio` e `variety` da linha 3
+- `cv_percent` das observações (se estágio for Plantio)
+- `recommendation` das linhas restantes (exceto CV)
 
 ## Casos especiais
 
@@ -95,3 +124,22 @@ Saída: client_name=Evaristo, property_name=Boa Vista, culture=Milho, fenologia_
 
 Entrada: [foto] caption "ivan r2 ferrugem"
 Saída: client_name=Ivan, fenologia_real=R2, recommendation=ferrugem, has_photo=true, confidence=low (faltam dados)
+
+Entrada (formato estruturado):
+```
+27/05/2026
+Marcos Puziski
+Plantio AS 1868 PRO4
+CV 12.5%
+Plantio normal, boa umidade
+```
+Saída: client_name=Marcos Puziski, estagio=Plantio, variety=AS 1868 PRO4, culture=Soja, date=2026-05-27, cv_percent=12.5%, recommendation=Plantio normal, boa umidade
+
+Entrada (formato estruturado - vegetativo):
+```
+26/05/2026
+João Silva
+Vegetativo TMG 2381
+Lavoura bem desenvolvida, aplicar fungicida preventivo
+```
+Saída: client_name=João Silva, estagio=Vegetativo, variety=TMG 2381, culture=Soja, fenologia_real=V6, date=2026-05-26, recommendation=Lavoura bem desenvolvida, aplicar fungicida preventivo

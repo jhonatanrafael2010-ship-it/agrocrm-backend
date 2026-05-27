@@ -34,6 +34,7 @@ class EntityExtractor:
             "products": self.extract_products(text),
             "visit_index": self.extract_visit_index(text),
             "pdf_client_name": self.extract_pdf_client_reference(text),
+            "cv_percent": self.extract_cv_percent(text),
         }
 
     def extract_culture(self, message: str) -> Optional[str]:
@@ -434,4 +435,16 @@ class EntityExtractor:
                 value = raw[match.start(1):].strip(" .,-")
                 if value:
                     return value
+        return None
+
+    def extract_cv_percent(self, text: str) -> Optional[str]:
+        """Extrai CV% (Coeficiente de Variação) - usado em estágio de plantio."""
+        patterns = [
+            r"cv[%]?\s*(?:de\s+)?(\d+[.,]\d+)\s*%?",
+            r"coeficiente\s*(?:de\s+)?(?:variacao|variação)\s*(?:de\s+)?(\d+[.,]\d+)\s*%?",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                return match.group(1).replace(",", ".") + "%"
         return None
