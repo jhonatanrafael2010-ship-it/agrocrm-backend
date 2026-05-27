@@ -30,6 +30,7 @@ from models import (
     TelegramContactBinding,
 )
 from services.chatbot_service import send_telegram_message
+from utils.auth_helper import get_consultant_id_filter
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -64,15 +65,24 @@ def get_dashboard_insights():
 
     today = date.today()
 
+    # Obtém filtro de consultor baseado no usuário autenticado
+    consultant_filter = get_consultant_id_filter()
+
     # 1) Clientes sem visita há 30+ dias
     threshold_30 = today - timedelta(days=30)
-    subq_last_visit = db.session.query(
+    last_visit_query = db.session.query(
         Visit.client_id,
         func.max(Visit.date).label("last_visit")
     ).filter(
         Visit.status == "done",
         Visit.client_id.isnot(None),
-    ).group_by(Visit.client_id).subquery()
+    )
+    # Aplica filtro por consultor se necessário
+    if consultant_filter is not None and consultant_filter != -1:
+        last_visit_query = last_visit_query.filter(Visit.consultant_id == consultant_filter)
+    elif consultant_filter == -1:
+        last_visit_query = last_visit_query.filter(Visit.consultant_id == -999999)
+    subq_last_visit = last_visit_query.group_by(Visit.client_id).subquery()
 
     stale_clients_30 = db.session.query(
         Client.id,
@@ -115,7 +125,7 @@ def get_dashboard_insights():
 
     # Busca última visita por cliente com fenologia registrada (últimos 60 dias)
     sixty_days_ago = today - timedelta(days=60)
-    subq_latest = db.session.query(
+    latest_pheno_query = db.session.query(
         Visit.client_id,
         func.max(Visit.date).label("last_date")
     ).filter(
@@ -123,7 +133,13 @@ def get_dashboard_insights():
         Visit.fenologia_real.isnot(None),
         Visit.fenologia_real != "",
         Visit.client_id.isnot(None),
-    ).group_by(Visit.client_id).subquery()
+    )
+    # Aplica filtro por consultor
+    if consultant_filter is not None and consultant_filter != -1:
+        latest_pheno_query = latest_pheno_query.filter(Visit.consultant_id == consultant_filter)
+    elif consultant_filter == -1:
+        latest_pheno_query = latest_pheno_query.filter(Visit.consultant_id == -999999)
+    subq_latest = latest_pheno_query.group_by(Visit.client_id).subquery()
 
     latest_visits = db.session.query(Visit).join(
         subq_latest,
@@ -183,14 +199,20 @@ def get_dashboard_insights():
 
     # 3) Visitas por mês (últimos 6 meses)
     six_months_ago = today - timedelta(days=180)
-    visits_by_month_raw = db.session.query(
+    visits_month_query = db.session.query(
         extract('year', Visit.date).label('year'),
         extract('month', Visit.date).label('month'),
         func.count(Visit.id).label('count')
     ).filter(
         Visit.date >= six_months_ago,
         Visit.status == "done",
-    ).group_by(
+    )
+    # Aplica filtro por consultor
+    if consultant_filter is not None and consultant_filter != -1:
+        visits_month_query = visits_month_query.filter(Visit.consultant_id == consultant_filter)
+    elif consultant_filter == -1:
+        visits_month_query = visits_month_query.filter(Visit.consultant_id == -999999)
+    visits_by_month_raw = visits_month_query.group_by(
         extract('year', Visit.date),
         extract('month', Visit.date)
     ).order_by(
@@ -209,14 +231,20 @@ def get_dashboard_insights():
 
     # 4) Visitas recentes por estágio fenológico (últimos 30 dias)
     thirty_days_ago = today - timedelta(days=30)
-    visits_by_stage_raw = db.session.query(
+    visits_stage_query = db.session.query(
         Visit.fenologia_real,
         func.count(Visit.id).label('count')
     ).filter(
         Visit.date >= thirty_days_ago,
         Visit.fenologia_real.isnot(None),
         Visit.fenologia_real != "",
-    ).group_by(
+    )
+    # Aplica filtro por consultor
+    if consultant_filter is not None and consultant_filter != -1:
+        visits_stage_query = visits_stage_query.filter(Visit.consultant_id == consultant_filter)
+    elif consultant_filter == -1:
+        visits_stage_query = visits_stage_query.filter(Visit.consultant_id == -999999)
+    visits_by_stage_raw = visits_stage_query.group_by(
         Visit.fenologia_real
     ).all()
 

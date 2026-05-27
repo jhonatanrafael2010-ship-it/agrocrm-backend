@@ -39,6 +39,7 @@ from models import (
     PhenologyStage,
 )
 from utils.r2_client import get_r2_client
+from utils.auth_helper import apply_consultant_filter, get_consultant_id_filter
 
 visits_bp = Blueprint('visits', __name__)
 
@@ -143,6 +144,8 @@ def get_visits():
                 .filter(db.extract('year', Visit.date) == today.year)
                 .order_by(Visit.date.asc())
             )
+            # Aplica filtro por consultor se autenticado
+            q = apply_consultant_filter(q, Visit.consultant_id)
             visits = q.all()
 
             client_ids = {v.client_id for v in visits if v.client_id}
@@ -186,6 +189,9 @@ def get_visits():
                 q = q.filter(Visit.date >= date_start)
             if date_end:
                 q = q.filter(Visit.date <= date_end)
+
+            # Aplica filtro por consultor se autenticado
+            q = apply_consultant_filter(q, Visit.consultant_id)
 
             all_visits = q.all()
 
@@ -260,6 +266,10 @@ def get_visits():
                 q = q.filter_by(plot_id=plot_id)
             if consultant_id:
                 q = q.filter_by(consultant_id=consultant_id)
+
+            # Aplica filtro por consultor se autenticado
+            q = apply_consultant_filter(q, Visit.consultant_id)
+
             q = q.order_by(Visit.date.desc().nullslast())
 
             visits = q.all()

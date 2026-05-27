@@ -58,7 +58,9 @@
       "Bash(py -3.12 -c \"from api_routes import bp; print\\('api_routes OK'\\); from routes import mobile_bp; print\\('mobile_bp OK'\\); print\\('All imports successful!'\\)\")",
       "Bash(py -3.12 -m py_compile \"C:\\\\agrocrm-backend\\\\src\\\\routes\\\\mobile.py\")",
       "Bash(python *)",
-      "Bash(Select-Object -First 30)"
+      "Bash(Select-Object -First 30)",
+      "Bash(Get-ChildItem -Path C:\\\\agrocrm-backend\\\\src -File -Recurse -Name)",
+      "Bash(Select-Object -First 50)"
     ]
   }
 }

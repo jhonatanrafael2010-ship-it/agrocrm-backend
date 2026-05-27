@@ -220,6 +220,54 @@ def list_users():
 
 
 # ============================================================
+# PUT /api/admin/users/:id (editar usuário)
+# ============================================================
+@auth_bp.route('/admin/users/<int:user_id>', methods=['PUT'])
+@admin_required
+def update_user(user_id: int):
+    """
+    Edita usuário (somente admin).
+    Body: { consultant_id?, is_admin? }
+    """
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'error': 'Usuário não encontrado'}), 404
+
+    data = request.get_json() or {}
+
+    # Atualiza consultant_id se fornecido
+    if 'consultant_id' in data:
+        new_consultant_id = data.get('consultant_id')
+        if new_consultant_id is not None:
+            consultant = Consultant.query.get(new_consultant_id)
+            if not consultant:
+                return jsonify({'error': 'Consultor não encontrado'}), 404
+            # Verifica se já existe outro user para este consultant
+            existing_user = User.query.filter(
+                User.consultant_id == new_consultant_id,
+                User.id != user_id
+            ).first()
+            if existing_user:
+                return jsonify({'error': f'Já existe usuário para o consultor {consultant.name}'}), 409
+        user.consultant_id = new_consultant_id
+
+    # Atualiza is_admin se fornecido
+    if 'is_admin' in data:
+        # Não permite remover admin de si mesmo
+        if user.id == g.current_user.id and not data.get('is_admin'):
+            return jsonify({'error': 'Não é possível remover seu próprio status de admin'}), 400
+        user.is_admin = bool(data.get('is_admin'))
+
+    db.session.commit()
+
+    return jsonify({
+        'ok': True,
+        'message': f'Usuário {user.username} atualizado',
+        'user': user.to_dict(),
+    })
+
+
+# ============================================================
 # PUT /api/admin/users/:id/reset-password
 # ============================================================
 @auth_bp.route('/admin/users/<int:user_id>/reset-password', methods=['PUT'])
