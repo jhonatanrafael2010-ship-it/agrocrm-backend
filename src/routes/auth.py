@@ -328,6 +328,25 @@ def list_consultants_for_admin():
 
 
 # ============================================================
+# GET /api/auth/fix-db (corrige estrutura da tabela users)
+# ============================================================
+@auth_bp.route('/auth/fix-db', methods=['POST'])
+def fix_database_structure():
+    """
+    Corrige a estrutura da tabela users para o novo sistema de login.
+    Endpoint temporário - remover após uso.
+    """
+    try:
+        # Torna email nullable
+        db.session.execute(db.text('ALTER TABLE users ALTER COLUMN email DROP NOT NULL'))
+        db.session.commit()
+        return jsonify({'ok': True, 'message': 'Estrutura corrigida com sucesso'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ============================================================
 # GET /api/auth/setup (verifica se precisa setup)
 # ============================================================
 @auth_bp.route('/auth/setup', methods=['GET'])
