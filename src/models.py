@@ -113,19 +113,37 @@ def resolve_consultant_name(consultant_id):
     return None
 
 # ============================================================
-# 👤 Usuário
+# 👤 Usuário (Sistema de Login)
 # ============================================================
 class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=True)
+    username = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    consultant_id = db.Column(db.Integer, db.ForeignKey('consultants.id'), nullable=True)
+    is_admin = db.Column(db.Boolean, default=False, nullable=False)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+
+    # Relacionamento com Consultant
+    consultant = db.relationship('Consultant', backref='user', uselist=False)
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password: str) -> bool:
         return self.password_hash and check_password_hash(self.password_hash, password)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'username': self.username,
+            'consultant_id': self.consultant_id,
+            'consultant_name': self.consultant.name if self.consultant else None,
+            'is_admin': self.is_admin,
+            'active': self.active,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
 
 
 # ============================================================
