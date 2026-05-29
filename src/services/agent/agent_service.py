@@ -28,7 +28,15 @@ class AgentService:
                 current_state=context.get("current_state", ""),
             )
             if skill_result and skill_result.get("parsed_visit"):
-                entities.update(skill_result["parsed_visit"])
+                parsed_visit = skill_result["parsed_visit"]
+                # Campos que EntityExtractor detectou com mais precisão - não sobrescrever
+                protected_fields = {"culture", "recommendation", "client_name", "variety", "visit_purpose"}
+                for key, value in parsed_visit.items():
+                    if key in protected_fields and entities.get(key):
+                        # Mantém valor do EntityExtractor se já foi detectado
+                        continue
+                    if value is not None and value != "":
+                        entities[key] = value
                 intent_result["confidence"] = skill_result.get("confidence", "medium")
                 intent_result["matched_by"] = "skill:lancamento_visita"
         
