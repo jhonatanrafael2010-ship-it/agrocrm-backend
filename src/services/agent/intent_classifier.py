@@ -144,6 +144,27 @@ def classify_with_ai_fallback(message_text: str, current_state: str = ""):
 
 
 class IntentClassifier:
+    def _is_structured_visit_format(self, text: str) -> bool:
+        """
+        Detecta formato estruturado de visita:
+        Linha 1: Data (DD/MM/YYYY ou DD/MM)
+        Linha 2: Nome do cliente
+        Linha 3: Estágio (Plantio/Emergência/Vegetativo/Reprodutivo/Colheita) + Variedade
+        """
+        lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+        if len(lines) < 3:
+            return False
+
+        # Linha 1 deve ser apenas uma data
+        date_pattern = re.compile(r"^\d{2}[/\-]\d{2}(?:[/\-]\d{2,4})?$")
+        if not date_pattern.match(lines[0]):
+            return False
+
+        # Linha 3 deve conter estágio
+        line3_lower = normalize_text(lines[2])
+        stages = ["plantio", "emergencia", "vegetativo", "reprodutivo", "colheita"]
+        return any(stage in line3_lower for stage in stages)
+
     def classify(self, text: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         normalized = normalize_text(text)
         context = context or {}
@@ -164,6 +185,19 @@ class IntentClassifier:
         # ============================================================
         if normalized in {"cancelar", "cancela", "cancel"}:
             result.update({"intent": "CANCEL", "confidence": "high", "matched_by": "exact"})
+            return result
+
+        # ============================================================
+        # FORMATO ESTRUTURADO DE VISITA - detecta ANTES de keywords
+        # Formato: linha1=data, linha2=cliente, linha3=estágio+variedade
+        # Ex: "25/05/2026\nRogério Remor\nReprodutivo AS 1868 PRO4\nObs..."
+        # ============================================================
+        if self._is_structured_visit_format(text):
+            result.update({
+                "intent": "CREATE_VISIT_LIKE_MESSAGE",
+                "confidence": "high",
+                "matched_by": "structured_format",
+            })
             return result
 
         # ============================================================

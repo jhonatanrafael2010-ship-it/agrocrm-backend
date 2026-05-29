@@ -17,8 +17,127 @@ def normalize_text(text: str) -> str:
 
 
 class EntityExtractor:
+    def _is_structured_format(self, text: str) -> bool:
+        """Detecta formato estruturado: linha1=data, linha3=estágio."""
+        lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+        if len(lines) < 3:
+            return False
+        date_pattern = re.compile(r"^\d{2}[/\-]\d{2}(?:[/\-]\d{2,4})?$")
+        if not date_pattern.match(lines[0]):
+            return False
+        line3_lower = normalize_text(lines[2])
+        stages = ["plantio", "emergencia", "vegetativo", "reprodutivo", "colheita"]
+        return any(stage in line3_lower for stage in stages)
+
+    def _parse_structured_format(self, text: str) -> Dict[str, Any]:
+        """Parse formato estruturado de visita."""
+        lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+
+        # Linha 1: Data
+        date_str = lines[0]
+        date_match = re.search(r"(\d{2})[/\-](\d{2})[/\-]?(\d{2,4})?", date_str)
+        if date_match:
+            dd, mm = date_match.group(1), date_match.group(2)
+            yyyy = date_match.group(3)
+            if yyyy and len(yyyy) == 2:
+                yyyy = "20" + yyyy
+            elif not yyyy:
+                from datetime import date as _date
+                yyyy = str(_date.today().year)
+            date_value = f"{dd}/{mm}/{yyyy}"
+        else:
+            date_value = date_str
+
+        # Linha 2: Cliente
+        client_name = lines[1] if len(lines) > 1 else ""
+
+        # Linha 3: Estágio + Variedade
+        estagio_line = lines[2] if len(lines) > 2 else ""
+        visit_purpose = self.extract_visit_purpose(estagio_line)
+        variety = self.extract_variety(estagio_line)
+
+        # Se não encontrou variedade na linha 3, procura nas próximas
+        if not variety:
+            for i in range(3, min(len(lines), 6)):
+                variety = self.extract_variety(lines[i])
+                if variety:
+                    break
+
+        # Fenologia específica
+        fenologia = self.extract_fenology(text)
+
+        # Se não tem fenologia mas tem estágio, mapeia
+        if not fenologia and visit_purpose:
+            fenologia_map = {
+                "Plantio": None,
+                "Emergência": "VE",
+                "Vegetativo": "V6",
+                "Reprodutivo": "R1",
+                "Colheita": None,
+            }
+            fenologia = fenologia_map.get(visit_purpose)
+
+        # CV% (só para plantio)
+        cv_percent = None
+        if visit_purpose == "Plantio":
+            cv_percent = self.extract_cv_percent(text)
+
+        # Observações: linhas 4+ (exceto CV)
+        obs_lines = []
+        for i in range(3, len(lines)):
+            line = lines[i]
+            # Não inclui linha de CV nas observações
+            if not re.search(r"cv[%]?\s*(?:de\s+)?[\d]", line, re.IGNORECASE):
+                obs_lines.append(line)
+        recommendation = "\n".join(obs_lines).strip()
+
+        # Adiciona CV e estágio como metadados na recomendação
+        if cv_percent:
+            recommendation = f"[CV%: {cv_percent}]\n{recommendation}".strip()
+        if visit_purpose:
+            recommendation = f"[Estágio: {visit_purpose}]\n{recommendation}".strip()
+
+        # Infere cultura da variedade ou do conteúdo
+        culture = self.extract_culture(text)
+        if not culture and variety:
+            variety_upper = variety.upper()
+            # Soja: AS, M, TMG, NS, DM, BRS, NEO
+            if any(variety_upper.startswith(p) for p in ["TMG", "NS", "DM", "BRS", "NEO"]):
+                culture = "Soja"
+            # Milho: AG, P, DKB, 2B, 30F, AS (quando contexto indica milho)
+            elif any(variety_upper.startswith(p) for p in ["AG", "DKB", "2B", "30F"]):
+                culture = "Milho"
+            # AS e M podem ser Soja ou Milho - verifica contexto
+            elif variety_upper.startswith("AS") or variety_upper.startswith("M"):
+                text_lower = normalize_text(text)
+                if any(k in text_lower for k in ["espiga", "milho", "graos por espiga", "espigas"]):
+                    culture = "Milho"
+                else:
+                    culture = "Soja"
+
+        return {
+            "raw_message": text,
+            "client_name": client_name,
+            "property_name": None,
+            "plot_name": None,
+            "culture": culture,
+            "variety": variety,
+            "visit_purpose": visit_purpose,
+            "fenologia_real": fenologia,
+            "date": date_value,
+            "recommendation": recommendation,
+            "products": [],
+            "visit_index": None,
+            "pdf_client_name": None,
+            "cv_percent": cv_percent,
+        }
+
     def extract(self, text: str, context: Dict[str, Any] | None = None) -> Dict[str, Any]:
         context = context or {}
+
+        # Verifica se é formato estruturado primeiro
+        if self._is_structured_format(text):
+            return self._parse_structured_format(text)
 
         return {
             "raw_message": text,

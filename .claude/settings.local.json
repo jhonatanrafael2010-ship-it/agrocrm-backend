@@ -60,7 +60,8 @@
       "Bash(python *)",
       "Bash(Select-Object -First 30)",
       "Bash(Get-ChildItem -Path C:\\\\agrocrm-backend\\\\src -File -Recurse -Name)",
-      "Bash(Select-Object -First 50)"
+      "Bash(Select-Object -First 50)",
+      "PowerShell(Remove-Item *)"
     ]
   }
 }
