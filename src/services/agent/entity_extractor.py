@@ -2,6 +2,13 @@ import re
 import unicodedata
 from typing import Any, Dict, List, Optional
 
+from .agro_knowledge import (
+    extract_variety_with_culture,
+    infer_culture,
+    parse_phenology,
+    parse_date_flexible,
+)
+
 
 PRODUCT_UNITS = ["L/ha", "mL/ha", "kg/ha", "g/ha", "%", "p.c"]
 
@@ -97,23 +104,8 @@ class EntityExtractor:
         if visit_purpose:
             recommendation = f"[Estágio: {visit_purpose}]\n{recommendation}".strip()
 
-        # Infere cultura da variedade ou do conteúdo
-        culture = self.extract_culture(text)
-        if not culture and variety:
-            variety_upper = variety.upper()
-            # Soja: AS, M, TMG, NS, DM, BRS, NEO
-            if any(variety_upper.startswith(p) for p in ["TMG", "NS", "DM", "BRS", "NEO"]):
-                culture = "Soja"
-            # Milho: AG, P, DKB, 2B, 30F, AS (quando contexto indica milho)
-            elif any(variety_upper.startswith(p) for p in ["AG", "DKB", "2B", "30F"]):
-                culture = "Milho"
-            # AS e M podem ser Soja ou Milho - verifica contexto
-            elif variety_upper.startswith("AS") or variety_upper.startswith("M"):
-                text_lower = normalize_text(text)
-                if any(k in text_lower for k in ["espiga", "milho", "graos por espiga", "espigas"]):
-                    culture = "Milho"
-                else:
-                    culture = "Soja"
+        # Infere cultura usando base de conhecimento agrícola
+        culture = infer_culture(text, variety)
 
         return {
             "raw_message": text,
@@ -139,13 +131,23 @@ class EntityExtractor:
         if self._is_structured_format(text):
             return self._parse_structured_format(text)
 
+        # Extrai variedade primeiro para ajudar na inferência de cultura
+        variety = self.extract_variety(text)
+
+        # Usa base de conhecimento agrícola para inferir cultura
+        culture = infer_culture(text, variety)
+
+        # Se não conseguiu inferir, usa método básico
+        if not culture:
+            culture = self.extract_culture(text)
+
         return {
             "raw_message": text,
             "client_name": self.extract_client_name(text),
             "property_name": self.extract_property_name(text),
             "plot_name": self.extract_plot_name(text),
-            "culture": self.extract_culture(text),
-            "variety": self.extract_variety(text),
+            "culture": culture,
+            "variety": variety,
             "visit_purpose": self.extract_visit_purpose(text),
             "fenologia_real": self.extract_fenology(text),
             "date": self.extract_date_token(text),
@@ -167,21 +169,35 @@ class EntityExtractor:
         return None
 
     def extract_variety(self, message: str) -> Optional[str]:
-        """Extrai variedade/cultivar (ex: AS 1868 PRO4, AG 9045, TMG 2381)."""
-        # Padrões comuns de variedades de soja/milho
+        """Extrai variedade/cultivar usando padrões expandidos."""
+        # Usa a função do agro_knowledge primeiro (mais completa)
+        variety, _ = extract_variety_with_culture(message)
+        if variety:
+            return variety
+
+        # Fallback para padrões básicos
         patterns = [
-            r"\b(AS\s*\d{3,4}(?:\s*PRO\d?)?)\b",  # AS 1868 PRO4
-            r"\b(AG\s*\d{3,4}(?:\s*PRO\d?)?)\b",  # AG 9045
-            r"\b(TMG\s*\d{3,4})\b",               # TMG 2381
-            r"\b(M\s*\d{3,4}(?:\s*IPRO)?)\b",     # M 6410 IPRO
-            r"\b(NS\s*\d{3,4}(?:\s*IPRO)?)\b",    # NS 7667 IPRO
-            r"\b(DM\s*\d{3,4}(?:\s*IPRO)?)\b",    # DM 68i70
-            r"\b(P\s*\d{3,4})\b",                  # P 3456
+            r"\b(AS\s*\d{3,4}(?:\s*PRO\s*\d+)?)\b",   # AS 1868 PRO4
+            r"\b(AG\s*\d{3,4}(?:\s*PRO\d*)?)\b",      # AG 9045
+            r"\b(TMG\s*\d{3,4}(?:\s*[A-Z]*)?)\b",     # TMG 2381
+            r"\b(M\s*\d{3,4}(?:\s*IPRO)?)\b",         # M 6410 IPRO
+            r"\b(NS\s*\d{3,4}(?:\s*IPRO)?)\b",        # NS 7667 IPRO
+            r"\b(DM\s*\d{2,4}(?:i\d+)?(?:\s*IPRO)?)\b",  # DM 68i70
+            r"\b(DKB\s*\d{3,4}(?:\s*PRO\d*)?)\b",     # DKB 390
+            r"\b(2B\s*\d{3,4}(?:\s*PWU)?)\b",         # 2B 810 PWU
+            r"\b(30F\d{2})\b",                         # 30F53
+            r"\b(P\s*\d{4}(?:\s*[A-Z]+)?)\b",         # P 3456
+            r"\b(BMX\s*\w+\s*\d*(?:\s*IPRO)?)\b",     # BMX Potência
+            r"\b(NEO\s*\d{3,4})\b",                    # NEO 610
+            r"\b(BRS\s*\d{3,4}(?:\s*[A-Z]*)?)\b",     # BRS 388
+            r"\b(FM\s*\d{3,4}(?:\s*[A-Z]+)?)\b",      # FM 985 GLT
+            r"\b(IMA\s*\d{3,4})\b",                    # IMA 5801
         ]
         for pattern in patterns:
             match = re.search(pattern, message, flags=re.IGNORECASE)
             if match:
-                return match.group(1).upper().replace("  ", " ")
+                result = match.group(1).upper().strip()
+                return re.sub(r"\s+", " ", result)
         return None
 
     def extract_visit_purpose(self, message: str) -> Optional[str]:

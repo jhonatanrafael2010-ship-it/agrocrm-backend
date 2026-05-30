@@ -6,6 +6,8 @@ from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 
+from services.agent.agro_knowledge import infer_culture, extract_variety_with_culture
+
 
 def normalize_text(text: str) -> str:
     if not text:
@@ -251,23 +253,8 @@ def parse_structured_message(message: str) -> Dict[str, Any]:
     if estagio:
         recommendation = f"[Estágio: {estagio}]\n{recommendation}".strip()
 
-    # Infere cultura da variedade COM contexto
-    culture = None
-    if variety:
-        variety_upper = variety.upper()
-        text_lower = normalize_text(message)
-        # Verifica contexto para diferenciar Soja de Milho
-        milho_context = any(k in text_lower for k in ["espiga", "espigas", "graos por espiga", "milho"])
-
-        # TMG, NS, DM, BRS, NEO = sempre Soja
-        if any(variety_upper.startswith(p) for p in ["TMG", "NS", "DM", "BRS", "NEO"]):
-            culture = "Soja"
-        # AG, DKB, 2B, 30F = sempre Milho
-        elif any(variety_upper.startswith(p) for p in ["AG", "DKB", "2B", "30F"]):
-            culture = "Milho"
-        # AS e M podem ser Soja ou Milho - verifica contexto
-        elif variety_upper.startswith("AS") or variety_upper.startswith("M"):
-            culture = "Milho" if milho_context else "Soja"
+    # Infere cultura usando base de conhecimento agrícola
+    culture = infer_culture(message, variety)
 
     return {
         "intent": "create_visit",
