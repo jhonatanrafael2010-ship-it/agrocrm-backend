@@ -281,6 +281,8 @@ def mobile_chat():
             result["image_url"] = resp["image_url"]
         if resp.get("source"):
             result["source"] = resp["source"]
+        if resp.get("actions"):
+            result["actions"] = resp["actions"]
         return jsonify(result), 200
     return jsonify({"ok": True, "response": resp}), 200
 
@@ -1183,7 +1185,12 @@ def _mob_final_confirmation(session_id, state, message_text, resolved_consultant
         if attached_count:
             lines.append(f"{attached_count} foto(s) vinculada(s).")
 
-        return "\n".join(lines)
+        return {
+            "text": "\n".join(lines),
+            "actions": [
+                {"type": "pdf", "visit_id": visit.id, "label": "📄 Gerar PDF"}
+            ]
+        }
 
     except Exception as e:
         db.session.rollback()

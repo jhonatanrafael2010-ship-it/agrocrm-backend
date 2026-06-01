@@ -4375,9 +4375,16 @@ def handle_final_confirmation(chat_message, message_text: str, photo_info=None):
             visit_id=visit.id,
         )
 
+        pdf_button = {
+            "inline_keyboard": [
+                [{"text": "📄 Gerar PDF", "callback_data": f"pdf_visit_{visit.id}"}]
+            ]
+        }
+
         send_telegram_message(
             chat_id=chat_message.chat_id,
-            text="\n".join(success_lines)
+            text="\n".join(success_lines),
+            reply_markup=pdf_button
         )
 
         return jsonify({

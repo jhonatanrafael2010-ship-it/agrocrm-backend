@@ -24,7 +24,7 @@ from models import (
     ChatbotConversationState,
     Visit,
 )
-from services.chatbot_service import ChatbotService, send_telegram_message
+from services.chatbot_service import ChatbotService, send_telegram_message, send_telegram_document
 
 messaging_bp = Blueprint('messaging', __name__)
 
@@ -83,6 +83,7 @@ def _get_helpers():
         build_pending_visits_confirmation_text,
         extract_recommendation_fallback,
         normalize_products_from_parsed,
+        build_visit_pdf_file,
     )
     return {
         'normalize_phone_number': normalize_phone_number,
@@ -136,6 +137,7 @@ def _get_helpers():
         'build_pending_visits_confirmation_text': build_pending_visits_confirmation_text,
         'extract_recommendation_fallback': extract_recommendation_fallback,
         'normalize_products_from_parsed': normalize_products_from_parsed,
+        'build_visit_pdf_file': build_visit_pdf_file,
     }
 
 
@@ -446,6 +448,10 @@ def telegram_webhook():
         h = _get_helpers()
         payload = request.get_json(silent=True) or {}
 
+        callback_query = payload.get("callback_query")
+        if callback_query:
+            return _handle_telegram_callback(h, callback_query)
+
         chatbot_service = ChatbotService()
         chat_message = chatbot_service.normalize_telegram_update(payload)
 
@@ -716,6 +722,66 @@ def telegram_webhook():
             "ok": False,
             "error": str(e)
         }), 500
+
+
+# ================================================================
+# CALLBACK QUERY HANDLER
+# ================================================================
+
+def _handle_telegram_callback(h, callback_query):
+    """
+    Processa callback queries de botões inline do Telegram.
+    Ex: pdf_visit_123 -> gera e envia o PDF da visita 123
+    """
+    callback_id = callback_query.get("id")
+    data = callback_query.get("data", "")
+    chat = callback_query.get("message", {}).get("chat", {})
+    chat_id = str(chat.get("id", ""))
+
+    if not chat_id:
+        return jsonify({"ok": True, "message": "callback sem chat_id"}), 200
+
+    _answer_callback_query(callback_id)
+
+    if data.startswith("pdf_visit_"):
+        try:
+            visit_id = int(data.replace("pdf_visit_", ""))
+            visit = Visit.query.get(visit_id)
+            if not visit:
+                send_telegram_message(chat_id=chat_id, text=f"Visita {visit_id} não encontrada.")
+                return jsonify({"ok": True, "message": "visita não encontrada"}), 200
+
+            buffer, filename = h['build_visit_pdf_file'](visit_id)
+            send_telegram_document(
+                chat_id=chat_id,
+                file_bytes=buffer.getvalue(),
+                filename=filename,
+                caption=f"📄 PDF da visita {visit_id}"
+            )
+            return jsonify({"ok": True, "message": "pdf enviado via callback"}), 200
+        except Exception as e:
+            print(f"Erro ao gerar PDF via callback: {e}")
+            send_telegram_message(chat_id=chat_id, text="Erro ao gerar o PDF. Tente novamente.")
+            return jsonify({"ok": False, "error": str(e)}), 200
+
+    return jsonify({"ok": True, "message": "callback não reconhecido"}), 200
+
+
+def _answer_callback_query(callback_id: str):
+    """Responde ao callback para remover o indicador de carregamento."""
+    import os
+    import requests
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token or not callback_id:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/answerCallbackQuery",
+            json={"callback_query_id": callback_id},
+            timeout=5
+        )
+    except Exception:
+        pass
 
 
 # ================================================================
