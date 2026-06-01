@@ -21,7 +21,7 @@ import os
 import uuid
 from datetime import datetime, timedelta, date as _date
 
-from flask import Blueprint, jsonify, request, send_file, render_template_string
+from flask import Blueprint, jsonify, request, send_file, render_template_string, make_response
 from flask_cors import cross_origin
 from sqlalchemy.orm import joinedload
 from werkzeug.utils import secure_filename
@@ -771,9 +771,16 @@ def create_visits_bulk():
     return jsonify([v.to_dict() | {"status": v.status} for v in created]), 201
 
 
-@visits_bp.route('/visits/<int:visit_id>/pdf', methods=['GET'])
+@visits_bp.route('/visits/<int:visit_id>/pdf', methods=['GET', 'OPTIONS'])
 @cross_origin(origins=["https://agrocrm-frontend.onrender.com", "https://localhost", "capacitor://localhost", "http://localhost"])
 def export_visit_pdf(visit_id):
+    if request.method == 'OPTIONS':
+        response = make_response()
+        response.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        return response
+
     h = _get_helpers()
     buffer, filename = h['build_visit_pdf_file'](visit_id)
     return send_file(
