@@ -64,7 +64,8 @@
       "PowerShell(Remove-Item *)",
       "PowerShell(\\(Get-Content \"C:\\\\agrocrm-backend\\\\src\\\\routes.py\" | Measure-Object -Line\\).Lines)",
       "PowerShell(\\(Get-Content \"C:\\\\agrocrm-backend\\\\src\\\\api_routes.py\" | Measure-Object -Line\\).Lines)",
-      "PowerShell(Start-Process \"http://localhost:5173/plantings\")"
+      "PowerShell(Start-Process \"http://localhost:5173/plantings\")",
+      "PowerShell(Start-Process \"http://localhost:5173\")"
     ]
   }
 }
