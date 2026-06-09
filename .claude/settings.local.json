@@ -66,7 +66,11 @@
       "PowerShell(\\(Get-Content \"C:\\\\agrocrm-backend\\\\src\\\\api_routes.py\" | Measure-Object -Line\\).Lines)",
       "PowerShell(Start-Process \"http://localhost:5173/plantings\")",
       "PowerShell(Start-Process \"http://localhost:5173\")",
-      "PowerShell(Start-Process \"http://localhost:5173/clients\")"
+      "PowerShell(Start-Process \"http://localhost:5173/clients\")",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; cd C:\\\\agrocrm-backend\\\\src; python -c \"from app import app; print\\('App loaded OK'\\)\")",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; cd C:\\\\agrocrm-backend\\\\src; python -c \"import sqlite3; conn = sqlite3.connect\\('uploads/fallback_local.db'\\); cursor = conn.cursor\\(\\); cursor.execute\\('SELECT name FROM sqlite_master WHERE type=''table'''\\); print\\([row[0] for row in cursor.fetchall\\(\\)]\\)\")",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; cd C:\\\\agrocrm-backend\\\\src; python -c \"import sqlite3; conn = sqlite3.connect\\('uploads/fallback_local.db'\\); cursor = conn.cursor\\(\\); tables = [r[0] for r in cursor.execute\\('SELECT name FROM sqlite_master WHERE type=\\\\\"table\\\\\"'\\).fetchall\\(\\)]; print\\('Tables:', tables\\); print\\('Has varieties:', 'varieties' in tables\\)\")",
+      "PowerShell($env:PYTHONIOENCODING='utf-8'; cd C:\\\\agrocrm-backend\\\\src; python test_variety_resolver.py)"
     ]
   }
 }

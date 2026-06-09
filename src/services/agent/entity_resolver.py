@@ -217,6 +217,7 @@ class EntityResolver:
         result["client"] = _empty_resolved(result.get("client_name"))
         result["property"] = _empty_resolved(result.get("property_name"))
         result["plot"] = _empty_resolved(result.get("plot_name"))
+        result["variety_resolved"] = _empty_resolved(result.get("variety"))
 
         try:
             client = self._resolve_client(result.get("client_name"), consultant_id=consultant_id)
@@ -229,6 +230,19 @@ class EntityResolver:
             property_id = prop.get("id")
             plot = self._resolve_plot(result.get("plot_name"), property_id=property_id)
             result["plot"] = plot
+
+            # Resolve variedade e infere cultura a partir dela
+            variety_resolved = self._resolve_variety(result.get("variety"))
+            result["variety_resolved"] = variety_resolved
+
+            # Se a variedade foi resolvida no banco com alta confiança (score >= 0.70),
+            # a cultura do banco TEM PRIORIDADE sobre a inferência por contexto.
+            # Isso é crítico para variedades ambíguas como AS (Asgrow) que o
+            # agro_knowledge não consegue determinar, mas o banco sabe qual é.
+            if variety_resolved.get("culture") and variety_resolved.get("score", 0) >= 0.70:
+                result["culture"] = variety_resolved["culture"]
+            elif not result.get("culture") and variety_resolved.get("culture"):
+                result["culture"] = variety_resolved["culture"]
 
         except Exception as e:
             # nunca deixa o fluxo do agente quebrar por causa do resolver
@@ -424,3 +438,94 @@ class EntityResolver:
             }
 
         return _resolved_with_item(best_plot, best_score, plot_name, scored)
+
+    # ================================================================
+    # Variedade
+    # ================================================================
+    def _resolve_variety(self, variety_name: Optional[str]) -> Dict[str, Any]:
+        """
+        Resolve variedade contra o banco e retorna a cultura associada.
+        Isso é crítico para variedades ambíguas como AS (Asgrow) que podem
+        ser tanto Soja quanto Milho - o banco sabe qual é.
+        """
+        if not variety_name:
+            return _empty_resolved(variety_name)
+
+        try:
+            from models import Variety
+        except Exception as e:
+            print(f"[EntityResolver] warning - import Variety falhou: {e}")
+            return _empty_resolved(variety_name)
+
+        target = _normalize(variety_name)
+        if not target:
+            return _empty_resolved(variety_name)
+
+        try:
+            cache_key = "varieties:all"
+            varieties = _get_cached(cache_key)
+
+            if varieties is None:
+                varieties = Variety.query.all()
+                _set_cached(cache_key, varieties)
+        except Exception as e:
+            print(f"[EntityResolver] warning - query Variety falhou: {e}")
+            return _empty_resolved(variety_name)
+
+        scored = []
+        for variety in varieties:
+            score = _score_against(target, variety.name or "")
+            scored.append((variety, score))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        if not scored:
+            return _empty_resolved(variety_name)
+
+        best_variety, best_score = scored[0]
+
+        # Threshold mais baixo (0.70) porque variedades têm nomes técnicos
+        # e pequenas variações são comuns (ex: "AS 1868 PRO4" vs "AS1868PRO4")
+        if best_score < 0.70:
+            return {
+                "id": None,
+                "name": None,
+                "culture": None,
+                "raw_name": variety_name,
+                "score": round(float(best_score), 3),
+                "candidates": [
+                    {
+                        "id": v.id,
+                        "name": v.name,
+                        "culture": v.culture.name if v.culture else None,
+                        "score": round(float(s), 3),
+                    }
+                    for v, s in scored[:5]
+                    if s >= 0.55
+                ],
+            }
+
+        # Pega a cultura da variedade resolvida
+        culture_name = None
+        try:
+            if best_variety.culture:
+                culture_name = best_variety.culture.name
+        except Exception:
+            pass
+
+        return {
+            "id": best_variety.id,
+            "name": best_variety.name,
+            "culture": culture_name,
+            "raw_name": variety_name,
+            "score": round(float(best_score), 3),
+            "candidates": [
+                {
+                    "id": v.id,
+                    "name": v.name,
+                    "culture": v.culture.name if v.culture else None,
+                    "score": round(float(s), 3),
+                }
+                for v, s in scored[:5]
+            ],
+        }
