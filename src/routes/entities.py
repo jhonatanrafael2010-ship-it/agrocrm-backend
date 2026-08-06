@@ -75,11 +75,18 @@ def get_properties_for_map():
 
     result = []
     for prop in properties:
-        # Busca última visita desta propriedade
+        # Busca última visita - primeiro tenta pela propriedade, depois pelo cliente
         last_visit = Visit.query.filter(
             Visit.property_id == prop.id,
             Visit.status == 'done'
         ).order_by(Visit.date.desc()).first()
+
+        # Se não encontrou visita pela propriedade, busca pelo cliente
+        if not last_visit:
+            last_visit = Visit.query.filter(
+                Visit.client_id == prop.client_id,
+                Visit.status == 'done'
+            ).order_by(Visit.date.desc()).first()
 
         # Calcula dias desde última visita
         days_since_visit = None
