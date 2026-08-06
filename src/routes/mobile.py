@@ -28,6 +28,15 @@ from models import (
     Photo,
 )
 from utils.r2_client import get_r2_client
+from services.field_data_service import (
+    infer_field_data_category,
+    create_field_data_record,
+    search_field_data,
+    build_field_data_summary_text,
+    find_best_client_by_name,
+    find_best_property_by_name,
+    find_best_plot_by_name,
+)
 
 mobile_bp = Blueprint('mobile', __name__)
 
@@ -420,6 +429,12 @@ def _mob_new_message(session_id, message_text, photos, consultant, resolved_cons
 
     if action == "ROUTE_TO_CONFIRM":
         return "Nao ha nada pendente para confirmar. Envie uma visita ou comando."
+
+    if action == "ROUTE_TO_FIELD_DATA_SAVE":
+        return _mob_field_data_save(message_text, consultant)
+
+    if action == "ROUTE_TO_FIELD_DATA_QUERY":
+        return _mob_field_data_query(message_text, consultant)
 
     return "Acao reconhecida mas ainda nao suportada no app. Use: 'cliente Nome cultura fenologia data observacoes'."
 
@@ -1483,3 +1498,156 @@ def _mob_add_to_existing_visit(session_id: str, message_text: str, visit_id: int
             client_name = f" do {client.name}"
 
     return f"Adicionado a visita{client_name}:\n+ {new_observation}"
+
+
+# ============================================================
+# FIELD DATA (Dados de Campo / Anotacoes)
+# ============================================================
+
+def _extract_field_data_from_text(message_text: str) -> dict:
+    """Extrai cliente, categoria e conteudo da mensagem."""
+    raw = (message_text or "").strip()
+
+    client = None
+    client_name = None
+    category = infer_field_data_category(raw)
+    content = raw
+    property_name = None
+    plot_name = None
+
+    # Padroes para extrair cliente
+    client_patterns = [
+        r"cliente[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+categoria|\s+conteudo|\s+conteúdo|$)",
+        r"produtor[:\s]+([A-Za-zÀ-ÿ0-9\s\-]+?)(?=\s+categoria|\s+conteudo|\s+conteúdo|$)",
+    ]
+
+    for pattern in client_patterns:
+        match = re.search(pattern, raw, re.IGNORECASE)
+        if match:
+            client_name = match.group(1).strip()
+            break
+
+    if client_name:
+        client = find_best_client_by_name(client_name)
+
+    # Padroes para extrair categoria explicita
+    cat_match = re.search(r"categoria[:\s]+([A-Za-z_]+)", raw, re.IGNORECASE)
+    if cat_match:
+        explicit_cat = cat_match.group(1).strip().lower()
+        if explicit_cat in ("perfil_tecnico_cliente", "perfil_comercial_cliente",
+                           "manejo_fungicida", "manejo_inseticida", "manejo_herbicida",
+                           "manejo_adubacao", "comportamento_hibrido", "sanidade", "geral"):
+            category = explicit_cat
+
+    # Padroes para extrair conteudo
+    content_match = re.search(r"(?:conteudo|conteúdo)[:\s]+(.+)", raw, re.IGNORECASE | re.DOTALL)
+    if content_match:
+        content = content_match.group(1).strip()
+    else:
+        # Remove prefixos conhecidos do conteudo
+        content = re.sub(r"^anota(?:r)?\s+(?:no|nos)\s+dados?\s+de\s+campo[:\s]*", "", content, flags=re.IGNORECASE)
+        content = re.sub(r"^perfil\s+(?:tecnico|técnico|comercial)\s+(?:do\s+)?cliente[:\s]*", "", content, flags=re.IGNORECASE)
+        content = re.sub(r"cliente[:\s]+[A-Za-zÀ-ÿ0-9\s\-]+?\s*", "", content, flags=re.IGNORECASE)
+        content = re.sub(r"categoria[:\s]+[A-Za-z_]+\s*", "", content, flags=re.IGNORECASE)
+        content = content.strip()
+
+    return {
+        "client": client,
+        "client_name": client_name,
+        "category": category,
+        "content": content,
+        "property_name": property_name,
+        "plot_name": plot_name,
+    }
+
+
+def _mob_field_data_save(message_text: str, consultant) -> str:
+    """Salva dados de campo (anotacoes) sobre cliente."""
+
+    if not consultant:
+        return "Voce precisa estar vinculado a um consultor para salvar dados de campo."
+
+    extracted = _extract_field_data_from_text(message_text)
+
+    client = extracted.get("client")
+    if not client:
+        client_name = extracted.get("client_name") or ""
+        return (
+            f"Nao encontrei o cliente '{client_name}'.\n\n"
+            "Use o formato:\n"
+            "anota nos dados de campo:\n"
+            "Cliente: Nome do Cliente\n"
+            "Categoria: perfil_tecnico_cliente\n"
+            "Conteudo: sua anotacao aqui"
+        )
+
+    content = extracted.get("content") or ""
+    if not content or len(content) < 5:
+        return (
+            "Conteudo muito curto.\n\n"
+            "Use o formato:\n"
+            "anota nos dados de campo:\n"
+            "Cliente: Nome do Cliente\n"
+            "Conteudo: sua anotacao completa aqui"
+        )
+
+    category = extracted.get("category") or "geral"
+
+    # Busca propriedade se mencionada
+    property_obj = None
+    if extracted.get("property_name"):
+        property_obj = find_best_property_by_name(extracted.get("property_name"), client_id=client.id)
+
+    # Busca talhao se mencionado
+    plot_obj = None
+    if extracted.get("plot_name") and property_obj:
+        plot_obj = find_best_plot_by_name(extracted.get("plot_name"), property_id=property_obj.id)
+
+    row = create_field_data_record(
+        consultant_id=consultant.id,
+        client_id=client.id,
+        property_id=property_obj.id if property_obj else None,
+        plot_id=plot_obj.id if plot_obj else None,
+        culture=None,
+        variety=None,
+        category=category,
+        content=content,
+        source="mobile",
+    )
+
+    category_label = {
+        "perfil_tecnico_cliente": "Perfil Tecnico",
+        "perfil_comercial_cliente": "Perfil Comercial",
+        "manejo_fungicida": "Manejo Fungicida",
+        "manejo_inseticida": "Manejo Inseticida",
+        "manejo_herbicida": "Manejo Herbicida",
+        "manejo_adubacao": "Manejo Adubacao",
+        "comportamento_hibrido": "Comportamento Hibrido",
+        "sanidade": "Sanidade",
+        "geral": "Geral",
+    }.get(category, category)
+
+    return (
+        f"Anotacao salva!\n\n"
+        f"Cliente: {client.name}\n"
+        f"Categoria: {category_label}\n"
+        f"Conteudo: {content[:100]}{'...' if len(content) > 100 else ''}"
+    )
+
+
+def _mob_field_data_query(message_text: str, consultant) -> str:
+    """Consulta dados de campo (anotacoes) sobre cliente."""
+
+    extracted = _extract_field_data_from_text(message_text)
+
+    client = extracted.get("client")
+    category = extracted.get("category") if extracted.get("category") != "geral" else None
+
+    rows = search_field_data(
+        consultant_id=consultant.id if consultant else None,
+        client_id=client.id if client else None,
+        category=category,
+        limit=10,
+    )
+
+    return build_field_data_summary_text(rows)
