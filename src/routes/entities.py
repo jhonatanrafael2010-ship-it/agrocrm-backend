@@ -41,6 +41,74 @@ def get_properties():
     return jsonify([p.to_dict() for p in props]), 200
 
 
+@entities_bp.route('/properties/map', methods=['GET'])
+def get_properties_for_map():
+    """
+    Retorna propriedades com coordenadas para exibição no mapa.
+    Inclui dados do cliente e última visita.
+    Query params opcionais: consultant_id, region
+    """
+    from sqlalchemy import func
+
+    consultant_id = request.args.get('consultant_id', type=int)
+    region = request.args.get('region', type=str)
+
+    # Busca propriedades que têm coordenadas
+    q = Property.query.filter(
+        Property.latitude.isnot(None),
+        Property.longitude.isnot(None)
+    )
+
+    # Se filtrar por consultor, filtra pelos clientes que o consultor atende
+    if consultant_id:
+        # Busca clientes que têm visitas do consultor
+        client_ids_with_visits = db.session.query(Visit.client_id).filter(
+            Visit.consultant_id == consultant_id
+        ).distinct().subquery()
+        q = q.filter(Property.client_id.in_(client_ids_with_visits))
+
+    # Filtro por região do cliente
+    if region:
+        q = q.join(Client).filter(Client.region == region)
+
+    properties = q.all()
+
+    result = []
+    for prop in properties:
+        # Busca última visita desta propriedade
+        last_visit = Visit.query.filter(
+            Visit.property_id == prop.id,
+            Visit.status == 'done'
+        ).order_by(Visit.date.desc()).first()
+
+        # Calcula dias desde última visita
+        days_since_visit = None
+        if last_visit and last_visit.date:
+            days_since_visit = (datetime.now().date() - last_visit.date).days
+
+        result.append({
+            'id': prop.id,
+            'name': prop.name,
+            'latitude': prop.latitude,
+            'longitude': prop.longitude,
+            'area_ha': prop.area_ha,
+            'city_state': prop.city_state,
+            'client_id': prop.client_id,
+            'client_name': prop.client.name if prop.client else None,
+            'client_region': prop.client.region if prop.client else None,
+            'last_visit': {
+                'id': last_visit.id,
+                'date': last_visit.date.isoformat() if last_visit and last_visit.date else None,
+                'culture': last_visit.culture if last_visit else None,
+                'variety': last_visit.variety if last_visit else None,
+                'fenologia': last_visit.fenologia_real if last_visit else None,
+                'days_ago': days_since_visit,
+            } if last_visit else None,
+        })
+
+    return jsonify(result), 200
+
+
 @entities_bp.route('/properties/<int:prop_id>', methods=['GET'])
 def get_property(prop_id: int):
     p = Property.query.get(prop_id)
