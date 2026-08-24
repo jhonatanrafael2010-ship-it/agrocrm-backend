@@ -272,6 +272,8 @@ def sales_summary():
     """Resumo geral de vendas."""
     period_type = request.args.get('period_type')
     period_year = request.args.get('period_year')
+    region = request.args.get('region')
+    category = request.args.get('category')
 
     query = db.session.query(
         func.count(Sale.id).label('total_sales'),
@@ -279,6 +281,10 @@ def sales_summary():
         func.sum(Sale.quantity).label('total_quantity'),
     )
 
+    if category:
+        query = query.join(Product, Sale.product_id == Product.id).filter(Product.category == category)
+    if region:
+        query = query.join(Client, Sale.client_id == Client.id).filter(Client.region == region)
     if period_type:
         query = query.filter(Sale.period_type == period_type)
     if period_year:
@@ -286,7 +292,18 @@ def sales_summary():
 
     result = query.one()
 
-    clients_count = db.session.query(func.count(func.distinct(Sale.client_id))).scalar() or 0
+    # Query para clientes únicos com os mesmos filtros
+    clients_query = db.session.query(func.count(func.distinct(Sale.client_id)))
+    if category:
+        clients_query = clients_query.join(Product, Sale.product_id == Product.id).filter(Product.category == category)
+    if region:
+        clients_query = clients_query.join(Client, Sale.client_id == Client.id).filter(Client.region == region)
+    if period_type:
+        clients_query = clients_query.filter(Sale.period_type == period_type)
+    if period_year:
+        clients_query = clients_query.filter(Sale.period_year == period_year)
+
+    clients_count = clients_query.scalar() or 0
 
     return jsonify({
         'total_sales': result.total_sales or 0,
@@ -301,6 +318,7 @@ def sales_by_region():
     """Volume e faturamento por região."""
     period_type = request.args.get('period_type')
     period_year = request.args.get('period_year')
+    category = request.args.get('category')
 
     query = db.session.query(
         Client.region,
@@ -308,7 +326,12 @@ def sales_by_region():
         func.sum(Sale.value).label('total_value'),
         func.sum(Sale.quantity).label('total_quantity'),
         func.count(func.distinct(Sale.client_id)).label('clients_count'),
-    ).join(Client, Sale.client_id == Client.id).group_by(Client.region)
+    ).join(Client, Sale.client_id == Client.id)
+
+    if category:
+        query = query.join(Product, Sale.product_id == Product.id).filter(Product.category == category)
+
+    query = query.group_by(Client.region)
 
     if period_type:
         query = query.filter(Sale.period_type == period_type)
@@ -336,6 +359,7 @@ def sales_by_client():
     period_type = request.args.get('period_type')
     period_year = request.args.get('period_year')
     region = request.args.get('region')
+    category = request.args.get('category')
     limit = request.args.get('limit', 20, type=int)
 
     query = db.session.query(
@@ -345,7 +369,12 @@ def sales_by_client():
         func.count(Sale.id).label('sales_count'),
         func.sum(Sale.value).label('total_value'),
         func.sum(Sale.quantity).label('total_quantity'),
-    ).join(Client, Sale.client_id == Client.id).group_by(Client.id, Client.name, Client.region)
+    ).join(Client, Sale.client_id == Client.id)
+
+    if category:
+        query = query.join(Product, Sale.product_id == Product.id).filter(Product.category == category)
+
+    query = query.group_by(Client.id, Client.name, Client.region)
 
     if period_type:
         query = query.filter(Sale.period_type == period_type)
