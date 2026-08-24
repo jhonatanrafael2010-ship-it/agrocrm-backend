@@ -18,6 +18,7 @@ ESTRUTURA:
 - messaging.py    → /whatsapp/*, /telegram/* (webhooks, bindings)
 - visits.py       → /visits/*, /photos/*, /products/*, /phenology/*, /orphan-visits/*
 - mobile.py       → /mobile/chat, /mobile/pdf-proxy, /mobile/transcribe
+- sales.py        → /products, /sales CRUD + relatórios
 """
 
 # Re-exporta os blueprints para facilitar importação
@@ -32,6 +33,7 @@ from .chatbot import chatbot_bp
 from .messaging import messaging_bp
 from .visits import visits_bp
 from .mobile import mobile_bp
+from .sales import sales_bp
 
 __all__ = [
     'health_bp',
@@ -45,4 +47,5 @@ __all__ = [
     'messaging_bp',
     'visits_bp',
     'mobile_bp',
+    'sales_bp',
 ]

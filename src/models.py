@@ -644,6 +644,85 @@ class FieldData(db.Model):
 # Agent Decision Log
 # Registra cada decisao do agente para medir qualidade do bot.
 # ============================================================
+# ============================================================
+# 📦 Catálogo de Produtos
+# ============================================================
+class Product(db.Model):
+    __tablename__ = 'products'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False, index=True)
+    category = db.Column(db.String(50), nullable=False, index=True)  # Semente, Fertilizante, Defensivo, Nutrição Foliar, Biológico
+    default_unit = db.Column(db.String(20), nullable=False)  # Kg, L, Sacas, Ton
+    active = db.Column(db.Boolean, default=True, server_default='1')
+    created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+
+    sales = db.relationship('Sale', backref='product', lazy='dynamic')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'category': self.category,
+            'default_unit': self.default_unit,
+            'active': bool(self.active) if self.active is not None else True,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ============================================================
+# 💰 Vendas Efetivadas
+# ============================================================
+class Sale(db.Model):
+    __tablename__ = 'sales'
+    id = db.Column(db.Integer, primary_key=True)
+    client_id = db.Column(db.Integer, db.ForeignKey('clients.id'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('products.id'), nullable=False, index=True)
+    consultant_id = db.Column(db.Integer, db.ForeignKey('consultants.id'), nullable=True, index=True)
+
+    quantity = db.Column(db.Float, nullable=False)
+    unit = db.Column(db.String(20), nullable=False)  # Kg, L, Sacas, Ton
+    value = db.Column(db.Float, nullable=True)  # Valor em R$
+
+    period_type = db.Column(db.String(20), nullable=False, index=True)  # Safra, Safrinha
+    period_year = db.Column(db.String(10), nullable=False, index=True)  # 26/27, 27, 27/28, 28
+
+    sale_date = db.Column(db.Date, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
+    updated_at = db.Column(db.DateTime, server_default=db.func.now(), onupdate=db.func.now(), nullable=False)
+
+    client = db.relationship('Client', backref=db.backref('sales', lazy='dynamic'))
+    consultant = db.relationship('Consultant', backref=db.backref('sales', lazy='dynamic'))
+
+    def to_dict(self):
+        consultant_name = None
+        if self.consultant_id:
+            consultant_name = resolve_consultant_name(self.consultant_id)
+
+        return {
+            'id': self.id,
+            'client_id': self.client_id,
+            'client_name': self.client.name if self.client else None,
+            'client_region': self.client.region if self.client else None,
+            'product_id': self.product_id,
+            'product_name': self.product.name if self.product else None,
+            'product_category': self.product.category if self.product else None,
+            'consultant_id': self.consultant_id,
+            'consultant_name': consultant_name,
+            'quantity': self.quantity,
+            'unit': self.unit,
+            'value': self.value,
+            'period_type': self.period_type,
+            'period_year': self.period_year,
+            'period_label': f"{self.period_type} {self.period_year}",
+            'sale_date': self.sale_date.isoformat() if self.sale_date else None,
+            'notes': self.notes,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class AgentDecisionLog(db.Model):
     __tablename__ = "agent_decision_log"
 
