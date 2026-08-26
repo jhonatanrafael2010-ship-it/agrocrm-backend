@@ -219,12 +219,14 @@ def geocode_all_properties():
     """
     Atualiza o city_state de todas as propriedades que têm coordenadas
     mas não têm município preenchido (ou só têm sigla de estado).
-    Útil para preencher dados históricos.
+    Query param: force=1 para forçar atualização mesmo das que já têm cidade.
     """
     import time
     from utils.geocoding import reverse_geocode, _is_only_state_abbrev
 
-    # Busca propriedades com coordenadas mas sem cidade válida
+    force = request.args.get('force', '0') == '1'
+
+    # Busca propriedades com coordenadas
     properties = Property.query.filter(
         Property.latitude.isnot(None),
         Property.longitude.isnot(None)
@@ -233,12 +235,13 @@ def geocode_all_properties():
     updated = 0
     failed = 0
     skipped = 0
+    details = []
 
     for prop in properties:
         current = (prop.city_state or "").strip()
 
-        # Pula se já tem cidade válida
-        if current and len(current) > 2 and not _is_only_state_abbrev(current):
+        # Pula se já tem cidade válida (a menos que force=1)
+        if not force and current and len(current) > 2 and not _is_only_state_abbrev(current):
             skipped += 1
             continue
 
@@ -246,8 +249,10 @@ def geocode_all_properties():
         if city_state:
             prop.city_state = city_state
             updated += 1
+            details.append({"id": prop.id, "name": prop.name, "city_state": city_state})
         else:
             failed += 1
+            details.append({"id": prop.id, "name": prop.name, "error": "não encontrado"})
 
         # Rate limit: Nominatim pede max 1 req/seg
         time.sleep(1.1)
@@ -255,11 +260,12 @@ def geocode_all_properties():
     try:
         db.session.commit()
         return jsonify(
-            message=f'Geocodificação concluída',
+            message='Geocodificação concluída',
             updated=updated,
             failed=failed,
             skipped=skipped,
-            total=len(properties)
+            total=len(properties),
+            details=details
         ), 200
     except Exception as e:
         db.session.rollback()

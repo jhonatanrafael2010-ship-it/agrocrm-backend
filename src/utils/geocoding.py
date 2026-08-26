@@ -1,21 +1,37 @@
 # utils/geocoding.py
 """
 Geocodificação reversa para obter município a partir de coordenadas.
-Usa a API Nominatim do OpenStreetMap (gratuita, sem API key).
+Usa Nominatim (OpenStreetMap) como primário e BigDataCloud como fallback.
 """
 
 import requests
-from typing import Optional, Tuple
+from typing import Optional
 
 
 def reverse_geocode(lat: float, lng: float) -> Optional[str]:
     """
     Obtém o município (cidade) e estado a partir de coordenadas.
     Retorna string no formato "Cidade - UF" ou None se falhar.
+    Tenta Nominatim primeiro, depois BigDataCloud como fallback.
     """
     if lat is None or lng is None:
         return None
 
+    # Tenta Nominatim primeiro
+    result = _nominatim_reverse(lat, lng)
+    if result:
+        return result
+
+    # Fallback para BigDataCloud (gratuito, sem API key, bom para áreas rurais)
+    result = _bigdatacloud_reverse(lat, lng)
+    if result:
+        return result
+
+    return None
+
+
+def _nominatim_reverse(lat: float, lng: float) -> Optional[str]:
+    """Geocodificação via Nominatim (OpenStreetMap)."""
     try:
         url = "https://nominatim.openstreetmap.org/reverse"
         params = {
@@ -23,7 +39,6 @@ def reverse_geocode(lat: float, lng: float) -> Optional[str]:
             "lon": lng,
             "format": "json",
             "addressdetails": 1,
-            "accept-language": "pt-BR",
         }
         headers = {
             "User-Agent": "AgroCRM/1.0 (contact@agrocrm.com)"
@@ -35,7 +50,7 @@ def reverse_geocode(lat: float, lng: float) -> Optional[str]:
         data = response.json()
         address = data.get("address", {})
 
-        # Nominatim pode retornar cidade em diferentes campos dependendo do tamanho
+        # Nominatim retorna município em diferentes campos
         city = (
             address.get("city") or
             address.get("town") or
@@ -44,20 +59,54 @@ def reverse_geocode(lat: float, lng: float) -> Optional[str]:
             address.get("county")
         )
 
+        # Se não achou nos campos de address, tenta o name principal
+        # quando addresstype é "municipality"
+        if not city and data.get("addresstype") == "municipality":
+            city = data.get("name")
+
         state = address.get("state")
 
         if not city:
             return None
 
-        # Mapear nome do estado para sigla
         state_abbrev = _get_state_abbrev(state) if state else ""
-
         if state_abbrev:
             return f"{city} - {state_abbrev}"
         return city
 
     except Exception as e:
-        print(f"Erro na geocodificação reversa: {e}")
+        print(f"Nominatim erro: {e}")
+        return None
+
+
+def _bigdatacloud_reverse(lat: float, lng: float) -> Optional[str]:
+    """Geocodificação via BigDataCloud (fallback gratuito)."""
+    try:
+        url = "https://api.bigdatacloud.net/data/reverse-geocode-client"
+        params = {
+            "latitude": lat,
+            "longitude": lng,
+            "localityLanguage": "pt",
+        }
+
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+
+        data = response.json()
+
+        city = data.get("city") or data.get("locality")
+        state = data.get("principalSubdivision")
+
+        if not city:
+            return None
+
+        state_abbrev = _get_state_abbrev(state) if state else ""
+        if state_abbrev:
+            return f"{city} - {state_abbrev}"
+        return city
+
+    except Exception as e:
+        print(f"BigDataCloud erro: {e}")
         return None
 
 
