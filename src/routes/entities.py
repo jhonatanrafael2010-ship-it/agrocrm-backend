@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request
 
 from models import db, Client, Property, Plot, Planting, Visit
+from utils.geocoding import update_property_city_state
 
 entities_bp = Blueprint('entities', __name__)
 
@@ -151,6 +152,9 @@ def create_property():
             latitude=latitude,
             longitude=longitude,
         )
+        # Geocodificação reversa se tiver coordenadas e city_state vazio/incompleto
+        update_property_city_state(prop)
+
         db.session.add(prop)
         db.session.commit()
         return jsonify(message='property created', property=prop.to_dict()), 201
@@ -188,6 +192,10 @@ def update_property(prop_id: int):
     if 'longitude' in data:
         p.longitude = _parse_optional_float(data.get('longitude'))
 
+    # Se coordenadas foram atualizadas, tenta geocodificar
+    if 'latitude' in data or 'longitude' in data:
+        update_property_city_state(p)
+
     try:
         db.session.commit()
         return jsonify(message='property updated', property=p.to_dict()), 200
@@ -204,6 +212,58 @@ def delete_property(prop_id: int):
     db.session.delete(p)
     db.session.commit()
     return jsonify(message='property deleted'), 200
+
+
+@entities_bp.route('/properties/geocode-all', methods=['POST'])
+def geocode_all_properties():
+    """
+    Atualiza o city_state de todas as propriedades que têm coordenadas
+    mas não têm município preenchido (ou só têm sigla de estado).
+    Útil para preencher dados históricos.
+    """
+    import time
+    from utils.geocoding import reverse_geocode, _is_only_state_abbrev
+
+    # Busca propriedades com coordenadas mas sem cidade válida
+    properties = Property.query.filter(
+        Property.latitude.isnot(None),
+        Property.longitude.isnot(None)
+    ).all()
+
+    updated = 0
+    failed = 0
+    skipped = 0
+
+    for prop in properties:
+        current = (prop.city_state or "").strip()
+
+        # Pula se já tem cidade válida
+        if current and len(current) > 2 and not _is_only_state_abbrev(current):
+            skipped += 1
+            continue
+
+        city_state = reverse_geocode(prop.latitude, prop.longitude)
+        if city_state:
+            prop.city_state = city_state
+            updated += 1
+        else:
+            failed += 1
+
+        # Rate limit: Nominatim pede max 1 req/seg
+        time.sleep(1.1)
+
+    try:
+        db.session.commit()
+        return jsonify(
+            message=f'Geocodificação concluída',
+            updated=updated,
+            failed=failed,
+            skipped=skipped,
+            total=len(properties)
+        ), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify(message=str(e)), 500
 
 
 # ============================================================
