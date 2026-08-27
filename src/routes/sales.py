@@ -68,7 +68,7 @@ def create_product():
     if category not in valid_categories:
         return jsonify(message=f'Categoria inválida. Use: {", ".join(valid_categories)}'), 400
 
-    valid_units = ['Kg', 'L', 'Sacas', 'Ton']
+    valid_units = ['Kg', 'L', 'Sacas', 'Ton', 'BB']
     if default_unit not in valid_units:
         return jsonify(message=f'Unidade inválida. Use: {", ".join(valid_units)}'), 400
 
@@ -187,7 +187,7 @@ def create_sale():
     if not product:
         return jsonify(message='Produto não encontrado'), 404
 
-    valid_units = ['Kg', 'L', 'Sacas', 'Ton']
+    valid_units = ['Kg', 'L', 'Sacas', 'Ton', 'BB']
     if unit not in valid_units:
         return jsonify(message=f'Unidade inválida. Use: {", ".join(valid_units)}'), 400
 
@@ -556,5 +556,5 @@ def get_categories():
 @sales_bp.route('/products/units', methods=['GET'])
 def get_units():
     """Retorna unidades disponíveis."""
-    units = ['Kg', 'L', 'Sacas', 'Ton']
+    units = ['Kg', 'L', 'Sacas', 'Ton', 'BB']
     return jsonify(units), 200
