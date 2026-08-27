@@ -202,6 +202,11 @@ def create_sale():
         except ValueError:
             return jsonify(message='Data de venda inválida'), 400
 
+    culture = (data.get('culture') or '').strip() or None
+    valid_cultures = ['Soja', 'Milho', 'Algodão']
+    if culture and culture not in valid_cultures:
+        return jsonify(message=f'Cultura inválida. Use: {", ".join(valid_cultures)}'), 400
+
     sale = Sale(
         client_id=client_id,
         product_id=product_id,
@@ -211,6 +216,7 @@ def create_sale():
         value=float(data['value']) if data.get('value') else None,
         period_type=period_type,
         period_year=period_year,
+        culture=culture,
         sale_date=sale_date or date.today(),
         notes=data.get('notes'),
     )
@@ -243,6 +249,12 @@ def update_sale(sale_id: int):
         sale.period_type = data['period_type'].strip()
     if 'period_year' in data:
         sale.period_year = data['period_year'].strip()
+    if 'culture' in data:
+        culture = (data['culture'] or '').strip() or None
+        valid_cultures = ['Soja', 'Milho', 'Algodão']
+        if culture and culture not in valid_cultures:
+            return jsonify(message=f'Cultura inválida. Use: {", ".join(valid_cultures)}'), 400
+        sale.culture = culture
     if 'sale_date' in data and data['sale_date']:
         sale.sale_date = date.fromisoformat(data['sale_date'])
     if 'notes' in data:
@@ -558,3 +570,10 @@ def get_units():
     """Retorna unidades disponíveis."""
     units = ['Kg', 'L', 'Sacas', 'Ton', 'BB']
     return jsonify(units), 200
+
+
+@sales_bp.route('/sales/cultures', methods=['GET'])
+def get_cultures():
+    """Retorna culturas disponíveis para vendas."""
+    cultures = ['Soja', 'Milho', 'Algodão']
+    return jsonify(cultures), 200

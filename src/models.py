@@ -685,6 +685,7 @@ class Sale(db.Model):
 
     period_type = db.Column(db.String(20), nullable=False, index=True)  # Safra, Safrinha
     period_year = db.Column(db.String(10), nullable=False, index=True)  # 26/27, 27, 27/28, 28
+    culture = db.Column(db.String(50), nullable=True, index=True)  # Soja, Milho, Algodão
 
     sale_date = db.Column(db.Date, nullable=True)
     notes = db.Column(db.Text, nullable=True)
@@ -716,6 +717,7 @@ class Sale(db.Model):
             'period_type': self.period_type,
             'period_year': self.period_year,
             'period_label': f"{self.period_type} {self.period_year}",
+            'culture': self.culture,
             'sale_date': self.sale_date.isoformat() if self.sale_date else None,
             'notes': self.notes,
             'created_at': self.created_at.isoformat() if self.created_at else None,
