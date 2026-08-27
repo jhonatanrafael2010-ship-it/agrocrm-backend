@@ -107,6 +107,7 @@ from models import (
     FieldData,
 )
 from utils.r2_client import get_r2_client
+from utils.geocoding import update_property_city_state
 
 import json
 from difflib import SequenceMatcher
@@ -7466,6 +7467,9 @@ def create_property():
             latitude=latitude,
             longitude=longitude,
         )
+        # Geocodificação reversa se tiver coordenadas e city_state vazio/incompleto
+        update_property_city_state(prop)
+
         db.session.add(prop)
         db.session.commit()
         return jsonify(message='property created', property=prop.to_dict()), 201
@@ -7502,6 +7506,10 @@ def update_property(prop_id: int):
 
     if 'longitude' in data:
         p.longitude = parse_optional_float(data.get('longitude'))
+
+    # Se coordenadas foram atualizadas, tenta geocodificar
+    if 'latitude' in data or 'longitude' in data:
+        update_property_city_state(p)
 
     try:
         db.session.commit()
