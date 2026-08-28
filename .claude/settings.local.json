@@ -78,7 +78,8 @@
       "PowerShell(python \"C:\\\\Users\\\\jhona\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--agrocrm-backend\\\\8b1feeb0-e592-4697-b60d-8f5b14ce64fa\\\\scratchpad\\\\test_client.py\")",
       "PowerShell(python \"C:\\\\Users\\\\jhona\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--agrocrm-backend\\\\8b1feeb0-e592-4697-b60d-8f5b14ce64fa\\\\scratchpad\\\\test_multiline.py\")",
       "PowerShell(python \"C:\\\\Users\\\\jhona\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--agrocrm-backend\\\\8b1feeb0-e592-4697-b60d-8f5b14ce64fa\\\\scratchpad\\\\test_full.py\")",
-      "PowerShell(python \"C:\\\\Users\\\\jhona\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--agrocrm-backend\\\\8b1feeb0-e592-4697-b60d-8f5b14ce64fa\\\\scratchpad\\\\test_new.py\")"
+      "PowerShell(python \"C:\\\\Users\\\\jhona\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--agrocrm-backend\\\\8b1feeb0-e592-4697-b60d-8f5b14ce64fa\\\\scratchpad\\\\test_new.py\")",
+      "Bash(git show *)"
     ]
   }
 }
