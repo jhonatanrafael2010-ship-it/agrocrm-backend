@@ -1547,7 +1547,8 @@ def _extract_field_data_from_text(message_text: str) -> dict:
         # Remove prefixos conhecidos do conteudo
         content = re.sub(r"^anota(?:r)?\s+(?:no|nos)\s+dados?\s+de\s+campo[:\s]*", "", content, flags=re.IGNORECASE)
         content = re.sub(r"^perfil\s+(?:tecnico|técnico|comercial)\s+(?:do\s+)?cliente[:\s]*", "", content, flags=re.IGNORECASE)
-        content = re.sub(r"cliente[:\s]+[A-Za-zÀ-ÿ0-9\s\-]+?\s*", "", content, flags=re.IGNORECASE)
+        # Remove apenas linhas que começam com "Cliente:" (com dois pontos obrigatório)
+        content = re.sub(r"(?:^|\n)\s*cliente\s*:\s*[A-Za-zÀ-ÿ0-9\s\-]+", "", content, flags=re.IGNORECASE)
         content = re.sub(r"categoria[:\s]+[A-Za-z_]+\s*", "", content, flags=re.IGNORECASE)
         content = content.strip()
 
