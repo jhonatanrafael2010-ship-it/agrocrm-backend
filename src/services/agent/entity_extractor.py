@@ -556,7 +556,6 @@ class EntityExtractor:
 
     def extract_pdf_client_reference(self, text: str) -> Optional[str]:
         raw = (text or "").strip()
-        normalized = normalize_text(raw)
         patterns = [
             r"^pdf do cliente (.+)$",
             r"^pdf do (.+)$",
@@ -565,9 +564,9 @@ class EntityExtractor:
             r"^pdf da última do (.+)$",
         ]
         for pattern in patterns:
-            match = re.match(pattern, normalized)
+            match = re.match(pattern, raw, re.IGNORECASE)
             if match:
-                value = raw[match.start(1):].strip(" .,-")
+                value = match.group(1).strip(" .,-")
                 if value:
                     return value
         return None

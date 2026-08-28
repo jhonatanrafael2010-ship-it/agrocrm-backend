@@ -2749,8 +2749,8 @@ def extract_field_data_payload_from_text(message_text: str):
     category = infer_field_data_category(raw)
     content = raw
 
-    # Padrões para extrair cliente e conteúdo - aplicados diretamente no raw
-    # Usamos (?i) para case-insensitive e acentos opcionais onde necessário
+    # Padrões para extrair cliente e conteúdo juntos
+    # Formato: "anota nos dados de campo <CLIENTE>: <CONTEUDO>"
     marker_patterns = [
         r"salva(?:r)?\s+dados?\s+de\s+campo(?:\s+do)?\s+(.+?)\s*:\s*(.+)$",
         r"anota(?:r)?\s+(?:no|nos)\s+dados?\s+de\s+campo(?:\s+que)?\s+(.+?)\s*:\s*(.+)$",
@@ -2768,10 +2768,29 @@ def extract_field_data_payload_from_text(message_text: str):
             content = match.group(2).strip()
             break
 
+    # Usa parse_chatbot_message para extrair entidades
+    parsed = parse_chatbot_message(raw) or {}
+
+    # Se não encontrou cliente pelos marker_patterns, tenta via parse_chatbot_message
+    if not client_name:
+        client_name = parsed.get("client_name")
+
     if client_name:
         client, _, _ = find_client_by_name(client_name)
 
-    parsed = parse_chatbot_message(raw) or {}
+    # Se marker_patterns não casou, o conteúdo ainda é o raw completo.
+    # Remove prefixos conhecidos para limpar o conteúdo.
+    if content == raw:
+        # Remove prefixo "anota nos dados de campo:"
+        content = re.sub(
+            r"^anota(?:r)?\s+(?:no|nos)\s+dados?\s+de\s+campo\s*:\s*",
+            "", content, flags=re.IGNORECASE
+        ).strip()
+        # Remove "Cliente: Nome" se existir no começo ou fim
+        content = re.sub(
+            r"(?:^|\n)cliente\s*:\s*[A-Za-zÀ-ÿ0-9\s\-]+\s*$",
+            "", content, flags=re.IGNORECASE
+        ).strip()
 
     return {
         "client": client,
