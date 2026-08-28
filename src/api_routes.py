@@ -565,9 +565,9 @@ def parse_summary_edit_command(text: str):
     ]
 
     for pattern, field_name in patterns:
-        match = re.match(pattern, normalized)
+        match = re.match(pattern, raw, re.IGNORECASE)
         if match:
-            value = raw[match.start(1):].strip()
+            value = match.group(1).strip()
             return {
                 "field": field_name,
                 "value": value
@@ -2744,29 +2744,28 @@ def extract_prefill_from_message_text(message_text: str):
 
 def extract_field_data_payload_from_text(message_text: str):
     raw = (message_text or "").strip()
-    normalized = normalize_lookup_text(raw)
 
     client = None
     category = infer_field_data_category(raw)
     content = raw
 
+    # Padrões para extrair cliente e conteúdo - aplicados diretamente no raw
+    # Usamos (?i) para case-insensitive e acentos opcionais onde necessário
     marker_patterns = [
         r"salva(?:r)?\s+dados?\s+de\s+campo(?:\s+do)?\s+(.+?)\s*:\s*(.+)$",
         r"anota(?:r)?\s+(?:no|nos)\s+dados?\s+de\s+campo(?:\s+que)?\s+(.+?)\s*:\s*(.+)$",
         r"perfil comercial do cliente\s+(.+?)\s*:\s*(.+)$",
-        r"perfil tecnico do cliente\s+(.+?)\s*:\s*(.+)$",
-        r"perfil técnico do cliente\s+(.+?)\s*:\s*(.+)$",
+        r"perfil t[eé]cnico do cliente\s+(.+?)\s*:\s*(.+)$",
         r"perfil do produtor\s+(.+?)\s*:\s*(.+)$",
     ]
-
 
     client_name = None
 
     for pattern in marker_patterns:
-        match = re.search(pattern, normalized, re.IGNORECASE)
+        match = re.search(pattern, raw, re.IGNORECASE)
         if match:
-            client_name = raw[match.start(1):match.end(1)].strip()
-            content = raw[match.start(2):match.end(2)].strip()
+            client_name = match.group(1).strip()
+            content = match.group(2).strip()
             break
 
     if client_name:
@@ -6891,9 +6890,9 @@ def parse_pdf_client_reference(text: str) -> str | None:
     ]
 
     for pattern in patterns:
-        match = re.match(pattern, normalized)
+        match = re.match(pattern, raw, re.IGNORECASE)
         if match:
-            value = raw[match.start(1):].strip(" .,-")
+            value = match.group(1).strip(" .,-")
             if value:
                 return value
 
