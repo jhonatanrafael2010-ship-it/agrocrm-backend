@@ -72,10 +72,27 @@ def create_product():
     if default_unit not in valid_units:
         return jsonify(message=f'Unidade inválida. Use: {", ".join(valid_units)}'), 400
 
+    culture = (data.get('culture') or '').strip() or None
+    seeds_per_ha = data.get('seeds_per_ha')
+
+    if category == 'Semente':
+        valid_cultures = ['Soja', 'Milho', 'Algodão']
+        if culture and culture not in valid_cultures:
+            return jsonify(message=f'Cultura inválida. Use: {", ".join(valid_cultures)}'), 400
+        if seeds_per_ha:
+            try:
+                seeds_per_ha = int(seeds_per_ha)
+                if seeds_per_ha < 1000 or seeds_per_ha > 1000000:
+                    return jsonify(message='População deve estar entre 1.000 e 1.000.000 sementes/ha'), 400
+            except (ValueError, TypeError):
+                return jsonify(message='População deve ser um número inteiro'), 400
+
     product = Product(
         name=name,
         category=category,
         default_unit=default_unit,
+        culture=culture,
+        seeds_per_ha=seeds_per_ha if category == 'Semente' else None,
         active=True,
     )
     db.session.add(product)
@@ -99,6 +116,22 @@ def update_product(product_id: int):
         product.default_unit = data['default_unit'].strip()
     if 'active' in data:
         product.active = bool(data['active'])
+    if 'culture' in data:
+        culture = (data['culture'] or '').strip() or None
+        valid_cultures = ['Soja', 'Milho', 'Algodão']
+        if culture and culture not in valid_cultures:
+            return jsonify(message=f'Cultura inválida. Use: {", ".join(valid_cultures)}'), 400
+        product.culture = culture
+    if 'seeds_per_ha' in data:
+        seeds_per_ha = data['seeds_per_ha']
+        if seeds_per_ha is not None:
+            try:
+                seeds_per_ha = int(seeds_per_ha)
+                if seeds_per_ha < 1000 or seeds_per_ha > 1000000:
+                    return jsonify(message='População deve estar entre 1.000 e 1.000.000 sementes/ha'), 400
+            except (ValueError, TypeError):
+                return jsonify(message='População deve ser um número inteiro'), 400
+        product.seeds_per_ha = seeds_per_ha
 
     db.session.commit()
     return jsonify(message='Produto atualizado', product=product.to_dict()), 200

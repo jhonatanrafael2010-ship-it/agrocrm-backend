@@ -652,7 +652,9 @@ class Product(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(200), nullable=False, index=True)
     category = db.Column(db.String(50), nullable=False, index=True)  # Semente, Fertilizante, Defensivo, Nutrição Foliar, Biológico
-    default_unit = db.Column(db.String(20), nullable=False)  # Kg, L, Sacas, Ton
+    default_unit = db.Column(db.String(20), nullable=False)  # Kg, L, Sacas, Ton, BB
+    culture = db.Column(db.String(50), nullable=True, index=True)  # Soja, Milho, Algodão - para sementes
+    seeds_per_ha = db.Column(db.Integer, nullable=True)  # População de sementes/ha (ex: 300000 para soja)
     active = db.Column(db.Boolean, default=True, server_default='1')
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
@@ -664,6 +666,8 @@ class Product(db.Model):
             'name': self.name,
             'category': self.category,
             'default_unit': self.default_unit,
+            'culture': self.culture,
+            'seeds_per_ha': self.seeds_per_ha,
             'active': bool(self.active) if self.active is not None else True,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
