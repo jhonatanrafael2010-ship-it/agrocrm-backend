@@ -174,6 +174,7 @@ from routes import (
     visits_bp,
     mobile_bp,
     sales_bp,
+    routing_bp,
 )
 
 # Registra os blueprints migrados no blueprint principal
@@ -189,6 +190,7 @@ bp.register_blueprint(messaging_bp)
 bp.register_blueprint(visits_bp)
 bp.register_blueprint(mobile_bp)
 bp.register_blueprint(sales_bp)
+bp.register_blueprint(routing_bp)
 
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/opt/render/project/src/uploads")
 BUILD_STAMP = "routes_2026_05_21_refactor_01"

@@ -19,6 +19,7 @@ ESTRUTURA:
 - visits.py       → /visits/*, /photos/*, /products/*, /phenology/*, /orphan-visits/*
 - mobile.py       → /mobile/chat, /mobile/pdf-proxy, /mobile/transcribe
 - sales.py        → /products, /sales CRUD + relatórios
+- routing.py      → /routing/* (cálculo de rotas com Google Directions)
 """
 
 # Re-exporta os blueprints para facilitar importação
@@ -34,6 +35,7 @@ from .messaging import messaging_bp
 from .visits import visits_bp
 from .mobile import mobile_bp
 from .sales import sales_bp
+from .routing import routing_bp
 
 __all__ = [
     'health_bp',
@@ -48,4 +50,5 @@ __all__ = [
     'visits_bp',
     'mobile_bp',
     'sales_bp',
+    'routing_bp',
 ]
