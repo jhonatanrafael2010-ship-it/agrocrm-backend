@@ -956,7 +956,7 @@ def add_visit_product(visit_id):
     return jsonify({"success": True, "product": product.to_dict()}), 201
 
 
-@visits_bp.route("/products/<int:product_id>", methods=["PUT"])
+@visits_bp.route("/visit-products/<int:product_id>", methods=["PUT"])
 def update_visit_product(product_id):
     data = request.get_json()
     product = VisitProduct.query.get_or_404(product_id)
@@ -974,7 +974,7 @@ def update_visit_product(product_id):
     return jsonify({"success": True, "product": product.to_dict()})
 
 
-@visits_bp.route("/products/<int:product_id>", methods=["DELETE"])
+@visits_bp.route("/visit-products/<int:product_id>", methods=["DELETE"])
 def delete_visit_product(product_id):
     product = VisitProduct.query.get_or_404(product_id)
     db.session.delete(product)
