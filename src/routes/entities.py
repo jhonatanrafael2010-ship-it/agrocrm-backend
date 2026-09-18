@@ -46,10 +46,11 @@ def get_properties():
 def get_properties_for_map():
     """
     Retorna propriedades com coordenadas para exibição no mapa.
-    Inclui dados do cliente e última visita.
+    Inclui dados do cliente, última visita e vendas por período.
     Query params opcionais: consultant_id, region
     """
     from sqlalchemy import func
+    from models import Sale
 
     consultant_id = request.args.get('consultant_id', type=int)
     region = request.args.get('region', type=str)
@@ -74,6 +75,18 @@ def get_properties_for_map():
 
     properties = q.all()
 
+    # Busca todas as vendas de uma vez para evitar N+1
+    client_ids = list(set(p.client_id for p in properties))
+    all_sales = Sale.query.filter(Sale.client_id.in_(client_ids)).all() if client_ids else []
+
+    # Agrupa vendas por cliente e período
+    sales_by_client: dict = {}
+    for sale in all_sales:
+        if sale.client_id not in sales_by_client:
+            sales_by_client[sale.client_id] = set()
+        period_key = f"{sale.period_type} {sale.period_year}"
+        sales_by_client[sale.client_id].add(period_key)
+
     result = []
     for prop in properties:
         # Busca última visita - primeiro tenta pela propriedade, depois pelo cliente
@@ -94,6 +107,9 @@ def get_properties_for_map():
         if last_visit and last_visit.date:
             days_since_visit = (datetime.now().date() - last_visit.date).days
 
+        # Períodos de vendas do cliente
+        client_sales_periods = list(sales_by_client.get(prop.client_id, []))
+
         result.append({
             'id': prop.id,
             'name': prop.name,
@@ -104,6 +120,7 @@ def get_properties_for_map():
             'client_id': prop.client_id,
             'client_name': prop.client.name if prop.client else None,
             'client_region': prop.client.region if prop.client else None,
+            'sales_periods': client_sales_periods,
             'last_visit': {
                 'id': last_visit.id,
                 'date': last_visit.date.isoformat() if last_visit and last_visit.date else None,
