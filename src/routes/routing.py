@@ -57,6 +57,7 @@ def calculate_route():
     origin = data.get('origin')
     destinations = data.get('destinations', [])
     return_to_origin = data.get('return_to_origin', False)
+    via_points = data.get('via_points', [])  # Pontos de passagem (não são paradas)
 
     if not origin or not origin.get('lat') or not origin.get('lng'):
         return jsonify(success=False, error='Origem é obrigatória'), 400
@@ -69,6 +70,9 @@ def calculate_route():
 
     # Formata origem
     origin_str = f"{origin['lat']},{origin['lng']}"
+
+    # Formata via_points com prefixo "via:" (passagem sem parada)
+    via_points_str = [f"via:{vp['lat']},{vp['lng']}" for vp in via_points]
 
     # Se só tem 1 destino, não precisa otimizar
     if len(destinations) == 1:
@@ -85,7 +89,10 @@ def calculate_route():
 
         if return_to_origin:
             params['destination'] = origin_str
-            params['waypoints'] = dest_str
+            all_waypoints = [dest_str] + via_points_str
+            params['waypoints'] = '|'.join(all_waypoints)
+        elif via_points_str:
+            params['waypoints'] = '|'.join(via_points_str)
     else:
         # Múltiplos destinos - usar waypoints com otimização
         waypoints = [f"{d['lat']},{d['lng']}" for d in destinations]
@@ -93,11 +100,14 @@ def calculate_route():
         # O último destino é o destino final (ou origem se return_to_origin)
         if return_to_origin:
             dest_str = origin_str
-            waypoints_str = f"optimize:true|{'|'.join(waypoints)}"
+            # Via points não são otimizados, vão no final
+            all_waypoints = waypoints + via_points_str
+            waypoints_str = f"optimize:true|{'|'.join(all_waypoints)}"
         else:
             dest_str = waypoints.pop()  # último ponto é o destino
-            if waypoints:
-                waypoints_str = f"optimize:true|{'|'.join(waypoints)}"
+            if waypoints or via_points_str:
+                all_waypoints = waypoints + via_points_str
+                waypoints_str = f"optimize:true|{'|'.join(all_waypoints)}"
             else:
                 waypoints_str = None
 
