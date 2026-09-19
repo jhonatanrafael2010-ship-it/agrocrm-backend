@@ -187,9 +187,21 @@ def calculate_route():
                 'end_address': leg.get('end_address', ''),
             })
 
-        # Decodifica a polyline no backend e envia as coordenadas prontas
-        overview_polyline = route.get('overview_polyline', {}).get('points', '')
-        decoded_coords = decode_polyline(overview_polyline)
+        # Decodifica TODAS as polylines detalhadas de cada step (como o Google Maps faz)
+        all_coords = []
+        for leg in legs:
+            for step in leg.get('steps', []):
+                step_polyline = step.get('polyline', {}).get('points', '')
+                if step_polyline:
+                    step_coords = decode_polyline(step_polyline)
+                    all_coords.extend(step_coords)
+
+        # Se não tiver steps, usa overview como fallback
+        if not all_coords:
+            overview_polyline = route.get('overview_polyline', {}).get('points', '')
+            all_coords = decode_polyline(overview_polyline)
+
+        decoded_coords = all_coords
 
         return jsonify(
             success=True,
