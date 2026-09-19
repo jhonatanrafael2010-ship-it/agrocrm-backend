@@ -17,36 +17,19 @@ GOOGLE_API_KEY = os.environ.get('GOOGLE_DIRECTIONS_API_KEY', '')
 def calculate_route():
     """
     Calcula rota otimizada entre origem e múltiplos destinos.
+    Via points são usados DEPOIS da otimização para ajustar o trajeto.
 
     Body JSON:
     {
-        "origin": {"lat": -15.123, "lng": -56.456},
+        "origin": {"lat": -15.123, "lng": -56.456, "name": "Minha Casa"},
         "destinations": [
             {"id": 1, "name": "Cliente A", "lat": -15.200, "lng": -56.500},
             {"id": 2, "name": "Cliente B", "lat": -15.300, "lng": -56.600},
         ],
-        "return_to_origin": true  // opcional, se deve voltar ao ponto inicial
-    }
-
-    Retorna:
-    {
-        "success": true,
-        "route": {
-            "total_distance_km": 150.5,
-            "total_duration_min": 180,
-            "optimized_order": [2, 1],  // IDs na ordem otimizada
-            "legs": [
-                {
-                    "from": "Origem",
-                    "to": "Cliente B",
-                    "distance_km": 50.2,
-                    "duration_min": 60,
-                },
-                ...
-            ],
-            "polyline": "encoded_polyline_string",  // para desenhar no mapa
-            "waypoints_order": [1, 0]  // índice original reordenado
-        }
+        "return_to_origin": true,
+        "via_points": [
+            {"lat": -15.250, "lng": -56.550, "name": "Via Point 1"}
+        ]
     }
     """
     if not GOOGLE_API_KEY:
@@ -57,7 +40,7 @@ def calculate_route():
     origin = data.get('origin')
     destinations = data.get('destinations', [])
     return_to_origin = data.get('return_to_origin', False)
-    via_points = data.get('via_points', [])  # Pontos de passagem (não são paradas)
+    via_points = data.get('via_points', [])
 
     if not origin or not origin.get('lat') or not origin.get('lng'):
         return jsonify(success=False, error='Origem é obrigatória'), 400
@@ -68,68 +51,106 @@ def calculate_route():
     if len(destinations) > 25:
         return jsonify(success=False, error='Máximo de 25 destinos por rota'), 400
 
-    # Formata origem
     origin_str = f"{origin['lat']},{origin['lng']}"
 
-    # Formata via_points com prefixo "via:" (passagem sem parada)
-    via_points_str = [f"via:{vp['lat']},{vp['lng']}" for vp in via_points]
-
-    # Se só tem 1 destino, não precisa otimizar
-    if len(destinations) == 1:
-        dest = destinations[0]
-        dest_str = f"{dest['lat']},{dest['lng']}"
-
-        params = {
-            'origin': origin_str,
-            'destination': dest_str,
-            'mode': 'driving',
-            'language': 'pt-BR',
-            'key': GOOGLE_API_KEY,
-        }
-
-        if return_to_origin:
-            params['destination'] = origin_str
-            all_waypoints = [dest_str] + via_points_str
-            params['waypoints'] = '|'.join(all_waypoints)
-        elif via_points_str:
-            params['waypoints'] = '|'.join(via_points_str)
-    else:
-        # Múltiplos destinos - usar waypoints com otimização
-        waypoints = [f"{d['lat']},{d['lng']}" for d in destinations]
-
-        # O último destino é o destino final (ou origem se return_to_origin)
-        if return_to_origin:
-            dest_str = origin_str
-            # Via points não são otimizados, vão no final
-            all_waypoints = waypoints + via_points_str
-            waypoints_str = f"optimize:true|{'|'.join(all_waypoints)}"
-        else:
-            dest_str = waypoints.pop()  # último ponto é o destino
-            if waypoints or via_points_str:
-                all_waypoints = waypoints + via_points_str
-                waypoints_str = f"optimize:true|{'|'.join(all_waypoints)}"
-            else:
-                waypoints_str = None
-
-        params = {
-            'origin': origin_str,
-            'destination': dest_str,
-            'mode': 'driving',
-            'language': 'pt-BR',
-            'key': GOOGLE_API_KEY,
-        }
-
-        if return_to_origin or len(destinations) > 1:
-            # Todos os destinos são waypoints quando volta à origem
-            if return_to_origin:
-                waypoints = [f"{d['lat']},{d['lng']}" for d in destinations]
-                waypoints_str = f"optimize:true|{'|'.join(waypoints)}"
-            params['waypoints'] = waypoints_str
-
     try:
+        # ============================================================
+        # PASSO 1: Calcular ordem otimizada (sem via_points)
+        # ============================================================
+        waypoint_order = []
+
+        if len(destinations) == 1:
+            # Só 1 destino - não precisa otimizar
+            waypoint_order = [0]
+            dest_str = f"{destinations[0]['lat']},{destinations[0]['lng']}"
+            if return_to_origin:
+                dest_str = origin_str
+                first_waypoints = [f"{destinations[0]['lat']},{destinations[0]['lng']}"]
+            else:
+                first_waypoints = []
+        else:
+            # Múltiplos destinos - otimiza primeiro
+            all_dest_strs = [f"{d['lat']},{d['lng']}" for d in destinations]
+
+            if return_to_origin:
+                dest_str = origin_str
+                first_waypoints = all_dest_strs
+            else:
+                dest_str = all_dest_strs[-1]
+                first_waypoints = all_dest_strs[:-1]
+
+            if first_waypoints:
+                # Primeira chamada para obter ordem otimizada
+                opt_params = {
+                    'origin': origin_str,
+                    'destination': dest_str,
+                    'waypoints': f"optimize:true|{'|'.join(first_waypoints)}",
+                    'mode': 'driving',
+                    'language': 'pt-BR',
+                    'key': GOOGLE_API_KEY,
+                }
+
+                opt_response = requests.get(
+                    'https://maps.googleapis.com/maps/api/directions/json',
+                    params=opt_params,
+                    timeout=30
+                )
+                opt_result = opt_response.json()
+
+                if opt_result.get('status') == 'OK':
+                    waypoint_order = opt_result['routes'][0].get('waypoint_order', [])
+                else:
+                    # Se falhou a otimização, usa ordem original
+                    waypoint_order = list(range(len(first_waypoints)))
+
+        # ============================================================
+        # PASSO 2: Calcular rota final COM via_points (sem otimizar)
+        # ============================================================
+
+        # Reordena destinos conforme otimização
+        if waypoint_order and len(destinations) > 1:
+            if return_to_origin:
+                ordered_dests = [destinations[i] for i in waypoint_order]
+            else:
+                ordered_dests = [destinations[i] for i in waypoint_order] + [destinations[-1]]
+        else:
+            ordered_dests = destinations
+
+        # Monta waypoints na ordem otimizada + via_points intercalados
+        final_waypoints = []
+
+        # Adiciona destinos na ordem otimizada
+        for dest in ordered_dests:
+            if return_to_origin or dest != ordered_dests[-1]:
+                final_waypoints.append(f"{dest['lat']},{dest['lng']}")
+
+        # Adiciona via_points com prefixo "via:" - eles forçam passagem sem parar
+        # Os via_points são adicionados ao final, o Google vai intercalá-los no trajeto
+        for vp in via_points:
+            final_waypoints.append(f"via:{vp['lat']},{vp['lng']}")
+
+        # Define destino final
+        if return_to_origin:
+            final_dest = origin_str
+        else:
+            final_dest = f"{ordered_dests[-1]['lat']},{ordered_dests[-1]['lng']}"
+
+        # Monta requisição final (SEM optimize:true para preservar via_points)
+        final_params = {
+            'origin': origin_str,
+            'destination': final_dest,
+            'mode': 'driving',
+            'language': 'pt-BR',
+            'key': GOOGLE_API_KEY,
+        }
+
+        if final_waypoints:
+            # NÃO usa optimize:true aqui para respeitar os via_points
+            final_params['waypoints'] = '|'.join(final_waypoints)
+
         response = requests.get(
             'https://maps.googleapis.com/maps/api/directions/json',
-            params=params,
+            params=final_params,
             timeout=30
         )
         result = response.json()
@@ -138,7 +159,9 @@ def calculate_route():
             error_msg = result.get('error_message', result.get('status', 'Erro desconhecido'))
             return jsonify(success=False, error=f'Google API: {error_msg}'), 400
 
-        # Processa resultado
+        # ============================================================
+        # PASSO 3: Processar resultado
+        # ============================================================
         route = result['routes'][0]
         legs = route['legs']
 
@@ -146,47 +169,33 @@ def calculate_route():
         total_distance_m = sum(leg['distance']['value'] for leg in legs)
         total_duration_s = sum(leg['duration']['value'] for leg in legs)
 
-        # Ordem otimizada dos waypoints (se houver)
-        waypoint_order = result.get('routes', [{}])[0].get('waypoint_order', [])
-
         # Monta ordem otimizada dos IDs
-        optimized_order = []
-        if waypoint_order and destinations:
-            for idx in waypoint_order:
-                if idx < len(destinations):
-                    optimized_order.append(destinations[idx]['id'])
-            # Se não volta à origem, adiciona o último destino
-            if not return_to_origin and len(destinations) > 1:
-                optimized_order.append(destinations[-1]['id'])
-        elif len(destinations) == 1:
-            optimized_order = [destinations[0]['id']]
-        else:
-            optimized_order = [d['id'] for d in destinations]
+        optimized_order = [d['id'] for d in ordered_dests]
 
         # Monta legs detalhadas
         legs_detail = []
-        dest_names = {d['id']: d.get('name', f"Ponto {d['id']}") for d in destinations}
 
+        leg_idx = 0
         for i, leg in enumerate(legs):
+            # Nome da origem da leg
             if i == 0:
                 from_name = origin.get('name', 'Origem')
+            elif leg_idx > 0 and leg_idx <= len(ordered_dests):
+                from_name = ordered_dests[leg_idx - 1].get('name', f"Ponto {leg_idx}")
             else:
-                # Pega o nome do destino anterior
-                if waypoint_order and i - 1 < len(waypoint_order):
-                    prev_idx = waypoint_order[i - 1]
-                    from_name = destinations[prev_idx].get('name', f"Ponto {prev_idx + 1}")
-                else:
-                    from_name = f"Ponto {i}"
+                from_name = f"Via {i}"
 
-            if i == len(legs) - 1 and return_to_origin:
-                to_name = origin.get('name', 'Origem')
-            elif waypoint_order and i < len(waypoint_order):
-                to_idx = waypoint_order[i]
-                to_name = destinations[to_idx].get('name', f"Ponto {to_idx + 1}")
-            elif i < len(destinations):
-                to_name = destinations[i].get('name', f"Ponto {i + 1}")
+            # Nome do destino da leg
+            if i == len(legs) - 1:
+                if return_to_origin:
+                    to_name = origin.get('name', 'Origem')
+                else:
+                    to_name = ordered_dests[-1].get('name', 'Destino')
+            elif leg_idx < len(ordered_dests):
+                to_name = ordered_dests[leg_idx].get('name', f"Ponto {leg_idx + 1}")
+                leg_idx += 1
             else:
-                to_name = origin.get('name', 'Origem') if return_to_origin else "Destino"
+                to_name = f"Via {i + 1}"
 
             legs_detail.append({
                 'from': from_name,
@@ -197,7 +206,7 @@ def calculate_route():
                 'end_address': leg.get('end_address', ''),
             })
 
-        # Decodifica TODAS as polylines detalhadas de cada step (como o Google Maps faz)
+        # Decodifica TODAS as polylines detalhadas de cada step
         all_coords = []
         for leg in legs:
             for step in leg.get('steps', []):
@@ -211,8 +220,6 @@ def calculate_route():
             overview_polyline = route.get('overview_polyline', {}).get('points', '')
             all_coords = decode_polyline(overview_polyline)
 
-        decoded_coords = all_coords
-
         return jsonify(
             success=True,
             route={
@@ -222,7 +229,8 @@ def calculate_route():
                 'optimized_order': optimized_order,
                 'waypoints_order': waypoint_order,
                 'legs': legs_detail,
-                'coordinates': decoded_coords,
+                'coordinates': all_coords,
+                'via_points_count': len(via_points),
             }
         ), 200
 
@@ -231,6 +239,8 @@ def calculate_route():
     except requests.RequestException as e:
         return jsonify(success=False, error=f'Erro de conexão: {str(e)}'), 500
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify(success=False, error=f'Erro interno: {str(e)}'), 500
 
 
