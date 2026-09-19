@@ -187,21 +187,9 @@ def calculate_route():
                 'end_address': leg.get('end_address', ''),
             })
 
-        # Polyline para desenhar no mapa - usa polylines detalhadas de cada leg
-        # A overview_polyline é simplificada demais e pode "cortar caminho"
-        detailed_polylines = []
-        for leg in legs:
-            for step in leg.get('steps', []):
-                step_polyline = step.get('polyline', {}).get('points', '')
-                if step_polyline:
-                    detailed_polylines.append(step_polyline)
-
-        # Concatena todas as polylines detalhadas
-        # Se não tiver steps, usa a overview como fallback
-        if detailed_polylines:
-            polyline = '|'.join(detailed_polylines)  # Separador para o frontend decodificar cada uma
-        else:
-            polyline = route.get('overview_polyline', {}).get('points', '')
+        # Decodifica a polyline no backend e envia as coordenadas prontas
+        overview_polyline = route.get('overview_polyline', {}).get('points', '')
+        decoded_coords = decode_polyline(overview_polyline)
 
         return jsonify(
             success=True,
@@ -212,7 +200,7 @@ def calculate_route():
                 'optimized_order': optimized_order,
                 'waypoints_order': waypoint_order,
                 'legs': legs_detail,
-                'polyline': polyline,
+                'coordinates': decoded_coords,
             }
         ), 200
 
@@ -232,6 +220,49 @@ def format_duration(seconds: int) -> str:
     if hours > 0:
         return f"{hours}h {minutes}min"
     return f"{minutes}min"
+
+
+def decode_polyline(encoded: str) -> list:
+    """Decodifica polyline encoded do Google para lista de [lat, lng]."""
+    if not encoded:
+        return []
+
+    points = []
+    index = 0
+    lat = 0
+    lng = 0
+    length = len(encoded)
+
+    while index < length:
+        # Decodifica latitude
+        shift = 0
+        result = 0
+        while True:
+            b = ord(encoded[index]) - 63
+            index += 1
+            result |= (b & 0x1f) << shift
+            shift += 5
+            if b < 0x20:
+                break
+        dlat = ~(result >> 1) if result & 1 else result >> 1
+        lat += dlat
+
+        # Decodifica longitude
+        shift = 0
+        result = 0
+        while True:
+            b = ord(encoded[index]) - 63
+            index += 1
+            result |= (b & 0x1f) << shift
+            shift += 5
+            if b < 0x20:
+                break
+        dlng = ~(result >> 1) if result & 1 else result >> 1
+        lng += dlng
+
+        points.append([lat / 1e5, lng / 1e5])
+
+    return points
 
 
 @routing_bp.route('/routing/test', methods=['GET'])
