@@ -187,8 +187,21 @@ def calculate_route():
                 'end_address': leg.get('end_address', ''),
             })
 
-        # Polyline para desenhar no mapa
-        polyline = route.get('overview_polyline', {}).get('points', '')
+        # Polyline para desenhar no mapa - usa polylines detalhadas de cada leg
+        # A overview_polyline é simplificada demais e pode "cortar caminho"
+        detailed_polylines = []
+        for leg in legs:
+            for step in leg.get('steps', []):
+                step_polyline = step.get('polyline', {}).get('points', '')
+                if step_polyline:
+                    detailed_polylines.append(step_polyline)
+
+        # Concatena todas as polylines detalhadas
+        # Se não tiver steps, usa a overview como fallback
+        if detailed_polylines:
+            polyline = '|'.join(detailed_polylines)  # Separador para o frontend decodificar cada uma
+        else:
+            polyline = route.get('overview_polyline', {}).get('points', '')
 
         return jsonify(
             success=True,
