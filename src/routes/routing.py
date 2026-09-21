@@ -165,9 +165,15 @@ def calculate_route():
         route = result['routes'][0]
         legs = route['legs']
 
-        # Calcula totais
-        total_distance_m = sum(leg['distance']['value'] for leg in legs)
-        total_duration_s = sum(leg['duration']['value'] for leg in legs)
+        # Calcula totais - soma a distância de cada leg
+        total_distance_m = 0
+        total_duration_s = 0
+        for idx, leg in enumerate(legs):
+            leg_dist = leg['distance']['value']
+            leg_dur = leg['duration']['value']
+            total_distance_m += leg_dist
+            total_duration_s += leg_dur
+            print(f"[Routing] Leg {idx+1}: {leg_dist/1000:.1f} km, {leg_dur/60:.0f} min")
 
         # Monta ordem otimizada dos IDs
         optimized_order = [d['id'] for d in ordered_dests]
@@ -220,10 +226,13 @@ def calculate_route():
             overview_polyline = route.get('overview_polyline', {}).get('points', '')
             all_coords = decode_polyline(overview_polyline)
 
+        total_km = round(total_distance_m / 1000, 1)
+        print(f"[Routing] TOTAL: {total_km} km, {total_duration_s/60:.0f} min, {len(legs)} legs, {len(via_points)} via_points")
+
         return jsonify(
             success=True,
             route={
-                'total_distance_km': round(total_distance_m / 1000, 1),
+                'total_distance_km': total_km,
                 'total_duration_min': round(total_duration_s / 60),
                 'total_duration_formatted': format_duration(total_duration_s),
                 'optimized_order': optimized_order,
