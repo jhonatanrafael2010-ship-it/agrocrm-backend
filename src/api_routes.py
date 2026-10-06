@@ -2105,33 +2105,33 @@ def build_visit_pdf_file(visit_id: int):
         except:
             pass
 
-        # ✅ usa a última visita que realmente entrou no PDF
-        last_pdf_visit = visits_to_include[0] if visits_to_include else visit
+    # ✅ usa a última visita que realmente entrou no PDF
+    last_pdf_visit = visits_to_include[0] if visits_to_include else visit
 
-        last_fenologia = sanitize_filename_part(
-            (last_pdf_visit.fenologia_real or "").strip()
-        ) or "Sem Fenologia"
+    last_fenologia = sanitize_filename_part(
+        (last_pdf_visit.fenologia_real or "").strip()
+    ) or "Sem Fenologia"
 
-        pdf_property_name = ""
-        if getattr(last_pdf_visit, "property_id", None):
-            pdf_property = Property.query.get(last_pdf_visit.property_id)
-            if pdf_property and pdf_property.name:
-                pdf_property_name = f"Faz. {sanitize_filename_part(pdf_property.name)}"
+    pdf_property_name = ""
+    if getattr(last_pdf_visit, "property_id", None):
+        pdf_property = Property.query.get(last_pdf_visit.property_id)
+        if pdf_property and pdf_property.name:
+            pdf_property_name = f"Faz. {sanitize_filename_part(pdf_property.name)}"
 
-        client_name_part = sanitize_filename_part(client.name if client else "Cliente") or "Cliente"
-        variety_part = sanitize_filename_part(last_pdf_visit.variety or visit.variety or "") or "Sem Variedade"
+    client_name_part = sanitize_filename_part(client.name if client else "Cliente") or "Cliente"
+    variety_part = sanitize_filename_part(last_pdf_visit.variety or visit.variety or "") or "Sem Variedade"
 
-        filename_parts = [
-            client_name_part,
-            variety_part,
-            last_fenologia,
-        ]
+    filename_parts = [
+        client_name_part,
+        variety_part,
+        last_fenologia,
+    ]
 
-        if pdf_property_name:
-            filename_parts.append(pdf_property_name)
+    if pdf_property_name:
+        filename_parts.append(pdf_property_name)
 
-        filename = " - ".join(filename_parts) + ".pdf"
-        return buffer, filename
+    filename = " - ".join(filename_parts) + ".pdf"
+    return buffer, filename
 
 
 
