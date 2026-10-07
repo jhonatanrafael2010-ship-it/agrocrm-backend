@@ -3334,9 +3334,10 @@ def auto_create_planting_if_needed(payload: dict, visit_date) -> int | None:
     """
     Auto-cria Planting SOMENTE para visitas de PLANTIO explícitas.
 
-    Critérios ULTRA RIGOROSOS:
+    Critérios:
     - Só cria planting se for visita de PLANTIO (fenologia ou visit_purpose)
-    - Exige plot_id + culture para criar
+    - Exige culture para criar
+    - plot_id é opcional (pode criar ciclo sem talhão)
     - Para outras visitas, deixa sem vínculo para vinculação manual
     """
     plot_id = payload.get("plot_id")
@@ -3350,15 +3351,15 @@ def auto_create_planting_if_needed(payload: dict, visit_date) -> int | None:
         print(f"[auto_create_planting] Sem culture, não cria Planting")
         return None
 
-    # Sem plot_id -> não cria planting (muito arriscado)
-    if not plot_id:
-        print(f"[auto_create_planting] Sem plot_id, não cria Planting automaticamente")
-        return None
-
     is_planting_visit = (visit_purpose.lower() == "plantio" or fenologia == "plantio")
 
-    # Busca planting existente EXATO (plot + culture)
-    query = Planting.query.filter_by(plot_id=plot_id, culture=culture)
+    # Busca planting existente (plot + culture, ou só culture se plot_id for None)
+    if plot_id:
+        query = Planting.query.filter_by(plot_id=plot_id, culture=culture)
+    else:
+        # Sem plot_id, busca por culture + variety (se tiver)
+        query = Planting.query.filter_by(plot_id=None, culture=culture)
+
     if variety:
         query = query.filter_by(variety=variety)
 
@@ -3380,9 +3381,9 @@ def auto_create_planting_if_needed(payload: dict, visit_date) -> int | None:
         print(f"[auto_create_planting] Não é visita de plantio, não cria Planting automaticamente")
         return None
 
-    # É visita de plantio -> pode criar o ciclo
+    # É visita de plantio -> pode criar o ciclo (com ou sem plot_id)
     new_planting = Planting(
-        plot_id=plot_id,
+        plot_id=plot_id if plot_id else None,
         culture=culture,
         variety=variety or None,
         planting_date=visit_date,

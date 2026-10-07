@@ -597,9 +597,18 @@ def _mob_start_visit_flow(session_id, original_message, entities, consultant, re
 
     photo_urls = []
     for p in (photos or []):
-        url = _upload_base64_to_r2(p.get("dataUrl", ""), p.get("filename", "foto.jpg"))
-        if url:
-            photo_urls.append(url)
+        # Fotos podem vir como:
+        # 1. {"url": "https://..."} - já no R2 (de pending_photos)
+        # 2. {"dataUrl": "data:image/..."} - base64 para upload
+        existing_url = p.get("url", "")
+        if existing_url and existing_url.startswith("http"):
+            photo_urls.append(existing_url)
+        else:
+            data_url = p.get("dataUrl", "")
+            if data_url:
+                url = _upload_base64_to_r2(data_url, p.get("filename", "foto.jpg"))
+                if url:
+                    photo_urls.append(url)
 
     visit_preview = {
         "client_id": matched_client.id,
