@@ -1743,7 +1743,16 @@ def build_visit_pdf_file(visit_id: int):
         return s
 
     variety_slug = slugify_variety(visit.variety or "")
-    variety_logo_path = os.path.join(static_dir, "variety_logos", f"{variety_slug}.png")
+    variety_logos_dir = os.path.join(static_dir, "variety_logos")
+    variety_logo_path = os.path.join(variety_logos_dir, f"{variety_slug}.png")
+
+    # Se não encontrar exato, busca arquivo que começa com o slug (ex: as_3790 -> as_3790_i2x.png)
+    if variety_slug and not os.path.exists(variety_logo_path) and os.path.isdir(variety_logos_dir):
+        for fname in os.listdir(variety_logos_dir):
+            fname_lower = fname.lower()
+            if fname_lower.startswith(variety_slug) and fname_lower.endswith(".png"):
+                variety_logo_path = os.path.join(variety_logos_dir, fname)
+                break
 
     def sanitize_filename_part(value: str) -> str:
         if not value:
