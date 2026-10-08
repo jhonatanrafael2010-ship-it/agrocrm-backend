@@ -3363,11 +3363,13 @@ def auto_create_planting_if_needed(payload: dict, visit_date) -> int | None:
     Auto-cria Planting SOMENTE para visitas de PLANTIO explícitas.
 
     Critérios:
-    - Só cria planting se for visita de PLANTIO (fenologia ou visit_purpose)
+    - Visita de PLANTIO: SEMPRE cria novo ciclo (não reutiliza antigos)
+    - Outras visitas: só vincula a ciclo recente (últimos 6 meses) do mesmo plot
     - Exige culture para criar
     - plot_id é opcional (pode criar ciclo sem talhão)
-    - Para outras visitas, deixa sem vínculo para vinculação manual
     """
+    from datetime import timedelta
+
     plot_id = payload.get("plot_id")
     culture = (payload.get("culture") or "").strip()
     variety = (payload.get("variety") or "").strip()
@@ -3381,25 +3383,34 @@ def auto_create_planting_if_needed(payload: dict, visit_date) -> int | None:
 
     is_planting_visit = (visit_purpose.lower() == "plantio" or fenologia == "plantio")
 
-    # Busca planting existente (plot + culture, ou só culture se plot_id for None)
-    if plot_id:
-        query = Planting.query.filter_by(plot_id=plot_id, culture=culture)
+    # Para visitas de PLANTIO: SEMPRE criar novo ciclo
+    if is_planting_visit:
+        print(f"[auto_create_planting] Visita de plantio - criando NOVO ciclo")
+        existing = None
     else:
-        # Sem plot_id, busca por culture + variety (se tiver)
-        query = Planting.query.filter_by(plot_id=None, culture=culture)
+        # Para outras visitas: busca planting recente do mesmo plot
+        if not plot_id:
+            # Sem plot_id, não tenta vincular automaticamente
+            print(f"[auto_create_planting] Sem plot_id e não é plantio, não vincula")
+            return None
 
-    if variety:
-        query = query.filter_by(variety=variety)
+        # Busca planting do mesmo plot, cultura, variedade, dos últimos 6 meses
+        query = Planting.query.filter_by(plot_id=plot_id, culture=culture)
 
-    if not is_planting_visit and visit_date:
-        query = query.filter(
-            db.or_(
-                Planting.planting_date.is_(None),
-                Planting.planting_date <= visit_date
+        if variety:
+            query = query.filter_by(variety=variety)
+
+        if visit_date:
+            # Só considera plantings dos últimos 6 meses
+            six_months_ago = visit_date - timedelta(days=180)
+            query = query.filter(
+                db.or_(
+                    Planting.planting_date.is_(None),
+                    Planting.planting_date >= six_months_ago
+                )
             )
-        )
 
-    existing = query.order_by(Planting.planting_date.desc().nullslast()).first()
+        existing = query.order_by(Planting.planting_date.desc().nullslast()).first()
     if existing:
         print(f"[auto_create_planting] Planting existente encontrado: id={existing.id}")
         return existing.id
