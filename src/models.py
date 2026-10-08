@@ -241,11 +241,13 @@ class Planting(db.Model):
     __tablename__ = 'plantings'
     id = db.Column(db.Integer, primary_key=True)
     plot_id = db.Column(db.Integer, db.ForeignKey('plots.id'), nullable=True, index=True)
+    client_id = db.Column(db.Integer, db.ForeignKey('clients.id'), nullable=True, index=True)
     culture = db.Column(db.String(120), nullable=True)
     variety = db.Column(db.String(200), nullable=True)
     planting_date = db.Column(db.Date, nullable=True)
     created_at = db.Column(db.DateTime, server_default=db.func.now(), nullable=False)
 
+    client = db.relationship('Client', backref='plantings', lazy='select')
     visits = db.relationship('Visit', backref='planting', lazy='select', cascade='all, delete-orphan')
 
     def to_dict(self):
@@ -253,6 +255,8 @@ class Planting(db.Model):
             'id': self.id,
             'plot_id': self.plot_id,
             'plot_name': self.plot.name if self.plot else None,
+            'client_id': self.client_id,
+            'client_name': self.client.name if self.client else None,
             'culture': self.culture,
             'variety': self.variety,
             'planting_date': self.planting_date.isoformat() if self.planting_date else None,

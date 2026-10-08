@@ -393,6 +393,8 @@ def delete_plot(plot_id: int):
 @entities_bp.route('/plantings', methods=['GET'])
 def get_plantings():
     """List plantings. Optional filters: plot_id, property_id, client_id"""
+    from sqlalchemy import or_
+
     plot_id = request.args.get('plot_id', type=int)
     property_id = request.args.get('property_id', type=int)
     client_id = request.args.get('client_id', type=int)
@@ -401,9 +403,15 @@ def get_plantings():
     if plot_id:
         q = q.filter_by(plot_id=plot_id)
     if property_id:
-        q = q.join(Plot).filter(Plot.property_id == property_id)
+        q = q.outerjoin(Plot).filter(Plot.property_id == property_id)
     if client_id:
-        q = q.join(Plot).join(Property).filter(Property.client_id == client_id)
+        # Busca plantings que têm client_id diretamente OU via plot -> property
+        q = q.outerjoin(Plot).outerjoin(Property).filter(
+            or_(
+                Planting.client_id == client_id,
+                Property.client_id == client_id
+            )
+        )
 
     items = q.order_by(Planting.id.desc()).all()
     return jsonify([it.to_dict() for it in items]), 200
@@ -421,12 +429,19 @@ def get_planting(pid: int):
 def create_planting():
     data = request.get_json() or {}
     plot_id = data.get('plot_id')
+    client_id = data.get('client_id')
 
     # plot_id é opcional - valida apenas se fornecido
     if plot_id:
         plot = Plot.query.get(plot_id)
         if not plot:
             return jsonify(message='plot not found'), 404
+
+    # client_id é opcional - valida apenas se fornecido
+    if client_id:
+        client = Client.query.get(client_id)
+        if not client:
+            return jsonify(message='client not found'), 404
 
     culture = data.get('culture')
     variety = data.get('variety')
@@ -440,6 +455,7 @@ def create_planting():
 
     p = Planting(
         plot_id=plot_id if plot_id else None,
+        client_id=client_id if client_id else None,
         culture=culture,
         variety=variety,
         planting_date=planting_date,
