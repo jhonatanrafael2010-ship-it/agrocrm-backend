@@ -1689,14 +1689,26 @@ def build_visit_pdf_file(visit_id: int):
     consultant = Consultant.query.get(visit.consultant_id) if visit.consultant_id else None
     consultant_name = consultant.name if consultant else (f"Consultor {visit.consultant_id}" if visit.consultant_id else "")
 
+    print(f"[PDF DEBUG] visit_id={visit.id}, planting_id={visit.planting_id}, client_id={visit.client_id}")
+    print(f"[PDF DEBUG] property_id={visit.property_id}, plot_id={visit.plot_id}")
+    print(f"[PDF DEBUG] culture={visit.culture}, variety={visit.variety}, date={visit.date}")
+
     if visit.planting_id:
+        print(f"[PDF DEBUG] Buscando por planting_id={visit.planting_id}")
         visits_to_include = (
             Visit.query
             .filter(Visit.planting_id == visit.planting_id)
             .order_by(Visit.date.desc(), Visit.id.desc())
             .all()
         )
+        print(f"[PDF DEBUG] Encontradas {len(visits_to_include)} visitas pelo planting_id")
+
+        # Debug: mostrar planting_date do ciclo
+        planting_row = Planting.query.get(visit.planting_id)
+        if planting_row:
+            print(f"[PDF DEBUG] Planting: id={planting_row.id}, planting_date={planting_row.planting_date}, culture={planting_row.culture}")
     else:
+        print(f"[PDF DEBUG] Sem planting_id, buscando por client/property/culture")
         q = Visit.query.filter(
             Visit.client_id == visit.client_id,
             Visit.property_id == visit.property_id,
@@ -1712,6 +1724,7 @@ def build_visit_pdf_file(visit_id: int):
             q.order_by(Visit.date.desc(), Visit.id.desc())
             .all()
         )
+        print(f"[PDF DEBUG] Encontradas {len(visits_to_include)} visitas pelo filtro manual")
 
     filtered = []
     for v in visits_to_include:
@@ -1965,13 +1978,16 @@ def build_visit_pdf_file(visit_id: int):
         planting_row = Planting.query.get(visit.planting_id)
         if planting_row and getattr(planting_row, "planting_date", None):
             planting_date_obj = planting_row.planting_date
+            print(f"[PDF DEBUG] planting_date do Planting: {planting_date_obj}")
 
     # 2) fallback: usa a visita mais antiga do ciclo cuja fenologia seja Plantio
     if not planting_date_obj and visits_to_include:
         for cycle_visit in reversed(visits_to_include):
             fenologia_norm = (cycle_visit.fenologia_real or "").strip().lower()
+            print(f"[PDF DEBUG] Checando visita {cycle_visit.id}: fenologia='{fenologia_norm}', date={cycle_visit.date}")
             if fenologia_norm == "plantio" and cycle_visit.date:
                 planting_date_obj = cycle_visit.date
+                print(f"[PDF DEBUG] Encontrou visita de Plantio: id={cycle_visit.id}, date={planting_date_obj}")
                 break
 
     # 3) fallback final: se a própria visita atual for Plantio
@@ -1979,6 +1995,9 @@ def build_visit_pdf_file(visit_id: int):
         fenologia_norm = (visit.fenologia_real or "").strip().lower()
         if fenologia_norm == "plantio" and visit.date:
             planting_date_obj = visit.date
+            print(f"[PDF DEBUG] Usando data da própria visita como plantio: {planting_date_obj}")
+
+    print(f"[PDF DEBUG] planting_date_obj final: {planting_date_obj}")
 
     if visits_to_include:
         start_date_obj = visits_to_include[-1].date
