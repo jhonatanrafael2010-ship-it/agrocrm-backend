@@ -7723,12 +7723,12 @@ def get_planting(pid: int):
 def create_planting():
     data = request.get_json() or {}
     plot_id = data.get('plot_id')
-    if not plot_id:
-        return jsonify(message='plot_id is required'), 400
 
-    plot = Plot.query.get(plot_id)
-    if not plot:
-        return jsonify(message='plot not found'), 404
+    # plot_id é opcional - valida apenas se fornecido
+    if plot_id:
+        plot = Plot.query.get(plot_id)
+        if not plot:
+            return jsonify(message='plot not found'), 404
 
     # cultura e variedade podem vir do select do frontend
     culture = data.get('culture')  # esperado: "Milho", "Soja", "Algodão" (case-insensitive ok)
@@ -7742,7 +7742,7 @@ def create_planting():
             return jsonify(message='invalid planting_date, expected YYYY-MM-DD'), 400
 
     p = Planting(
-        plot_id=plot_id,
+        plot_id=plot_id if plot_id else None,
         culture=culture,
         variety=variety,
         planting_date=planting_date,
