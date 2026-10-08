@@ -7733,6 +7733,7 @@ def create_planting():
     # cultura e variedade podem vir do select do frontend
     culture = data.get('culture')  # esperado: "Milho", "Soja", "Algodão" (case-insensitive ok)
     variety = data.get('variety')
+    consultant_id = data.get('consultant_id')  # opcional
 
     planting_date = None
     if data.get('planting_date'):
@@ -7756,13 +7757,15 @@ def create_planting():
         from sqlalchemy import text
 
         # busca do banco conforme cultura
-        stages = db.session.run(
+        stages = db.session.execute(
             text("SELECT code, name, days FROM phenology_stage WHERE culture = :culture ORDER BY days"),
             {"culture": culture}
         ).fetchall()
 
         if stages:
-            prop = Property.query.get(plot.property_id) if plot.property_id else None
+            # plot pode ser None se plot_id não foi fornecido
+            plot_obj = Plot.query.get(plot_id) if plot_id else None
+            prop = Property.query.get(plot_obj.property_id) if (plot_obj and plot_obj.property_id) else None
             client = Client.query.get(prop.client_id) if (prop and prop.client_id) else None
 
             for st in stages:
@@ -7774,7 +7777,7 @@ def create_planting():
                 v = Visit(
                     client_id=(client.id if client else None),
                     property_id=(prop.id if prop else None),
-                    plot_id=plot.id,
+                    plot_id=plot_id if plot_id else None,
                     planting_id=p.id,
                     consultant_id=consultant_id,
                     date=visit_date,
