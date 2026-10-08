@@ -7749,51 +7749,6 @@ def create_planting():
         planting_date=planting_date,
     )
     db.session.add(p)
-    db.session.flush()  # para ter p.id
-
-    # === Gerar Visitas automáticas pela fenologia (opcional) ===
-    # Só executa se a tabela phenology_stage existir
-    try:
-        if planting_date and culture:
-            from sqlalchemy import text
-
-            stages = db.session.execute(
-                text("SELECT code, name, days FROM phenology_stage WHERE culture = :culture ORDER BY days"),
-                {"culture": culture}
-            ).fetchall()
-
-            if stages:
-                plot_obj = Plot.query.get(plot_id) if plot_id else None
-                prop = Property.query.get(plot_obj.property_id) if (plot_obj and plot_obj.property_id) else None
-                client = Client.query.get(prop.client_id) if (prop and prop.client_id) else None
-
-                for st in stages:
-                    if st.days == 0:
-                        continue
-
-                    visit_date = planting_date + datetime.timedelta(days=int(st.days))
-
-                    v = Visit(
-                        client_id=(client.id if client else None),
-                        property_id=(prop.id if prop else None),
-                        plot_id=plot_id if plot_id else None,
-                        planting_id=p.id,
-                        consultant_id=consultant_id,
-                        date=visit_date,
-                        checklist=None,
-                        diagnosis=None,
-                        recommendation=st.name,
-                        culture=culture,
-                        variety=variety,
-                        status='planned'
-                    )
-                    db.session.add(v)
-
-                print(f"✅ {len(stages)} visitas geradas para {culture}.")
-    except Exception as e:
-        print(f"[phenology] Tabela phenology_stage não existe ou erro: {e}")
-
-
     db.session.commit()
     return jsonify(message='planting created', planting=p.to_dict()), 201
 
