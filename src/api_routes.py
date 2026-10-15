@@ -1974,29 +1974,31 @@ def build_visit_pdf_file(visit_id: int):
 
     planting_date_obj = None
 
-    # 1) tenta usar planting_date da Planting vinculada
-    if getattr(visit, "planting_id", None):
+    # 1) Primeiro: busca a visita de "Plantio" no ciclo filtrado (já correto por client_id)
+    if visits_to_include:
+        for cycle_visit in reversed(visits_to_include):
+            fenologia_norm = (cycle_visit.fenologia_real or "").strip().lower()
+            rec_norm = (cycle_visit.recommendation or "").strip().lower()
+            print(f"[PDF DEBUG] Checando visita {cycle_visit.id}: fenologia='{fenologia_norm}', rec='{rec_norm}', date={cycle_visit.date}")
+            if (fenologia_norm == "plantio" or rec_norm == "plantio") and cycle_visit.date:
+                planting_date_obj = cycle_visit.date
+                print(f"[PDF DEBUG] Encontrou visita de Plantio no ciclo: id={cycle_visit.id}, date={planting_date_obj}")
+                break
+
+    # 2) Fallback: se a própria visita atual for Plantio
+    if not planting_date_obj:
+        fenologia_norm = (visit.fenologia_real or "").strip().lower()
+        rec_norm = (visit.recommendation or "").strip().lower()
+        if (fenologia_norm == "plantio" or rec_norm == "plantio") and visit.date:
+            planting_date_obj = visit.date
+            print(f"[PDF DEBUG] Usando data da própria visita como plantio: {planting_date_obj}")
+
+    # 3) Fallback final: usa planting_date da Planting vinculada (menos confiável)
+    if not planting_date_obj and getattr(visit, "planting_id", None):
         planting_row = Planting.query.get(visit.planting_id)
         if planting_row and getattr(planting_row, "planting_date", None):
             planting_date_obj = planting_row.planting_date
-            print(f"[PDF DEBUG] planting_date do Planting: {planting_date_obj}")
-
-    # 2) fallback: usa a visita mais antiga do ciclo cuja fenologia seja Plantio
-    if not planting_date_obj and visits_to_include:
-        for cycle_visit in reversed(visits_to_include):
-            fenologia_norm = (cycle_visit.fenologia_real or "").strip().lower()
-            print(f"[PDF DEBUG] Checando visita {cycle_visit.id}: fenologia='{fenologia_norm}', date={cycle_visit.date}")
-            if fenologia_norm == "plantio" and cycle_visit.date:
-                planting_date_obj = cycle_visit.date
-                print(f"[PDF DEBUG] Encontrou visita de Plantio: id={cycle_visit.id}, date={planting_date_obj}")
-                break
-
-    # 3) fallback final: se a própria visita atual for Plantio
-    if not planting_date_obj:
-        fenologia_norm = (visit.fenologia_real or "").strip().lower()
-        if fenologia_norm == "plantio" and visit.date:
-            planting_date_obj = visit.date
-            print(f"[PDF DEBUG] Usando data da própria visita como plantio: {planting_date_obj}")
+            print(f"[PDF DEBUG] Usando planting_date do Planting (fallback): {planting_date_obj}")
 
     print(f"[PDF DEBUG] planting_date_obj final: {planting_date_obj}")
 
