@@ -1694,14 +1694,15 @@ def build_visit_pdf_file(visit_id: int):
     print(f"[PDF DEBUG] culture={visit.culture}, variety={visit.variety}, date={visit.date}")
 
     if visit.planting_id:
-        print(f"[PDF DEBUG] Buscando por planting_id={visit.planting_id}")
+        print(f"[PDF DEBUG] Buscando por planting_id={visit.planting_id} E client_id={visit.client_id}")
         visits_to_include = (
             Visit.query
             .filter(Visit.planting_id == visit.planting_id)
+            .filter(Visit.client_id == visit.client_id)
             .order_by(Visit.date.desc(), Visit.id.desc())
             .all()
         )
-        print(f"[PDF DEBUG] Encontradas {len(visits_to_include)} visitas pelo planting_id")
+        print(f"[PDF DEBUG] Encontradas {len(visits_to_include)} visitas pelo planting_id + client_id")
 
         # Debug: mostrar planting_date do ciclo
         planting_row = Planting.query.get(visit.planting_id)
