@@ -1768,7 +1768,10 @@ def build_visit_pdf_file(visit_id: int):
     # Se não encontrar exato, busca arquivo que começa com o slug (ex: as_3790 -> as_3790_i2x.png)
     # Também tenta normalizar removendo underscores para matching mais flexível
     def normalize_for_match(s: str) -> str:
-        return re.sub(r"[^a-z0-9]", "", s.lower())
+        s = re.sub(r"[^a-z0-9]", "", s.lower())
+        # Trata 1, i, l como equivalentes (erro comum: I2X vs 12X)
+        s = s.replace("1", "i").replace("l", "i")
+        return s
 
     if variety_slug and not os.path.exists(variety_logo_path) and os.path.isdir(variety_logos_dir):
         files_in_dir = os.listdir(variety_logos_dir)
