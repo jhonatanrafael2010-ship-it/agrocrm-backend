@@ -1744,7 +1744,8 @@ def build_visit_pdf_file(visit_id: int):
         return t.replace("\n", "<br/>")
 
     static_dir = os.path.join(os.path.dirname(__file__), "static")
-    nutriverde_logo_path = os.path.join(static_dir, "nutriverde_logo_pdf.png")
+    nutriverde_logo_path = os.path.join(static_dir, "nutricrm_logo_pdf.png")
+    print(f"[PDF FOOTER DEBUG] nutriverde_logo_path='{nutriverde_logo_path}', exists={os.path.exists(nutriverde_logo_path)}")
 
     def slugify_variety(name: str) -> str:
         if not name:
@@ -1760,13 +1761,44 @@ def build_visit_pdf_file(visit_id: int):
     variety_logos_dir = os.path.join(static_dir, "variety_logos")
     variety_logo_path = os.path.join(variety_logos_dir, f"{variety_slug}.png")
 
+    print(f"[PDF FOOTER DEBUG] variety original='{visit.variety}', slug='{variety_slug}'")
+    print(f"[PDF FOOTER DEBUG] variety_logos_dir='{variety_logos_dir}', exists={os.path.isdir(variety_logos_dir)}")
+    print(f"[PDF FOOTER DEBUG] variety_logo_path inicial='{variety_logo_path}', exists={os.path.exists(variety_logo_path)}")
+
     # Se não encontrar exato, busca arquivo que começa com o slug (ex: as_3790 -> as_3790_i2x.png)
+    # Também tenta normalizar removendo underscores para matching mais flexível
+    def normalize_for_match(s: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", s.lower())
+
     if variety_slug and not os.path.exists(variety_logo_path) and os.path.isdir(variety_logos_dir):
-        for fname in os.listdir(variety_logos_dir):
+        files_in_dir = os.listdir(variety_logos_dir)
+        print(f"[PDF FOOTER DEBUG] Arquivos no diretório: {files_in_dir}")
+
+        # Tenta match por startswith primeiro
+        for fname in files_in_dir:
             fname_lower = fname.lower()
             if fname_lower.startswith(variety_slug) and fname_lower.endswith(".png"):
                 variety_logo_path = os.path.join(variety_logos_dir, fname)
+                print(f"[PDF FOOTER DEBUG] Encontrou arquivo por prefixo exato: {fname}")
                 break
+        else:
+            # Se não encontrou, tenta normalizar removendo underscores e comparando
+            variety_normalized = normalize_for_match(variety_slug)
+            print(f"[PDF FOOTER DEBUG] Tentando match normalizado: '{variety_normalized}'")
+            for fname in files_in_dir:
+                if not fname.lower().endswith(".png"):
+                    continue
+                fname_base = fname.rsplit(".", 1)[0]
+                fname_normalized = normalize_for_match(fname_base)
+                # Verifica se o arquivo normalizado começa com a variedade normalizada
+                if fname_normalized.startswith(variety_normalized):
+                    variety_logo_path = os.path.join(variety_logos_dir, fname)
+                    print(f"[PDF FOOTER DEBUG] Encontrou arquivo por match normalizado: {fname}")
+                    break
+            else:
+                print(f"[PDF FOOTER DEBUG] Nenhum arquivo encontrado para '{variety_slug}' (normalizado: '{variety_normalized}'")
+
+    print(f"[PDF FOOTER DEBUG] variety_logo_path final='{variety_logo_path}', exists={os.path.exists(variety_logo_path)}")
 
     def sanitize_filename_part(value: str) -> str:
         if not value:
